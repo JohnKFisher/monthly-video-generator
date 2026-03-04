@@ -25,7 +25,14 @@ public final class AVFoundationRenderEngine {
             throw RenderError.noRenderableMedia
         }
 
+        let diagnostics = RenderDiagnostics()
+        diagnostics.add("Render started")
+        diagnostics.add("Timeline segments: \(timeline.segments.count)")
+        diagnostics.add("Style: title=\(style.openingTitle ?? "none"), titleDuration=\(style.titleDurationSeconds), crossfade=\(style.crossfadeDurationSeconds), stillDuration=\(style.stillImageDurationSeconds)")
+        diagnostics.add("Export profile: container=\(exportProfile.container.rawValue), codec=\(exportProfile.videoCodec.rawValue), resolution=\(exportProfile.resolution), dynamicRange=\(exportProfile.dynamicRange.rawValue), audioLayout=\(exportProfile.audioLayout.rawValue), bitrate=\(exportProfile.bitrateMode.rawValue)")
+
         let renderSize = resolveRenderSize(from: timeline, policy: exportProfile.resolution)
+        diagnostics.add("Render size: \(Int(renderSize.width))x\(Int(renderSize.height))")
         var temporaryURLs: [URL] = []
         defer {
             for url in temporaryURLs {
@@ -33,94 +40,118 @@ public final class AVFoundationRenderEngine {
             }
         }
 
-        let clips = try await materializeInputClips(
-            segments: timeline.segments,
-            renderSize: renderSize,
-            photoMaterializer: photoMaterializer,
-            temporaryURLs: &temporaryURLs
-        )
+        do {
+            let clips = try await materializeInputClips(
+                segments: timeline.segments,
+                renderSize: renderSize,
+                photoMaterializer: photoMaterializer,
+                temporaryURLs: &temporaryURLs,
+                diagnostics: diagnostics
+            )
 
-        guard !clips.isEmpty else {
-            throw RenderError.noRenderableMedia
-        }
-
-        let composition = AVMutableComposition()
-        guard
-            let firstVideoTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
-            let secondVideoTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
-            let firstAudioTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid),
-            let secondAudioTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
-        else {
-            throw RenderError.exportFailed("Failed to allocate composition tracks")
-        }
-
-        let videoTracks = [firstVideoTrack, secondVideoTrack]
-        let audioTracks = [firstAudioTrack, secondAudioTrack]
-
-        let transitionDuration = effectiveTransitionDuration(clips: clips, requestedSeconds: style.crossfadeDurationSeconds)
-        var clipStartTimes: [CMTime] = []
-        var cursor = CMTime.zero
-
-        for (index, clip) in clips.enumerated() {
-            clipStartTimes.append(cursor)
-            let trackIndex = index % 2
-            let videoSourceStart = clip.videoTrackTimeRange?.start ?? .zero
-            let videoAvailableDuration = clip.videoTrackTimeRange?.duration
-            let insertDuration = minPositiveDuration(clip.duration, clip.videoTrackDuration, videoAvailableDuration) ?? clip.duration
-            let insertRange = CMTimeRange(start: videoSourceStart, duration: insertDuration)
-
-            do {
-                try videoTracks[trackIndex].insertTimeRange(insertRange, of: clip.videoTrack, at: cursor)
-            } catch {
-                throw RenderError.exportFailed("Video track insertion failed for \(clip.sourceDescription) at index \(index). \(describe(error))")
+            guard !clips.isEmpty else {
+                throw RenderError.noRenderableMedia
             }
 
-            if clip.includeAudio, let audioTrack = clip.audioTrack {
-                let audioSourceStart = clip.audioTrackTimeRange?.start ?? .zero
-                let audioAvailableDuration = clip.audioTrackTimeRange?.duration
-                let audioDuration = minPositiveDuration(clip.duration, clip.audioTrackDuration, audioAvailableDuration) ?? clip.duration
-                let audioRange = CMTimeRange(start: audioSourceStart, duration: audioDuration)
+            let composition = AVMutableComposition()
+            guard
+                let firstVideoTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
+                let secondVideoTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
+                let firstAudioTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid),
+                let secondAudioTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+            else {
+                throw RenderError.exportFailed("Failed to allocate composition tracks")
+            }
+
+            let videoTracks = [firstVideoTrack, secondVideoTrack]
+            let audioTracks = [firstAudioTrack, secondAudioTrack]
+
+            let transitionDuration = effectiveTransitionDuration(clips: clips, requestedSeconds: style.crossfadeDurationSeconds)
+            diagnostics.add("Transition duration resolved: \(format(transitionDuration))")
+            var clipStartTimes: [CMTime] = []
+            var cursor = CMTime.zero
+
+            for (index, clip) in clips.enumerated() {
+                clipStartTimes.append(cursor)
+                let trackIndex = index % 2
+                let videoSourceStart = validStartTime(clip.videoTrackTimeRange?.start)
+                let videoAvailableDuration = clip.videoTrackTimeRange?.duration
+                let insertDuration = minPositiveDuration(clip.duration, clip.videoTrackDuration, videoAvailableDuration) ?? clip.duration
+                let insertRange = CMTimeRange(start: videoSourceStart, duration: insertDuration)
+                diagnostics.add("Video insert attempt index=\(index) source=\(clip.sourceDescription) targetTrack=\(trackIndex) at=\(format(cursor)) range=\(format(insertRange)) sourceTrackRange=\(format(clip.videoTrackTimeRange)) sourceAsset=\(clip.assetURL.path)")
+
                 do {
-                    try audioTracks[trackIndex].insertTimeRange(audioRange, of: audioTrack, at: cursor)
+                    try videoTracks[trackIndex].insertTimeRange(insertRange, of: clip.videoTrack, at: cursor)
                 } catch {
-                    throw RenderError.exportFailed("Audio track insertion failed for \(clip.sourceDescription) at index \(index). \(describe(error))")
+                    diagnostics.add("Video insertion failed at index \(index): \(describe(error))")
+                    throw RenderError.exportFailed("Video track insertion failed for \(clip.sourceDescription) at index \(index). \(describe(error))")
+                }
+
+                if clip.includeAudio, let audioTrack = clip.audioTrack {
+                    let audioSourceStart = validStartTime(clip.audioTrackTimeRange?.start)
+                    let audioAvailableDuration = clip.audioTrackTimeRange?.duration
+                    let audioDuration = minPositiveDuration(clip.duration, clip.audioTrackDuration, audioAvailableDuration) ?? clip.duration
+                    let audioRange = CMTimeRange(start: audioSourceStart, duration: audioDuration)
+                    diagnostics.add("Audio insert attempt index=\(index) source=\(clip.sourceDescription) targetTrack=\(trackIndex) at=\(format(cursor)) range=\(format(audioRange)) sourceTrackRange=\(format(clip.audioTrackTimeRange))")
+                    do {
+                        try audioTracks[trackIndex].insertTimeRange(audioRange, of: audioTrack, at: cursor)
+                    } catch {
+                        diagnostics.add("Audio insertion failed at index \(index): \(describe(error))")
+                        throw RenderError.exportFailed("Audio track insertion failed for \(clip.sourceDescription) at index \(index). \(describe(error))")
+                    }
+                }
+
+                cursor = add(cursor, insertDuration)
+                if index < clips.count - 1, transitionDuration > .zero {
+                    cursor = subtract(cursor, transitionDuration)
                 }
             }
 
-            cursor = add(cursor, insertDuration)
-            if index < clips.count - 1, transitionDuration > .zero {
-                cursor = subtract(cursor, transitionDuration)
+            let videoComposition = AVMutableVideoComposition()
+            videoComposition.renderSize = renderSize
+            videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
+            videoComposition.instructions = buildInstructions(
+                clips: clips,
+                clipStartTimes: clipStartTimes,
+                transitionDuration: transitionDuration,
+                compositionTracks: videoTracks
+            )
+
+            let outputURL = try OutputPathResolver.resolveUniqueURL(target: outputTarget, container: exportProfile.container)
+            diagnostics.add("Resolved output URL: \(outputURL.path)")
+            let presetName = bestPreset(for: exportProfile, composition: composition)
+            diagnostics.add("Selected export preset: \(presetName)")
+            guard let session = AVAssetExportSession(asset: composition, presetName: presetName) else {
+                throw RenderError.exportSessionUnavailable
             }
+
+            currentSession = session
+            session.outputURL = outputURL
+            session.outputFileType = preferredFileType(container: exportProfile.container, session: session)
+            diagnostics.add("Selected output file type: \(session.outputFileType?.rawValue ?? "nil")")
+            session.shouldOptimizeForNetworkUse = false
+            session.videoComposition = videoComposition
+
+            progressHandler?(0.01)
+            try await export(session: session)
+            progressHandler?(1.0)
+            currentSession = nil
+
+            diagnostics.add("Render completed successfully")
+            return outputURL
+        } catch {
+            currentSession = nil
+            diagnostics.add("Render failed with error: \(describe(error))")
+            let diagnosticURL = writeDiagnosticsFile(
+                diagnostics.renderReport(for: error),
+                outputTarget: outputTarget
+            )
+            let baseMessage = userFacingMessage(from: error)
+            if let diagnosticURL {
+                throw RenderError.exportFailed("\(baseMessage)\nDiagnostics file: \(diagnosticURL.path)")
+            }
+            throw RenderError.exportFailed(baseMessage)
         }
-
-        let videoComposition = AVMutableVideoComposition()
-        videoComposition.renderSize = renderSize
-        videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
-        videoComposition.instructions = buildInstructions(
-            clips: clips,
-            clipStartTimes: clipStartTimes,
-            transitionDuration: transitionDuration,
-            compositionTracks: videoTracks
-        )
-
-        let outputURL = try OutputPathResolver.resolveUniqueURL(target: outputTarget, container: exportProfile.container)
-        let presetName = bestPreset(for: exportProfile, composition: composition)
-        guard let session = AVAssetExportSession(asset: composition, presetName: presetName) else {
-            throw RenderError.exportSessionUnavailable
-        }
-
-        currentSession = session
-        session.outputURL = outputURL
-        session.outputFileType = preferredFileType(container: exportProfile.container, session: session)
-        session.shouldOptimizeForNetworkUse = false
-        session.videoComposition = videoComposition
-
-        progressHandler?(0.01)
-        try await export(session: session)
-        progressHandler?(1.0)
-        currentSession = nil
-
-        return outputURL
     }
 
     private func buildInstructions(
@@ -194,7 +225,8 @@ public final class AVFoundationRenderEngine {
         segments: [TimelineSegment],
         renderSize: CGSize,
         photoMaterializer: PhotoAssetMaterializing?,
-        temporaryURLs: inout [URL]
+        temporaryURLs: inout [URL],
+        diagnostics: RenderDiagnostics
     ) async throws -> [InputClip] {
         var clips: [InputClip] = []
 
@@ -203,11 +235,13 @@ public final class AVFoundationRenderEngine {
             case let .titleCard(title):
                 let titleURL = try await stillImageClipFactory.makeTitleCardClip(title: title, duration: segment.duration, renderSize: renderSize)
                 temporaryURLs.append(titleURL)
+                diagnostics.add("Materialized title card clip at \(titleURL.path) for title '\(title)'")
                 if let clip = try await makeClip(
                     assetURL: titleURL,
                     fallbackDuration: segment.duration,
                     includeAudio: false,
                     sourceDescription: "title card '\(title)'",
+                    diagnostics: diagnostics,
                     isTemporary: true
                 ) {
                     clips.append(clip)
@@ -219,11 +253,13 @@ public final class AVFoundationRenderEngine {
                     let sourceURL = try await resolveURL(for: item, photoMaterializer: photoMaterializer)
                     let imageClipURL = try await stillImageClipFactory.makeVideoClip(fromImageURL: sourceURL, duration: segment.duration, renderSize: renderSize)
                     temporaryURLs.append(imageClipURL)
+                    diagnostics.add("Materialized still image clip for \(item.filename) at \(imageClipURL.path)")
                     if let clip = try await makeClip(
                         assetURL: imageClipURL,
                         fallbackDuration: segment.duration,
                         includeAudio: false,
                         sourceDescription: "image \(item.filename)",
+                        diagnostics: diagnostics,
                         isTemporary: true
                     ) {
                         clips.append(clip)
@@ -231,11 +267,13 @@ public final class AVFoundationRenderEngine {
 
                 case .video:
                     let sourceURL = try await resolveURL(for: item, photoMaterializer: photoMaterializer)
+                    diagnostics.add("Using source video clip \(sourceURL.path) for \(item.filename)")
                     if let clip = try await makeClip(
                         assetURL: sourceURL,
                         fallbackDuration: segment.duration,
                         includeAudio: true,
                         sourceDescription: "video \(item.filename)",
+                        diagnostics: diagnostics,
                         isTemporary: false
                     ) {
                         clips.append(clip)
@@ -264,6 +302,7 @@ public final class AVFoundationRenderEngine {
         fallbackDuration: CMTime,
         includeAudio: Bool,
         sourceDescription: String,
+        diagnostics: RenderDiagnostics,
         isTemporary: Bool
     ) async throws -> InputClip? {
         let asset = AVURLAsset(url: assetURL)
@@ -306,9 +345,16 @@ public final class AVFoundationRenderEngine {
             audioTrackTimeRange = nil
         }
 
+        diagnostics.add(
+            "Clip ready: source=\(sourceDescription), asset=\(assetURL.path), clipDuration=\(format(clipDuration)), " +
+            "assetDuration=\(format(assetDuration)), videoTrackRange=\(format(videoTrackRange)), " +
+            "audioTrackRange=\(format(audioTrackTimeRange)), temp=\(isTemporary)"
+        )
+
         return InputClip(
             videoTrack: videoTrack,
             audioTrack: audioTrack,
+            assetURL: assetURL,
             videoTrackTimeRange: videoTrackRange,
             audioTrackTimeRange: audioTrackTimeRange,
             videoTrackDuration: videoTrackDuration,
@@ -407,6 +453,7 @@ public final class AVFoundationRenderEngine {
     private struct InputClip {
         let videoTrack: AVAssetTrack
         let audioTrack: AVAssetTrack?
+        let assetURL: URL
         let videoTrackTimeRange: CMTimeRange?
         let audioTrackTimeRange: CMTimeRange?
         let videoTrackDuration: CMTime?
@@ -422,7 +469,14 @@ public final class AVFoundationRenderEngine {
     private func describe(_ error: Error) -> String {
         let nsError = error as NSError
         let reason = nsError.localizedFailureReason ?? nsError.localizedRecoverySuggestion ?? "No additional details."
-        return "\(nsError.domain) code \(nsError.code): \(nsError.localizedDescription). \(reason)"
+        let userInfoSummary = nsError.userInfo
+            .map { key, value in "\(key)=\(value)" }
+            .sorted()
+            .joined(separator: ", ")
+        if userInfoSummary.isEmpty {
+            return "\(nsError.domain) code \(nsError.code): \(nsError.localizedDescription). \(reason)"
+        }
+        return "\(nsError.domain) code \(nsError.code): \(nsError.localizedDescription). \(reason). userInfo{\(userInfoSummary)}"
     }
 
     private func smallestPositiveDuration(_ values: [CMTime?]) -> CMTime? {
@@ -438,5 +492,91 @@ public final class AVFoundationRenderEngine {
 
     private func isPositiveFiniteTime(_ value: CMTime) -> Bool {
         value.isValid && value.isNumeric && value.seconds.isFinite && value > .zero
+    }
+
+    private func validStartTime(_ time: CMTime?) -> CMTime {
+        guard let time else { return .zero }
+        guard time.isValid, time.isNumeric, time.seconds.isFinite else { return .zero }
+        return time
+    }
+
+    private func format(_ time: CMTime) -> String {
+        guard time.isValid else { return "invalid" }
+        guard time.isNumeric else { return "non-numeric" }
+        return String(format: "%.6fs", time.seconds)
+    }
+
+    private func format(_ timeRange: CMTimeRange?) -> String {
+        guard let timeRange else { return "nil" }
+        return "[start=\(format(timeRange.start)), duration=\(format(timeRange.duration)), end=\(format(timeRange.end))]"
+    }
+
+    private func userFacingMessage(from error: Error) -> String {
+        if let renderError = error as? RenderError {
+            switch renderError {
+            case .exportFailed(let message):
+                return message
+            default:
+                return renderError.errorDescription ?? describe(error)
+            }
+        }
+        return describe(error)
+    }
+
+    private func writeDiagnosticsFile(_ report: String, outputTarget: OutputTarget) -> URL? {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        formatter.timeZone = .current
+        let filename = "export-diagnostics-\(formatter.string(from: Date())).log"
+
+        let fileManager = FileManager.default
+        let preferredDirectory = outputTarget.directory
+        let fallbackDirectory = fileManager.temporaryDirectory.appendingPathComponent("MonthlyVideoGenerator/Diagnostics", isDirectory: true)
+
+        for directory in [preferredDirectory, fallbackDirectory] {
+            do {
+                try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+                let fileURL = directory.appendingPathComponent(filename)
+                guard let data = report.data(using: .utf8) else {
+                    continue
+                }
+                try data.write(to: fileURL)
+                return fileURL
+            } catch {
+                continue
+            }
+        }
+        return nil
+    }
+
+    private final class RenderDiagnostics {
+        private let startedAt = Date()
+        private let runID = UUID().uuidString
+        private var lines: [String] = []
+
+        func add(_ line: String) {
+            lines.append("[\(timestamp())] \(line)")
+        }
+
+        func renderReport(for error: Error) -> String {
+            var reportLines: [String] = []
+            reportLines.append("MonthlyVideoGenerator export diagnostics")
+            reportLines.append("run_id=\(runID)")
+            reportLines.append("started_at=\(startedAt.ISO8601Format())")
+            reportLines.append("ended_at=\(Date().ISO8601Format())")
+            reportLines.append("error=\(error)")
+            reportLines.append("")
+            reportLines.append(contentsOf: lines)
+            reportLines.append("")
+            reportLines.append("end_of_report")
+            return reportLines.joined(separator: "\n")
+        }
+
+        private func timestamp() -> String {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "HH:mm:ss.SSS"
+            formatter.timeZone = .current
+            return formatter.string(from: Date())
+        }
     }
 }
