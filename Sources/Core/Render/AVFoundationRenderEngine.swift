@@ -64,8 +64,10 @@ public final class AVFoundationRenderEngine {
         for (index, clip) in clips.enumerated() {
             clipStartTimes.append(cursor)
             let trackIndex = index % 2
-            let insertDuration = minPositiveDuration(clip.duration, clip.videoTrackDuration) ?? clip.duration
-            let insertRange = CMTimeRange(start: .zero, duration: insertDuration)
+            let videoSourceStart = clip.videoTrackTimeRange?.start ?? .zero
+            let videoAvailableDuration = clip.videoTrackTimeRange?.duration
+            let insertDuration = minPositiveDuration(clip.duration, clip.videoTrackDuration, videoAvailableDuration) ?? clip.duration
+            let insertRange = CMTimeRange(start: videoSourceStart, duration: insertDuration)
 
             do {
                 try videoTracks[trackIndex].insertTimeRange(insertRange, of: clip.videoTrack, at: cursor)
@@ -74,8 +76,10 @@ public final class AVFoundationRenderEngine {
             }
 
             if clip.includeAudio, let audioTrack = clip.audioTrack {
-                let audioDuration = minPositiveDuration(clip.duration, clip.audioTrackDuration) ?? clip.duration
-                let audioRange = CMTimeRange(start: .zero, duration: audioDuration)
+                let audioSourceStart = clip.audioTrackTimeRange?.start ?? .zero
+                let audioAvailableDuration = clip.audioTrackTimeRange?.duration
+                let audioDuration = minPositiveDuration(clip.duration, clip.audioTrackDuration, audioAvailableDuration) ?? clip.duration
+                let audioRange = CMTimeRange(start: audioSourceStart, duration: audioDuration)
                 do {
                     try audioTracks[trackIndex].insertTimeRange(audioRange, of: audioTrack, at: cursor)
                 } catch {
@@ -292,15 +296,21 @@ public final class AVFoundationRenderEngine {
 
         let audioTrack = includeAudio ? (try? await asset.loadTracks(withMediaType: .audio).first) : nil
         let audioTrackDuration: CMTime?
+        let audioTrackTimeRange: CMTimeRange?
         if let audioTrack {
-            audioTrackDuration = (try? await audioTrack.load(.timeRange))?.duration
+            let timeRange = try? await audioTrack.load(.timeRange)
+            audioTrackDuration = timeRange?.duration
+            audioTrackTimeRange = timeRange
         } else {
             audioTrackDuration = nil
+            audioTrackTimeRange = nil
         }
 
         return InputClip(
             videoTrack: videoTrack,
             audioTrack: audioTrack,
+            videoTrackTimeRange: videoTrackRange,
+            audioTrackTimeRange: audioTrackTimeRange,
             videoTrackDuration: videoTrackDuration,
             audioTrackDuration: audioTrackDuration,
             duration: clipDuration,
@@ -397,6 +407,8 @@ public final class AVFoundationRenderEngine {
     private struct InputClip {
         let videoTrack: AVAssetTrack
         let audioTrack: AVAssetTrack?
+        let videoTrackTimeRange: CMTimeRange?
+        let audioTrackTimeRange: CMTimeRange?
         let videoTrackDuration: CMTime?
         let audioTrackDuration: CMTime?
         let duration: CMTime
@@ -420,8 +432,8 @@ public final class AVFoundationRenderEngine {
             .min { CMTimeCompare($0, $1) < 0 }
     }
 
-    private func minPositiveDuration(_ lhs: CMTime?, _ rhs: CMTime?) -> CMTime? {
-        smallestPositiveDuration([lhs, rhs])
+    private func minPositiveDuration(_ values: CMTime?...) -> CMTime? {
+        smallestPositiveDuration(values)
     }
 
     private func isPositiveFiniteTime(_ value: CMTime) -> Bool {
