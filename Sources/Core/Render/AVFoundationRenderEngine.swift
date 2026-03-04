@@ -116,6 +116,14 @@ public final class AVFoundationRenderEngine {
                 transitionDuration: transitionDuration,
                 compositionTracks: videoTracks
             )
+            let colorConfiguration = colorConfiguration(for: exportProfile.dynamicRange)
+            videoComposition.colorPrimaries = colorConfiguration.colorPrimaries
+            videoComposition.colorTransferFunction = colorConfiguration.colorTransferFunction
+            videoComposition.colorYCbCrMatrix = colorConfiguration.colorYCbCrMatrix
+            diagnostics.add(
+                "Video composition color properties: primaries=\(colorConfiguration.colorPrimaries), " +
+                "transfer=\(colorConfiguration.colorTransferFunction), matrix=\(colorConfiguration.colorYCbCrMatrix)"
+            )
 
             let outputURL = try OutputPathResolver.resolveUniqueURL(target: outputTarget, container: exportProfile.container)
             diagnostics.add("Resolved output URL: \(outputURL.path)")
@@ -422,6 +430,29 @@ public final class AVFoundationRenderEngine {
             return preferred
         }
         return session.supportedFileTypes.first ?? .mov
+    }
+
+    struct VideoColorConfiguration: Equatable {
+        let colorPrimaries: String
+        let colorTransferFunction: String
+        let colorYCbCrMatrix: String
+    }
+
+    func colorConfiguration(for dynamicRange: DynamicRange) -> VideoColorConfiguration {
+        switch dynamicRange {
+        case .sdr:
+            return VideoColorConfiguration(
+                colorPrimaries: AVVideoColorPrimaries_ITU_R_709_2,
+                colorTransferFunction: AVVideoTransferFunction_ITU_R_709_2,
+                colorYCbCrMatrix: AVVideoYCbCrMatrix_ITU_R_709_2
+            )
+        case .hdr:
+            return VideoColorConfiguration(
+                colorPrimaries: AVVideoColorPrimaries_ITU_R_2020,
+                colorTransferFunction: AVVideoTransferFunction_ITU_R_2100_HLG,
+                colorYCbCrMatrix: AVVideoYCbCrMatrix_ITU_R_2020
+            )
+        }
     }
 
     private func export(session: AVAssetExportSession) async throws {

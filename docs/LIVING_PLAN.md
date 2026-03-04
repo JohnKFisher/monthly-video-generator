@@ -59,6 +59,7 @@ Operational updates after first packaged run:
 - Hotfix: render input clips now retain their backing `AVAsset` objects through composition insertion, preventing index-0 `AVFoundationErrorDomain -11800` (`NSOSStatus -12780`) caused by invalidated track references.
 - Added opening-title text input in the Style panel so title card text can be set explicitly for each render.
 - Hotfix: title-card fallback rendering now draws title text (instead of a blank card) when AppKit title rasterization fails.
+- Hotfix: renderer now applies explicit output color metadata based on export dynamic range (SDR=BT.709, HDR=BT.2020 HLG) instead of leaving dynamic-range choice advisory only.
 
 ## Decisions Log
 
@@ -80,6 +81,7 @@ Operational updates after first packaged run:
 - 2026-03-04: Added strong lifetime retention for source `AVAsset` instances inside render input clips so AVFoundation track insertion operates on valid backing assets.
 - 2026-03-04: Added explicit opening-title text input with non-empty fallback behavior when the field is blank.
 - 2026-03-04: Updated title-card fallback image generation to render readable title text rather than a blank screen.
+- 2026-03-04: Made dynamic-range selection operational by mapping SDR/HDR profile choice to concrete video composition color properties during export.
 
 ## Changes Since Last Update
 
@@ -104,6 +106,7 @@ Operational updates after first packaged run:
 - 2026-03-04: Added render-path asset retention hotfix for generated and source clips to prevent `-12780` insertion failures at index 0.
 - 2026-03-04: Added opening-title text field to UI/view-model wiring and used it in style generation with a month/year fallback when blank.
 - 2026-03-04: Updated fallback title-card renderer to include title text so title clips remain visible even after rasterization fallback.
+- 2026-03-04: Enforced explicit output color metadata mapping for SDR/HDR in render export and added regression tests for color-profile mapping.
 
 ## Risks/Blockers
 
@@ -119,4 +122,4 @@ Operational updates after first packaged run:
 
 ## Last Updated
 
-2026-03-04 11:16 America/New_York by Codex
+2026-03-04 11:31 America/New_York by Codex

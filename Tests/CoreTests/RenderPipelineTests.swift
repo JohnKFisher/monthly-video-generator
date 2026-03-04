@@ -1,5 +1,5 @@
 import AVFoundation
-import Core
+@testable import Core
 import Foundation
 import XCTest
 
@@ -30,5 +30,25 @@ final class RenderPipelineTests: XCTestCase {
         let preparation = coordinator.prepareFromItems([item], request: request)
 
         XCTAssertFalse(preparation.warnings.isEmpty)
+    }
+
+    func testSDRColorConfigurationUsesBT709() {
+        let engine = AVFoundationRenderEngine()
+
+        let config = engine.colorConfiguration(for: .sdr)
+
+        XCTAssertEqual(config.colorPrimaries, AVVideoColorPrimaries_ITU_R_709_2)
+        XCTAssertEqual(config.colorTransferFunction, AVVideoTransferFunction_ITU_R_709_2)
+        XCTAssertEqual(config.colorYCbCrMatrix, AVVideoYCbCrMatrix_ITU_R_709_2)
+    }
+
+    func testHDRColorConfigurationUsesBT2020HLG() {
+        let engine = AVFoundationRenderEngine()
+
+        let config = engine.colorConfiguration(for: .hdr)
+
+        XCTAssertEqual(config.colorPrimaries, AVVideoColorPrimaries_ITU_R_2020)
+        XCTAssertEqual(config.colorTransferFunction, AVVideoTransferFunction_ITU_R_2100_HLG)
+        XCTAssertEqual(config.colorYCbCrMatrix, AVVideoYCbCrMatrix_ITU_R_2020)
     }
 }
