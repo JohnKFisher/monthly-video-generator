@@ -54,6 +54,7 @@ Operational updates after first packaged run:
 - Hotfix: still/title clip duration handling now aligns written clip end time and clamps insertion to actual track durations to prevent `AVFoundationErrorDomain -11800` insertion failures.
 - Hotfix: composition insertion now uses source track timeRange starts (not assumed zero), preventing range mismatch on generated title clips.
 - Added failure diagnostics hooks that write a detailed export log file (clip metadata, time ranges, insertion attempts, NSError userInfo) and include that file path in UI error output.
+- Hotfix: generated still/title intermediate clips now use HEVC for large frame sizes instead of always H.264, to avoid invalid high-resolution H.264 intermediates causing insertion failures.
 
 ## Decisions Log
 
@@ -70,6 +71,7 @@ Operational updates after first packaged run:
 - 2026-03-04: Fixed title/still clip duration mismatch risk by ending writer sessions at target duration and clamping composition insertion ranges to loaded track durations.
 - 2026-03-04: Fixed composition insertion to respect source track start offsets for video/audio tracks.
 - 2026-03-04: Added persistent diagnostics file generation on export failure for rapid root-cause analysis.
+- 2026-03-04: Switched large-dimension intermediate still/title encoding to HEVC after diagnostics showed immediate insertion failure on 5712x4284 generated H.264 clips.
 
 ## Changes Since Last Update
 
@@ -89,6 +91,7 @@ Operational updates after first packaged run:
 - 2026-03-04: Fixed potential first-segment title insertion failure by tightening clip duration math and insertion range selection.
 - 2026-03-04: Fixed title-card insertion to use track-native time range starts during composition.
 - 2026-03-04: Added per-run failure diagnostics hooks and surfaced diagnostics log path in export error messages.
+- 2026-03-04: Updated still/title intermediate codec selection for large dimensions to prevent first-clip insertion failure.
 
 ## Risks/Blockers
 
@@ -104,4 +107,4 @@ Operational updates after first packaged run:
 
 ## Last Updated
 
-2026-03-04 09:41 America/New_York by Codex
+2026-03-04 09:53 America/New_York by Codex

@@ -41,8 +41,9 @@ public final class StillImageClipFactory {
         let outputURL = temporaryClipURL()
 
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
+        let codec = preferredIntermediateCodec(for: renderSize)
         let settings: [String: Any] = [
-            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoCodecKey: codec,
             AVVideoWidthKey: Int(renderSize.width),
             AVVideoHeightKey: Int(renderSize.height)
         ]
@@ -87,6 +88,16 @@ public final class StillImageClipFactory {
         input.markAsFinished()
         try await finish(writer: writer)
         return outputURL
+    }
+
+    private func preferredIntermediateCodec(for renderSize: CGSize) -> AVVideoCodecType {
+        let width = Int(renderSize.width.rounded())
+        let height = Int(renderSize.height.rounded())
+        // H.264 at very large still-image dimensions can produce clips that later fail track insertion.
+        if width > 4096 || height > 2304 {
+            return .hevc
+        }
+        return .h264
     }
 
     private func loadRasterizedImage(from url: URL, renderSize: CGSize) throws -> CGImage {
