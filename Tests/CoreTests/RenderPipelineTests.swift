@@ -1,6 +1,7 @@
 import AVFoundation
 @testable import Core
 import Foundation
+import VideoToolbox
 import XCTest
 
 final class RenderPipelineTests: XCTestCase {
@@ -80,5 +81,55 @@ final class RenderPipelineTests: XCTestCase {
         )
 
         XCTAssertFalse(engine.shouldApplyHDRToneMapping(for: profile))
+    }
+
+    func testHDRWriterSettingsUseMain10AndAutoMetadataInsertion() {
+        let engine = AVFoundationRenderEngine()
+        let config = engine.colorConfiguration(for: .hdr)
+
+        let settings = engine.hdrToneMappedVideoSettings(
+            renderSize: CGSize(width: 2160, height: 3840),
+            frameRate: 30,
+            colorConfiguration: config,
+            metadataPolicy: .autoRecomputeDynamicMetadata
+        )
+
+        let compression = tryUnwrapCompressionSettings(settings)
+        let codecType = settings[AVVideoCodecKey] as? AVVideoCodecType
+        let codecString = settings[AVVideoCodecKey] as? String
+        XCTAssertTrue(codecType == .hevc || codecString == AVVideoCodecType.hevc.rawValue)
+        XCTAssertEqual(compression[AVVideoProfileLevelKey] as? String, kVTProfileLevel_HEVC_Main10_AutoLevel as String)
+        XCTAssertEqual(
+            compression[kVTCompressionPropertyKey_HDRMetadataInsertionMode as String] as? String,
+            kVTHDRMetadataInsertionMode_Auto as String
+        )
+        XCTAssertEqual(compression[kVTCompressionPropertyKey_PreserveDynamicHDRMetadata as String] as? Bool, false)
+    }
+
+    func testHDRWriterSettingsFallbackDisablesDynamicMetadataInsertion() {
+        let engine = AVFoundationRenderEngine()
+        let config = engine.colorConfiguration(for: .hdr)
+
+        let settings = engine.hdrToneMappedVideoSettings(
+            renderSize: CGSize(width: 2160, height: 3840),
+            frameRate: 30,
+            colorConfiguration: config,
+            metadataPolicy: .hlgWithoutDynamicMetadata(reason: "unit test")
+        )
+
+        let compression = tryUnwrapCompressionSettings(settings)
+        XCTAssertEqual(
+            compression[kVTCompressionPropertyKey_HDRMetadataInsertionMode as String] as? String,
+            kVTHDRMetadataInsertionMode_None as String
+        )
+        XCTAssertEqual(compression[kVTCompressionPropertyKey_PreserveDynamicHDRMetadata as String] as? Bool, false)
+    }
+
+    private func tryUnwrapCompressionSettings(_ settings: [String: Any]) -> [String: Any] {
+        guard let compression = settings[AVVideoCompressionPropertiesKey] as? [String: Any] else {
+            XCTFail("Missing AVVideoCompressionPropertiesKey in HDR writer settings.")
+            return [:]
+        }
+        return compression
     }
 }

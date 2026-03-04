@@ -65,6 +65,8 @@ Operational updates after first packaged run:
 - Improved progress reporting so the UI progress bar now advances across materialization, composition/export, and HDR tone-map phases instead of jumping only at start/end.
 - Hotfix: HDR tone-map pass now fails with explicit timeout/status errors when writer input stalls, preventing indefinite “hang” behavior.
 - Hotfix: HDR tone-map pass now interleaves audio sample appends while video frames are written, reducing writer backpressure stalls that previously timed out mid-pass.
+- Hotfix: HDR tone-map pass now uses a standards-based identity 10-bit pipeline (HLG/BT.2020) with explicit HDR metadata insertion policy instead of a creative filter stack that caused severe clipping/saturation artifacts.
+- Hotfix: HDR writer settings now enforce HEVC Main10 with explicit metadata policy (Auto + recompute), and fall back to HLG static signaling (`metadata insertion = None`) when encoder support is limited.
 
 ## Decisions Log
 
@@ -92,6 +94,8 @@ Operational updates after first packaged run:
 - 2026-03-04: Added phase-aware render progress callbacks and UI progress mapping so progress remains useful throughout long exports.
 - 2026-03-04: Added bounded writer-readiness waits in HDR tone mapping so stalled encoder states produce clear failures instead of unbounded waits.
 - 2026-03-04: Changed HDR tone-map writer flow to drain audio incrementally during video encoding and in bounded bursts during finalization to avoid muxer starvation stalls.
+- 2026-03-04: Replaced creative HDR filter grading with identity color-managed processing in a 10-bit x420 reader/writer path to preserve iPhone HDR appearance.
+- 2026-03-04: Adopted explicit VideoToolbox HDR metadata policy settings (`HDRMetadataInsertionMode`, `PreserveDynamicHDRMetadata`) with diagnostics and safe fallback behavior.
 
 ## Changes Since Last Update
 
@@ -122,6 +126,8 @@ Operational updates after first packaged run:
 - 2026-03-04: Wired determinate progress updates end-to-end (materialization, insertion/export polling, HDR tone mapping) and surfaced percent status text in the app UI.
 - 2026-03-04: Hardened HDR tone-map writer readiness waits with timeout + writer-status checks to prevent apparent hangs on problematic exports.
 - 2026-03-04: Updated HDR tone-map audio handling to append ready audio samples during frame rendering and complete remaining audio in bounded bursts to prevent writer backpressure deadlocks.
+- 2026-03-04: Updated HDR writer configuration to HEVC Main10 + BT.2020 HLG metadata policy, removed creative tone-curve adjustments, and rendered HDR pass in 10-bit x420 buffers.
+- 2026-03-04: Added HDR writer-settings regression tests that verify Main10 profile, metadata insertion mode, and dynamic metadata regeneration policy.
 
 ## Risks/Blockers
 
@@ -138,4 +144,4 @@ Operational updates after first packaged run:
 
 ## Last Updated
 
-2026-03-04 14:10 America/New_York by Codex
+2026-03-04 14:59 America/New_York by Codex

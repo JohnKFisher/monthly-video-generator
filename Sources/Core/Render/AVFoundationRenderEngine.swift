@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreImage
 import Foundation
+import VideoToolbox
 
 public final class AVFoundationRenderEngine {
     private var currentSession: AVAssetExportSession?
@@ -478,17 +479,41 @@ public final class AVFoundationRenderEngine {
         let colorYCbCrMatrix: String
     }
 
-    struct HDRToneMapParameters: Equatable {
-        let exposureEV: Float
-        let contrast: Float
-        let saturation: Float
-        let shadowLift: Float
-        let highlightCompression: Float
-        let point0: CGPoint
-        let point1: CGPoint
-        let point2: CGPoint
-        let point3: CGPoint
-        let point4: CGPoint
+    enum HDRMetadataPolicy: Equatable {
+        case autoRecomputeDynamicMetadata
+        case hlgWithoutDynamicMetadata(reason: String)
+
+        var insertionMode: String {
+            switch self {
+            case .autoRecomputeDynamicMetadata:
+                return kVTHDRMetadataInsertionMode_Auto as String
+            case .hlgWithoutDynamicMetadata:
+                return kVTHDRMetadataInsertionMode_None as String
+            }
+        }
+
+        var insertionModeLabel: String {
+            switch self {
+            case .autoRecomputeDynamicMetadata:
+                return "Auto"
+            case .hlgWithoutDynamicMetadata:
+                return "None"
+            }
+        }
+
+        var preserveDynamicHDRMetadata: Bool {
+            // Reader/writer frame modification path should regenerate dynamic metadata.
+            false
+        }
+
+        var fallbackReason: String? {
+            switch self {
+            case .autoRecomputeDynamicMetadata:
+                return nil
+            case let .hlgWithoutDynamicMetadata(reason):
+                return reason
+            }
+        }
     }
 
     func colorConfiguration(for dynamicRange: DynamicRange) -> VideoColorConfiguration {
@@ -510,21 +535,6 @@ public final class AVFoundationRenderEngine {
 
     func shouldApplyHDRToneMapping(for profile: ExportProfile) -> Bool {
         profile.dynamicRange == .hdr
-    }
-
-    func hdrToneMapParameters() -> HDRToneMapParameters {
-        HDRToneMapParameters(
-            exposureEV: 0.18,
-            contrast: 1.05,
-            saturation: 1.03,
-            shadowLift: 0.24,
-            highlightCompression: 0.08,
-            point0: CGPoint(x: 0.0, y: 0.0),
-            point1: CGPoint(x: 0.22, y: 0.30),
-            point2: CGPoint(x: 0.50, y: 0.63),
-            point3: CGPoint(x: 0.78, y: 0.90),
-            point4: CGPoint(x: 1.0, y: 1.0)
-        )
     }
 
     private struct ToneMapAudioPipeline {
@@ -561,11 +571,11 @@ public final class AVFoundationRenderEngine {
             let nominalFrameRate = (try? await videoTrack.load(.nominalFrameRate)) ?? 0
             let frameRate = max(Double(nominalFrameRate), 30.0)
             let estimatedFrames = max(Int(ceil(max(sourceDuration.seconds, 0.01) * frameRate)), 1)
-            let toneMapSettings = hdrToneMapParameters()
 
             let reader = try AVAssetReader(asset: sourceAsset)
+            let readerPixelFormat = hdrToneMapPixelFormat()
             let videoOutputSettings: [String: Any] = [
-                kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)
+                kCVPixelBufferPixelFormatTypeKey as String: Int(readerPixelFormat)
             ]
             let videoOutput = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: videoOutputSettings)
             videoOutput.alwaysCopiesSampleData = false
@@ -577,11 +587,25 @@ public final class AVFoundationRenderEngine {
             let fileType = fileType(for: container)
             let writer = try AVAssetWriter(outputURL: outputURL, fileType: fileType)
             let hdrColorConfiguration = colorConfiguration(for: .hdr)
-            let videoWriterSettings = hdrToneMappedVideoSettings(
+            var hdrMetadataPolicy: HDRMetadataPolicy = .autoRecomputeDynamicMetadata
+            let writerProfileLevel = kVTProfileLevel_HEVC_Main10_AutoLevel as String
+            var videoWriterSettings = hdrToneMappedVideoSettings(
                 renderSize: outputSize,
                 frameRate: frameRate,
-                colorConfiguration: hdrColorConfiguration
+                colorConfiguration: hdrColorConfiguration,
+                metadataPolicy: hdrMetadataPolicy
             )
+            if !writer.canApply(outputSettings: videoWriterSettings, forMediaType: .video) {
+                hdrMetadataPolicy = .hlgWithoutDynamicMetadata(
+                    reason: "Encoder rejected HDR metadata insertion mode Auto; falling back to insertion mode None."
+                )
+                videoWriterSettings = hdrToneMappedVideoSettings(
+                    renderSize: outputSize,
+                    frameRate: frameRate,
+                    colorConfiguration: hdrColorConfiguration,
+                    metadataPolicy: hdrMetadataPolicy
+                )
+            }
             guard writer.canApply(outputSettings: videoWriterSettings, forMediaType: .video) else {
                 throw RenderError.exportFailed("Unable to apply HDR writer settings for tone-mapping pass.")
             }
@@ -594,11 +618,10 @@ public final class AVFoundationRenderEngine {
             writer.add(videoInput)
 
             let pixelBufferAttributes: [String: Any] = [
-                kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA),
+                kCVPixelBufferPixelFormatTypeKey as String: Int(readerPixelFormat),
                 kCVPixelBufferWidthKey as String: Int(outputSize.width),
                 kCVPixelBufferHeightKey as String: Int(outputSize.height),
-                kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
-                kCVPixelBufferCGImageCompatibilityKey as String: true
+                kCVPixelBufferIOSurfacePropertiesKey as String: [:]
             ]
             let adaptor = AVAssetWriterInputPixelBufferAdaptor(
                 assetWriterInput: videoInput,
@@ -637,8 +660,18 @@ public final class AVFoundationRenderEngine {
                 "HDR tone-map pass started: source=\(inputURL.path), output=\(outputURL.path), " +
                 "size=\(Int(outputSize.width))x\(Int(outputSize.height)), frameRate=\(String(format: "%.2f", frameRate)), estimatedFrames=\(estimatedFrames)"
             )
+            diagnostics.add("HDR tone-map reader pixel format: \(describePixelFormat(readerPixelFormat))")
+            diagnostics.add("HDR tone-map writer profile: \(writerProfileLevel)")
+            diagnostics.add("HDR tone-map writer metadata insertion mode: \(hdrMetadataPolicy.insertionModeLabel)")
+            diagnostics.add("HDR tone-map writer preserve dynamic metadata: \(hdrMetadataPolicy.preserveDynamicHDRMetadata)")
+            if let fallbackReason = hdrMetadataPolicy.fallbackReason {
+                diagnostics.add("HDR tone-map writer fallback: \(fallbackReason)")
+            }
 
             let ciContext = CIContext(options: [CIContextOption.cacheIntermediates: false])
+            guard let hdrColorSpace = CGColorSpace(name: CGColorSpace.itur_2100_HLG) else {
+                throw RenderError.exportFailed("Unable to initialize HDR color space for tone-map pass.")
+            }
             var frameCount = 0
 
             while let sampleBuffer = videoOutput.copyNextSampleBuffer() {
@@ -663,10 +696,13 @@ public final class AVFoundationRenderEngine {
                     throw RenderError.exportFailed("Unable to allocate destination pixel buffer for HDR tone-map pass.")
                 }
 
-                let sourceImage = CIImage(cvImageBuffer: imageBuffer)
-                let mappedImage = toneMappedHDRImage(sourceImage, parameters: toneMapSettings)
+                let sourceImage = CIImage(
+                    cvImageBuffer: imageBuffer,
+                    options: [.colorSpace: hdrColorSpace]
+                )
+                let mappedImage = toneMappedHDRImage(sourceImage)
                 let renderBounds = CGRect(origin: .zero, size: outputSize)
-                ciContext.render(mappedImage, to: destinationBuffer, bounds: renderBounds, colorSpace: nil)
+                ciContext.render(mappedImage, to: destinationBuffer, bounds: renderBounds, colorSpace: hdrColorSpace)
 
                 let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
                 guard adaptor.append(destinationBuffer, withPresentationTime: presentationTime) else {
@@ -743,10 +779,11 @@ public final class AVFoundationRenderEngine {
         }
     }
 
-    private func hdrToneMappedVideoSettings(
+    func hdrToneMappedVideoSettings(
         renderSize: CGSize,
         frameRate: Double,
-        colorConfiguration: VideoColorConfiguration
+        colorConfiguration: VideoColorConfiguration,
+        metadataPolicy: HDRMetadataPolicy
     ) -> [String: Any] {
         let width = Int(renderSize.width.rounded())
         let height = Int(renderSize.height.rounded())
@@ -763,45 +800,32 @@ public final class AVFoundationRenderEngine {
             ],
             AVVideoCompressionPropertiesKey: [
                 AVVideoAverageBitRateKey: bitrate,
-                AVVideoAllowFrameReorderingKey: false
+                AVVideoAllowFrameReorderingKey: false,
+                AVVideoProfileLevelKey: kVTProfileLevel_HEVC_Main10_AutoLevel as String,
+                kVTCompressionPropertyKey_HDRMetadataInsertionMode as String: metadataPolicy.insertionMode,
+                kVTCompressionPropertyKey_PreserveDynamicHDRMetadata as String: metadataPolicy.preserveDynamicHDRMetadata
             ]
         ]
     }
 
-    private func toneMappedHDRImage(_ sourceImage: CIImage, parameters: HDRToneMapParameters) -> CIImage {
-        var outputImage = sourceImage
+    private func toneMappedHDRImage(_ sourceImage: CIImage) -> CIImage {
+        // Keep HDR pass visually identity-based; writer metadata policy handles HDR signaling.
+        sourceImage
+    }
 
-        if let exposureFilter = CIFilter(name: "CIExposureAdjust") {
-            exposureFilter.setValue(outputImage, forKey: kCIInputImageKey)
-            exposureFilter.setValue(parameters.exposureEV, forKey: kCIInputEVKey)
-            outputImage = exposureFilter.outputImage ?? outputImage
+    private func hdrToneMapPixelFormat() -> OSType {
+        kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+    }
+
+    private func describePixelFormat(_ pixelFormat: OSType) -> String {
+        switch pixelFormat {
+        case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
+            return "kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange"
+        case kCVPixelFormatType_32BGRA:
+            return "kCVPixelFormatType_32BGRA"
+        default:
+            return String(format: "0x%08X", pixelFormat)
         }
-
-        if let colorControls = CIFilter(name: "CIColorControls") {
-            colorControls.setValue(outputImage, forKey: kCIInputImageKey)
-            colorControls.setValue(parameters.contrast, forKey: kCIInputContrastKey)
-            colorControls.setValue(parameters.saturation, forKey: kCIInputSaturationKey)
-            outputImage = colorControls.outputImage ?? outputImage
-        }
-
-        if let toneCurve = CIFilter(name: "CIToneCurve") {
-            toneCurve.setValue(outputImage, forKey: kCIInputImageKey)
-            toneCurve.setValue(CIVector(cgPoint: parameters.point0), forKey: "inputPoint0")
-            toneCurve.setValue(CIVector(cgPoint: parameters.point1), forKey: "inputPoint1")
-            toneCurve.setValue(CIVector(cgPoint: parameters.point2), forKey: "inputPoint2")
-            toneCurve.setValue(CIVector(cgPoint: parameters.point3), forKey: "inputPoint3")
-            toneCurve.setValue(CIVector(cgPoint: parameters.point4), forKey: "inputPoint4")
-            outputImage = toneCurve.outputImage ?? outputImage
-        }
-
-        if let shadowHighlight = CIFilter(name: "CIHighlightShadowAdjust") {
-            shadowHighlight.setValue(outputImage, forKey: kCIInputImageKey)
-            shadowHighlight.setValue(parameters.shadowLift, forKey: "inputShadowAmount")
-            shadowHighlight.setValue(parameters.highlightCompression, forKey: "inputHighlightAmount")
-            outputImage = shadowHighlight.outputImage ?? outputImage
-        }
-
-        return outputImage
     }
 
     private func waitForWriterInputReadiness(
