@@ -223,9 +223,41 @@ final class MainWindowViewModel: ObservableObject {
             statusMessage = "Render complete"
         } catch {
             progress = 0
-            statusMessage = error.localizedDescription
+            statusMessage = formatErrorForDisplay(error)
         }
 
         isRendering = false
+    }
+
+    private func formatErrorForDisplay(_ error: Error) -> String {
+        let nsError = error as NSError
+        var parts: [String] = []
+
+        if let renderError = error as? RenderError, let description = renderError.errorDescription {
+            parts.append(description)
+        } else {
+            parts.append("The operation could not be completed.")
+        }
+
+        parts.append("Domain: \(nsError.domain) Code: \(nsError.code)")
+
+        if !nsError.localizedDescription.isEmpty,
+           nsError.localizedDescription != "The operation could not be completed." {
+            parts.append(nsError.localizedDescription)
+        }
+
+        if let reason = nsError.localizedFailureReason, !reason.isEmpty {
+            parts.append("Reason: \(reason)")
+        }
+
+        if let suggestion = nsError.localizedRecoverySuggestion, !suggestion.isEmpty {
+            parts.append("Suggestion: \(suggestion)")
+        }
+
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
+            parts.append("Underlying: \(underlying.domain) (\(underlying.code)) \(underlying.localizedDescription)")
+        }
+
+        return parts.joined(separator: "\n")
     }
 }

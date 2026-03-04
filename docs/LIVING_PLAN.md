@@ -50,6 +50,7 @@ Operational updates after first packaged run:
 - Added visible app version/build label in the main window.
 - Patched still-image rendering path to decode and rasterize source images once before frame emission to reduce provider-related crash risk.
 - Hotfix: title card generation now runs on the main actor with a fallback solid-card path to prevent immediate export failure when title card rasterization fails.
+- Hotfix: render and UI error handling now includes detailed domain/code/reason/underlying errors and source clip context instead of generic operation failures.
 
 ## Decisions Log
 
@@ -62,6 +63,7 @@ Operational updates after first packaged run:
 - 2026-03-04: Surface `CFBundleShortVersionString` and `CFBundleVersion` in UI for runtime traceability.
 - 2026-03-04: Switched still image clip creation to ImageIO decode + rasterization path to address crash in CoreGraphics provider reads.
 - 2026-03-04: Added title-card creation fallback and main-actor AppKit rendering path after user-reported `Unable to create title card image` runtime failure.
+- 2026-03-04: Added contextual renderer error wrapping and UI-expanded error diagnostics after user-reported generic `The operation could not be completed`.
 
 ## Changes Since Last Update
 
@@ -77,6 +79,7 @@ Operational updates after first packaged run:
 - 2026-03-04: Added version/build label to main UI.
 - 2026-03-04: Reworked still-image rendering to use pre-rasterized CGImage frames for stability.
 - 2026-03-04: Added title-card hotfix to avoid export abort on title rasterization failure.
+- 2026-03-04: Added detailed error surfacing in UI and render pipeline for actionable debugging.
 
 ## Risks/Blockers
 
@@ -92,4 +95,4 @@ Operational updates after first packaged run:
 
 ## Last Updated
 
-2026-03-04 08:51 America/New_York by Codex
+2026-03-04 08:55 America/New_York by Codex

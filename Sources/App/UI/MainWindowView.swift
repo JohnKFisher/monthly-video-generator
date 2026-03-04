@@ -147,6 +147,8 @@ struct MainWindowView: View {
                 ProgressView(value: viewModel.progress)
                 Text(viewModel.statusMessage)
                     .font(.footnote)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 if !viewModel.lastOutputPath.isEmpty {
                     Text(viewModel.lastOutputPath)
                         .font(.caption)

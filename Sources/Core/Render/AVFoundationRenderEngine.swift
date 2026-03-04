@@ -66,10 +66,18 @@ public final class AVFoundationRenderEngine {
             let trackIndex = index % 2
             let insertRange = CMTimeRange(start: .zero, duration: clip.duration)
 
-            try videoTracks[trackIndex].insertTimeRange(insertRange, of: clip.videoTrack, at: cursor)
+            do {
+                try videoTracks[trackIndex].insertTimeRange(insertRange, of: clip.videoTrack, at: cursor)
+            } catch {
+                throw RenderError.exportFailed("Video track insertion failed for \(clip.sourceDescription) at index \(index). \(describe(error))")
+            }
 
             if clip.includeAudio, let audioTrack = clip.audioTrack {
-                try audioTracks[trackIndex].insertTimeRange(insertRange, of: audioTrack, at: cursor)
+                do {
+                    try audioTracks[trackIndex].insertTimeRange(insertRange, of: audioTrack, at: cursor)
+                } catch {
+                    throw RenderError.exportFailed("Audio track insertion failed for \(clip.sourceDescription) at index \(index). \(describe(error))")
+                }
             }
 
             cursor = add(cursor, clip.duration)
@@ -188,7 +196,13 @@ public final class AVFoundationRenderEngine {
             case let .titleCard(title):
                 let titleURL = try await stillImageClipFactory.makeTitleCardClip(title: title, duration: segment.duration, renderSize: renderSize)
                 temporaryURLs.append(titleURL)
-                if let clip = try await makeClip(assetURL: titleURL, fallbackDuration: segment.duration, includeAudio: false, isTemporary: true) {
+                if let clip = try await makeClip(
+                    assetURL: titleURL,
+                    fallbackDuration: segment.duration,
+                    includeAudio: false,
+                    sourceDescription: "title card '\(title)'",
+                    isTemporary: true
+                ) {
                     clips.append(clip)
                 }
 
@@ -198,13 +212,25 @@ public final class AVFoundationRenderEngine {
                     let sourceURL = try await resolveURL(for: item, photoMaterializer: photoMaterializer)
                     let imageClipURL = try await stillImageClipFactory.makeVideoClip(fromImageURL: sourceURL, duration: segment.duration, renderSize: renderSize)
                     temporaryURLs.append(imageClipURL)
-                    if let clip = try await makeClip(assetURL: imageClipURL, fallbackDuration: segment.duration, includeAudio: false, isTemporary: true) {
+                    if let clip = try await makeClip(
+                        assetURL: imageClipURL,
+                        fallbackDuration: segment.duration,
+                        includeAudio: false,
+                        sourceDescription: "image \(item.filename)",
+                        isTemporary: true
+                    ) {
                         clips.append(clip)
                     }
 
                 case .video:
                     let sourceURL = try await resolveURL(for: item, photoMaterializer: photoMaterializer)
-                    if let clip = try await makeClip(assetURL: sourceURL, fallbackDuration: segment.duration, includeAudio: true, isTemporary: false) {
+                    if let clip = try await makeClip(
+                        assetURL: sourceURL,
+                        fallbackDuration: segment.duration,
+                        includeAudio: true,
+                        sourceDescription: "video \(item.filename)",
+                        isTemporary: false
+                    ) {
                         clips.append(clip)
                     }
                 }
@@ -230,16 +256,32 @@ public final class AVFoundationRenderEngine {
         assetURL: URL,
         fallbackDuration: CMTime,
         includeAudio: Bool,
+        sourceDescription: String,
         isTemporary: Bool
     ) async throws -> InputClip? {
         let asset = AVURLAsset(url: assetURL)
-        let videoTracks = try await asset.loadTracks(withMediaType: .video)
+        let videoTracks: [AVAssetTrack]
+        do {
+            videoTracks = try await asset.loadTracks(withMediaType: .video)
+        } catch {
+            throw RenderError.exportFailed("Unable to load video tracks for \(sourceDescription). \(describe(error))")
+        }
 
         guard let videoTrack = videoTracks.first else {
+            throw RenderError.exportFailed("No video tracks found for \(sourceDescription).")
+        }
+
+        let assetDuration: CMTime
+        do {
+            assetDuration = (try await asset.load(.duration))
+        } catch {
+            throw RenderError.exportFailed("Unable to load duration for \(sourceDescription). \(describe(error))")
+        }
+
+        guard assetDuration > .zero || fallbackDuration > .zero else {
             return nil
         }
 
-        let assetDuration = (try? await asset.load(.duration)) ?? fallbackDuration
         let clipDuration = assetDuration > .zero ? minTime(assetDuration, fallbackDuration) : fallbackDuration
         let naturalSize = (try? await videoTrack.load(.naturalSize)) ?? CGSize(width: 1920, height: 1080)
         let preferredTransform = (try? await videoTrack.load(.preferredTransform)) ?? .identity
@@ -252,6 +294,7 @@ public final class AVFoundationRenderEngine {
             duration: clipDuration,
             preferredTransform: preferredTransform,
             naturalSize: naturalSize,
+            sourceDescription: sourceDescription,
             isTemporary: isTemporary,
             includeAudio: includeAudio
         )
@@ -345,7 +388,14 @@ public final class AVFoundationRenderEngine {
         let duration: CMTime
         let preferredTransform: CGAffineTransform
         let naturalSize: CGSize
+        let sourceDescription: String
         let isTemporary: Bool
         let includeAudio: Bool
+    }
+
+    private func describe(_ error: Error) -> String {
+        let nsError = error as NSError
+        let reason = nsError.localizedFailureReason ?? nsError.localizedRecoverySuggestion ?? "No additional details."
+        return "\(nsError.domain) code \(nsError.code): \(nsError.localizedDescription). \(reason)"
     }
 }
