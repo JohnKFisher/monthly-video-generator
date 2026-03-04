@@ -54,7 +54,8 @@ Operational updates after first packaged run:
 - Hotfix: still/title clip duration handling now aligns written clip end time and clamps insertion to actual track durations to prevent `AVFoundationErrorDomain -11800` insertion failures.
 - Hotfix: composition insertion now uses source track timeRange starts (not assumed zero), preventing range mismatch on generated title clips.
 - Added failure diagnostics hooks that write a detailed export log file (clip metadata, time ranges, insertion attempts, NSError userInfo) and include that file path in UI error output.
-- Hotfix: generated still/title intermediate clips now use HEVC for large frame sizes instead of always H.264, to avoid invalid high-resolution H.264 intermediates causing insertion failures.
+- Hotfix: generated still/title intermediate clips now prefer ProRes 422 for large frame sizes, with runtime codec compatibility probing/fallback, to avoid invalid high-resolution intermediates causing insertion failures.
+- Added a regression test that generates a 5712x4284 still-image clip and verifies composition track insertion succeeds.
 
 ## Decisions Log
 
@@ -71,7 +72,8 @@ Operational updates after first packaged run:
 - 2026-03-04: Fixed title/still clip duration mismatch risk by ending writer sessions at target duration and clamping composition insertion ranges to loaded track durations.
 - 2026-03-04: Fixed composition insertion to respect source track start offsets for video/audio tracks.
 - 2026-03-04: Added persistent diagnostics file generation on export failure for rapid root-cause analysis.
-- 2026-03-04: Switched large-dimension intermediate still/title encoding to HEVC after diagnostics showed immediate insertion failure on 5712x4284 generated H.264 clips.
+- 2026-03-04: Switched large-dimension intermediate still/title encoding strategy to ProRes 422 first (with codec compatibility probing/fallback) after diagnostics showed immediate insertion failure on generated 5712x4284 clips.
+- 2026-03-04: Added a regression test for large-dimension still clip generation and composition insertion to keep `-12780` failures from regressing silently.
 
 ## Changes Since Last Update
 
@@ -91,7 +93,8 @@ Operational updates after first packaged run:
 - 2026-03-04: Fixed potential first-segment title insertion failure by tightening clip duration math and insertion range selection.
 - 2026-03-04: Fixed title-card insertion to use track-native time range starts during composition.
 - 2026-03-04: Added per-run failure diagnostics hooks and surfaced diagnostics log path in export error messages.
-- 2026-03-04: Updated still/title intermediate codec selection for large dimensions to prevent first-clip insertion failure.
+- 2026-03-04: Updated still/title intermediate codec selection to ProRes 422-first with compatibility probing for large dimensions.
+- 2026-03-04: Added `StillImageClipFactoryTests.testLargeStillClipCanBeInsertedIntoCompositionTrack` to lock in large-frame insertion behavior.
 
 ## Risks/Blockers
 
@@ -107,4 +110,4 @@ Operational updates after first packaged run:
 
 ## Last Updated
 
-2026-03-04 09:53 America/New_York by Codex
+2026-03-04 10:22 America/New_York by Codex

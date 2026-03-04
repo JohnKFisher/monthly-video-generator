@@ -95,8 +95,8 @@ public final class StillImageClipFactory {
         let height = Int(renderSize.height.rounded())
         let largeFrame = width > 4096 || height > 2304
         let candidates: [AVVideoCodecType] = largeFrame
-            ? [.appleProRes422, .hevc, .h264]
-            : [.h264, .hevc, .appleProRes422]
+            ? [.proRes422, .hevc, .h264]
+            : [.h264, .hevc, .proRes422]
 
         for candidate in candidates {
             let settings: [String: Any] = [
@@ -109,7 +109,7 @@ public final class StillImageClipFactory {
             }
         }
 
-        return largeFrame ? .appleProRes422 : .h264
+        return largeFrame ? .proRes422 : .h264
     }
 
     private func loadRasterizedImage(from url: URL, renderSize: CGSize) throws -> CGImage {
