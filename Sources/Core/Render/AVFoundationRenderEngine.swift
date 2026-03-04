@@ -354,6 +354,7 @@ public final class AVFoundationRenderEngine {
         )
 
         return InputClip(
+            sourceAsset: asset,
             videoTrack: videoTrack,
             audioTrack: audioTrack,
             assetURL: assetURL,
@@ -453,6 +454,8 @@ public final class AVFoundationRenderEngine {
     }
 
     private struct InputClip {
+        // Keep a strong reference to the backing asset for track lifetime safety.
+        let sourceAsset: AVAsset
         let videoTrack: AVAssetTrack
         let audioTrack: AVAssetTrack?
         let assetURL: URL
