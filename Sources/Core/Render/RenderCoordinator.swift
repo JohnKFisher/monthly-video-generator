@@ -53,7 +53,7 @@ public final class RenderCoordinator: @unchecked Sendable {
         preparation: RenderPreparation,
         request: RenderRequest,
         photoMaterializer: PhotoAssetMaterializing?,
-        progressHandler: ((Double) -> Void)?
+        progressHandler: (@MainActor @Sendable (Double) -> Void)?
     ) async throws -> URL {
         try await renderEngine.render(
             timeline: preparation.timeline,

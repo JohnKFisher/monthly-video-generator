@@ -20,7 +20,7 @@ public final class AVFoundationRenderEngine {
         exportProfile: ExportProfile,
         outputTarget: OutputTarget,
         photoMaterializer: PhotoAssetMaterializing?,
-        progressHandler: ((Double) -> Void)? = nil
+        progressHandler: (@MainActor @Sendable (Double) -> Void)? = nil
     ) async throws -> URL {
         guard !timeline.segments.isEmpty else {
             throw RenderError.noRenderableMedia
@@ -42,12 +42,14 @@ public final class AVFoundationRenderEngine {
         }
 
         do {
+            reportProgress(0.02, handler: progressHandler)
             let clips = try await materializeInputClips(
                 segments: timeline.segments,
                 renderSize: renderSize,
                 photoMaterializer: photoMaterializer,
                 temporaryURLs: &temporaryURLs,
-                diagnostics: diagnostics
+                diagnostics: diagnostics,
+                progressHandler: progressHandler
             )
 
             guard !clips.isEmpty else {
@@ -106,6 +108,9 @@ public final class AVFoundationRenderEngine {
                 if index < clips.count - 1, transitionDuration > .zero {
                     cursor = subtract(cursor, transitionDuration)
                 }
+
+                let insertionProgress = 0.23 + (Double(index + 1) / Double(max(clips.count, 1))) * 0.12
+                reportProgress(insertionProgress, handler: progressHandler)
             }
 
             let videoComposition = AVMutableVideoComposition()
@@ -129,6 +134,8 @@ public final class AVFoundationRenderEngine {
             let outputURL = try OutputPathResolver.resolveUniqueURL(target: outputTarget, container: exportProfile.container)
             diagnostics.add("Resolved output URL: \(outputURL.path)")
             let requiresHDRToneMapping = shouldApplyHDRToneMapping(for: exportProfile)
+            let exportStartProgress = 0.35
+            let exportEndProgress = requiresHDRToneMapping ? 0.55 : 0.98
             let presetName = bestPreset(for: exportProfile, composition: composition)
             diagnostics.add("Selected export preset: \(presetName)")
             guard let session = AVAssetExportSession(asset: composition, presetName: presetName) else {
@@ -152,10 +159,14 @@ public final class AVFoundationRenderEngine {
             session.shouldOptimizeForNetworkUse = false
             session.videoComposition = videoComposition
 
-            progressHandler?(0.01)
-            try await export(session: session)
+            try await export(
+                session: session,
+                progressStart: exportStartProgress,
+                progressEnd: exportEndProgress,
+                progressHandler: progressHandler
+            )
             if requiresHDRToneMapping {
-                progressHandler?(0.55)
+                reportProgress(0.55, handler: progressHandler)
                 try await applyHDRToneMapping(
                     from: sessionOutputURL,
                     to: outputURL,
@@ -164,7 +175,7 @@ public final class AVFoundationRenderEngine {
                     progressHandler: progressHandler
                 )
             }
-            progressHandler?(1.0)
+            reportProgress(1.0, handler: progressHandler)
             currentSession = nil
 
             diagnostics.add("Render completed successfully")
@@ -256,11 +267,15 @@ public final class AVFoundationRenderEngine {
         renderSize: CGSize,
         photoMaterializer: PhotoAssetMaterializing?,
         temporaryURLs: inout [URL],
-        diagnostics: RenderDiagnostics
+        diagnostics: RenderDiagnostics,
+        progressHandler: (@MainActor @Sendable (Double) -> Void)?
     ) async throws -> [InputClip] {
         var clips: [InputClip] = []
+        let totalSegments = max(segments.count, 1)
 
-        for segment in segments {
+        for (index, segment) in segments.enumerated() {
+            let segmentProgress = 0.05 + (Double(index) / Double(totalSegments)) * 0.18
+            reportProgress(segmentProgress, handler: progressHandler)
             switch segment.asset {
             case let .titleCard(title):
                 let titleURL = try await stillImageClipFactory.makeTitleCardClip(title: title, duration: segment.duration, renderSize: renderSize)
@@ -310,6 +325,9 @@ public final class AVFoundationRenderEngine {
                     }
                 }
             }
+
+            let completedProgress = 0.05 + (Double(index + 1) / Double(totalSegments)) * 0.18
+            reportProgress(completedProgress, handler: progressHandler)
         }
 
         return clips
@@ -519,7 +537,7 @@ public final class AVFoundationRenderEngine {
         to outputURL: URL,
         container: ContainerFormat,
         diagnostics: RenderDiagnostics,
-        progressHandler: ((Double) -> Void)?
+        progressHandler: (@MainActor @Sendable (Double) -> Void)?
     ) async throws {
         do {
             let sourceAsset = AVURLAsset(url: inputURL)
@@ -648,7 +666,7 @@ public final class AVFoundationRenderEngine {
                 frameCount += 1
                 if frameCount == 1 || frameCount.isMultiple(of: 12) {
                     let toneMapProgress = min(Double(frameCount) / Double(estimatedFrames), 1.0)
-                    progressHandler?(0.55 + toneMapProgress * 0.44)
+                    reportProgress(0.55 + toneMapProgress * 0.44, handler: progressHandler)
                 }
             }
             videoInput.markAsFinished()
@@ -786,20 +804,42 @@ public final class AVFoundationRenderEngine {
         value.isMultiple(of: 2) ? value : value + 1
     }
 
-    private func export(session: AVAssetExportSession) async throws {
-        try await withCheckedThrowingContinuation { continuation in
-            session.exportAsynchronously {
-                switch session.status {
-                case .completed:
-                    continuation.resume(returning: ())
-                case .cancelled:
-                    continuation.resume(throwing: RenderError.exportFailed("Render cancelled"))
-                case .failed:
-                    continuation.resume(throwing: RenderError.exportFailed(session.error?.localizedDescription ?? "Unknown export failure"))
-                default:
-                    continuation.resume(throwing: RenderError.exportFailed("Unexpected export status: \(session.status.rawValue)"))
-                }
+    private func export(
+        session: AVAssetExportSession,
+        progressStart: Double,
+        progressEnd: Double,
+        progressHandler: (@MainActor @Sendable (Double) -> Void)?
+    ) async throws {
+        reportProgress(progressStart, handler: progressHandler)
+        session.exportAsynchronously {}
+
+        while true {
+            let status = session.status
+            switch status {
+            case .unknown, .waiting, .exporting:
+                let rawProgress = Double(session.progress)
+                let clampedRaw = min(max(rawProgress, 0), 1)
+                let mappedProgress = progressStart + (progressEnd - progressStart) * clampedRaw
+                reportProgress(mappedProgress, handler: progressHandler)
+                try await Task.sleep(nanoseconds: 150_000_000)
+            case .completed:
+                reportProgress(progressEnd, handler: progressHandler)
+                return
+            case .cancelled:
+                throw RenderError.exportFailed("Render cancelled")
+            case .failed:
+                throw RenderError.exportFailed(session.error?.localizedDescription ?? "Unknown export failure")
+            @unknown default:
+                throw RenderError.exportFailed("Unexpected export status: \(status.rawValue)")
             }
+        }
+    }
+
+    private func reportProgress(_ value: Double, handler: (@MainActor @Sendable (Double) -> Void)?) {
+        let clamped = min(max(value, 0), 1)
+        guard let handler else { return }
+        Task { @MainActor in
+            handler(clamped)
         }
     }
 

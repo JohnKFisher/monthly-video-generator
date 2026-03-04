@@ -165,7 +165,7 @@ final class MainWindowViewModel: ObservableObject {
     private func performRender() async {
         do {
             isRendering = true
-            progress = 0
+            progress = 0.01
             warnings = []
             statusMessage = "Preparing media..."
             lastOutputPath = ""
@@ -232,14 +232,16 @@ final class MainWindowViewModel: ObservableObject {
             }
 
             warnings = preparation.warnings + exportProfileManager.compatibilityWarnings(for: exportProfile).map(\.message)
+            progress = max(progress, 0.08)
 
-            statusMessage = "Rendering..."
-            progress = 0.01
+            statusMessage = "Rendering... 8%"
             let outputURL = try await coordinator.render(
                 preparation: preparation,
                 request: request,
                 photoMaterializer: sourceMode == .photos ? photoMaterializer : nil,
-                progressHandler: nil
+                progressHandler: { [weak self] reportedProgress in
+                    self?.applyReportedRenderProgress(reportedProgress)
+                }
             )
 
             let report = runReportService.makeReport(request: request, preparation: preparation, outputURL: outputURL)
@@ -295,6 +297,13 @@ final class MainWindowViewModel: ObservableObject {
             return trimmed
         }
         return monthYear.displayLabel
+    }
+
+    private func applyReportedRenderProgress(_ reportedProgress: Double) {
+        let clamped = min(max(reportedProgress, 0), 1)
+        progress = max(progress, clamped)
+        let percent = Int((progress * 100).rounded())
+        statusMessage = "Rendering... \(percent)%"
     }
 
     private func applyPersistedRenderSettings() {
