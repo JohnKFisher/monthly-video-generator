@@ -41,7 +41,7 @@ public final class StillImageClipFactory {
         let outputURL = temporaryClipURL()
 
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
-        let codec = preferredIntermediateCodec(for: renderSize)
+        let codec = preferredIntermediateCodec(for: renderSize, writer: writer)
         let settings: [String: Any] = [
             AVVideoCodecKey: codec,
             AVVideoWidthKey: Int(renderSize.width),
@@ -90,14 +90,26 @@ public final class StillImageClipFactory {
         return outputURL
     }
 
-    private func preferredIntermediateCodec(for renderSize: CGSize) -> AVVideoCodecType {
+    private func preferredIntermediateCodec(for renderSize: CGSize, writer: AVAssetWriter) -> AVVideoCodecType {
         let width = Int(renderSize.width.rounded())
         let height = Int(renderSize.height.rounded())
-        // H.264 at very large still-image dimensions can produce clips that later fail track insertion.
-        if width > 4096 || height > 2304 {
-            return .hevc
+        let largeFrame = width > 4096 || height > 2304
+        let candidates: [AVVideoCodecType] = largeFrame
+            ? [.appleProRes422, .hevc, .h264]
+            : [.h264, .hevc, .appleProRes422]
+
+        for candidate in candidates {
+            let settings: [String: Any] = [
+                AVVideoCodecKey: candidate,
+                AVVideoWidthKey: width,
+                AVVideoHeightKey: height
+            ]
+            if writer.canApply(outputSettings: settings, forMediaType: .video) {
+                return candidate
+            }
         }
-        return .h264
+
+        return largeFrame ? .appleProRes422 : .h264
     }
 
     private func loadRasterizedImage(from url: URL, renderSize: CGSize) throws -> CGImage {

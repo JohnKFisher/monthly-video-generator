@@ -345,10 +345,12 @@ public final class AVFoundationRenderEngine {
             audioTrackTimeRange = nil
         }
 
+        let codecDescription = await videoCodecDescription(for: videoTrack)
+
         diagnostics.add(
             "Clip ready: source=\(sourceDescription), asset=\(assetURL.path), clipDuration=\(format(clipDuration)), " +
             "assetDuration=\(format(assetDuration)), videoTrackRange=\(format(videoTrackRange)), " +
-            "audioTrackRange=\(format(audioTrackTimeRange)), temp=\(isTemporary)"
+            "audioTrackRange=\(format(audioTrackTimeRange)), codec=\(codecDescription), temp=\(isTemporary)"
         )
 
         return InputClip(
@@ -477,6 +479,33 @@ public final class AVFoundationRenderEngine {
             return "\(nsError.domain) code \(nsError.code): \(nsError.localizedDescription). \(reason)"
         }
         return "\(nsError.domain) code \(nsError.code): \(nsError.localizedDescription). \(reason). userInfo{\(userInfoSummary)}"
+    }
+
+    private func videoCodecDescription(for track: AVAssetTrack) async -> String {
+        guard let formatDescriptions = try? await track.load(.formatDescriptions) else {
+            return "unknown"
+        }
+        guard let firstDescription = formatDescriptions.first else {
+            return "unknown"
+        }
+        let mediaSubType = CMFormatDescriptionGetMediaSubType(firstDescription)
+        let fourcc = fourCCString(mediaSubType)
+        return "\(fourcc) (\(mediaSubType))"
+    }
+
+    private func fourCCString(_ value: FourCharCode) -> String {
+        let bigEndian = value.bigEndian
+        let bytes: [UInt8] = [
+            UInt8((bigEndian >> 24) & 0xff),
+            UInt8((bigEndian >> 16) & 0xff),
+            UInt8((bigEndian >> 8) & 0xff),
+            UInt8(bigEndian & 0xff)
+        ]
+        let printable = bytes.allSatisfy { $0 >= 32 && $0 <= 126 }
+        if printable, let text = String(bytes: bytes, encoding: .ascii) {
+            return text
+        }
+        return "0x" + bytes.map { String(format: "%02X", $0) }.joined()
     }
 
     private func smallestPositiveDuration(_ values: [CMTime?]) -> CMTime? {
