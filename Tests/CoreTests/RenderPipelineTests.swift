@@ -51,4 +51,34 @@ final class RenderPipelineTests: XCTestCase {
         XCTAssertEqual(config.colorTransferFunction, AVVideoTransferFunction_ITU_R_2100_HLG)
         XCTAssertEqual(config.colorYCbCrMatrix, AVVideoYCbCrMatrix_ITU_R_2020)
     }
+
+    func testHDRProfileEnablesToneMappingPass() {
+        let engine = AVFoundationRenderEngine()
+        let profile = ExportProfile(
+            container: .mov,
+            videoCodec: .hevc,
+            audioCodec: .aac,
+            resolution: .matchSourceMax,
+            dynamicRange: .hdr,
+            audioLayout: .stereo,
+            bitrateMode: .balanced
+        )
+
+        XCTAssertTrue(engine.shouldApplyHDRToneMapping(for: profile))
+    }
+
+    func testSDRProfileSkipsToneMappingPass() {
+        let engine = AVFoundationRenderEngine()
+        let profile = ExportProfile(
+            container: .mov,
+            videoCodec: .hevc,
+            audioCodec: .aac,
+            resolution: .matchSourceMax,
+            dynamicRange: .sdr,
+            audioLayout: .stereo,
+            bitrateMode: .balanced
+        )
+
+        XCTAssertFalse(engine.shouldApplyHDRToneMapping(for: profile))
+    }
 }

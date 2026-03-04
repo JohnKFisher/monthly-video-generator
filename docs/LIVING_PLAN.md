@@ -60,6 +60,7 @@ Operational updates after first packaged run:
 - Added opening-title text input in the Style panel so title card text can be set explicitly for each render.
 - Hotfix: title-card fallback rendering now draws title text (instead of a blank card) when AppKit title rasterization fails.
 - Hotfix: renderer now applies explicit output color metadata based on export dynamic range (SDR=BT.709, HDR=BT.2020 HLG) instead of leaving dynamic-range choice advisory only.
+- Added full HDR re-grade/tone-map pass after composition export so HDR output applies explicit per-frame tone mapping instead of metadata-only signaling.
 
 ## Decisions Log
 
@@ -82,6 +83,7 @@ Operational updates after first packaged run:
 - 2026-03-04: Added explicit opening-title text input with non-empty fallback behavior when the field is blank.
 - 2026-03-04: Updated title-card fallback image generation to render readable title text rather than a blank screen.
 - 2026-03-04: Made dynamic-range selection operational by mapping SDR/HDR profile choice to concrete video composition color properties during export.
+- 2026-03-04: Implemented two-pass HDR export path with explicit per-frame tone mapping and HDR Main10 re-encode for stronger perceptual HDR output.
 
 ## Changes Since Last Update
 
@@ -107,12 +109,14 @@ Operational updates after first packaged run:
 - 2026-03-04: Added opening-title text field to UI/view-model wiring and used it in style generation with a month/year fallback when blank.
 - 2026-03-04: Updated fallback title-card renderer to include title text so title clips remain visible even after rasterization fallback.
 - 2026-03-04: Enforced explicit output color metadata mapping for SDR/HDR in render export and added regression tests for color-profile mapping.
+- 2026-03-04: Added full HDR tone-mapping render pass (reader/writer regrade after composition export) and tests that lock in HDR-pass gating behavior.
 
 ## Risks/Blockers
 
 - Current renderer uses AVFoundation APIs that are deprecated on macOS 15+; functional now, but should be migrated.
 - Progress reporting is coarse (start/end) rather than granular throughout export.
 - Very large photo months may have long materialization times; additional user-facing progress granularity is still needed.
+- HDR exports now use an additional full-frame regrade pass and can take materially longer than SDR exports, especially at large resolutions.
 
 ## Next Actions (Top 3)
 
@@ -122,4 +126,4 @@ Operational updates after first packaged run:
 
 ## Last Updated
 
-2026-03-04 11:31 America/New_York by Codex
+2026-03-04 12:24 America/New_York by Codex

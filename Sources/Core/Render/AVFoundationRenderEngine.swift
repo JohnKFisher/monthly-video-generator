@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreImage
 import Foundation
 
 public final class AVFoundationRenderEngine {
@@ -127,6 +128,7 @@ public final class AVFoundationRenderEngine {
 
             let outputURL = try OutputPathResolver.resolveUniqueURL(target: outputTarget, container: exportProfile.container)
             diagnostics.add("Resolved output URL: \(outputURL.path)")
+            let requiresHDRToneMapping = shouldApplyHDRToneMapping(for: exportProfile)
             let presetName = bestPreset(for: exportProfile, composition: composition)
             diagnostics.add("Selected export preset: \(presetName)")
             guard let session = AVAssetExportSession(asset: composition, presetName: presetName) else {
@@ -134,14 +136,34 @@ public final class AVFoundationRenderEngine {
             }
 
             currentSession = session
-            session.outputURL = outputURL
-            session.outputFileType = preferredFileType(container: exportProfile.container, session: session)
+            let sessionFileType = preferredFileType(container: exportProfile.container, session: session)
+            let sessionOutputURL: URL
+            if requiresHDRToneMapping {
+                sessionOutputURL = temporaryRenderURL(fileType: sessionFileType)
+                temporaryURLs.append(sessionOutputURL)
+                diagnostics.add("HDR tone-mapping enabled; using intermediate export \(sessionOutputURL.path)")
+            } else {
+                sessionOutputURL = outputURL
+            }
+
+            session.outputURL = sessionOutputURL
+            session.outputFileType = sessionFileType
             diagnostics.add("Selected output file type: \(session.outputFileType?.rawValue ?? "nil")")
             session.shouldOptimizeForNetworkUse = false
             session.videoComposition = videoComposition
 
             progressHandler?(0.01)
             try await export(session: session)
+            if requiresHDRToneMapping {
+                progressHandler?(0.55)
+                try await applyHDRToneMapping(
+                    from: sessionOutputURL,
+                    to: outputURL,
+                    container: exportProfile.container,
+                    diagnostics: diagnostics,
+                    progressHandler: progressHandler
+                )
+            }
             progressHandler?(1.0)
             currentSession = nil
 
@@ -438,6 +460,19 @@ public final class AVFoundationRenderEngine {
         let colorYCbCrMatrix: String
     }
 
+    struct HDRToneMapParameters: Equatable {
+        let exposureEV: Float
+        let contrast: Float
+        let saturation: Float
+        let shadowLift: Float
+        let highlightCompression: Float
+        let point0: CGPoint
+        let point1: CGPoint
+        let point2: CGPoint
+        let point3: CGPoint
+        let point4: CGPoint
+    }
+
     func colorConfiguration(for dynamicRange: DynamicRange) -> VideoColorConfiguration {
         switch dynamicRange {
         case .sdr:
@@ -453,6 +488,302 @@ public final class AVFoundationRenderEngine {
                 colorYCbCrMatrix: AVVideoYCbCrMatrix_ITU_R_2020
             )
         }
+    }
+
+    func shouldApplyHDRToneMapping(for profile: ExportProfile) -> Bool {
+        profile.dynamicRange == .hdr
+    }
+
+    func hdrToneMapParameters() -> HDRToneMapParameters {
+        HDRToneMapParameters(
+            exposureEV: 0.18,
+            contrast: 1.05,
+            saturation: 1.03,
+            shadowLift: 0.24,
+            highlightCompression: 0.08,
+            point0: CGPoint(x: 0.0, y: 0.0),
+            point1: CGPoint(x: 0.22, y: 0.30),
+            point2: CGPoint(x: 0.50, y: 0.63),
+            point3: CGPoint(x: 0.78, y: 0.90),
+            point4: CGPoint(x: 1.0, y: 1.0)
+        )
+    }
+
+    private struct ToneMapAudioPipeline {
+        let output: AVAssetReaderTrackOutput
+        let input: AVAssetWriterInput
+    }
+
+    private func applyHDRToneMapping(
+        from inputURL: URL,
+        to outputURL: URL,
+        container: ContainerFormat,
+        diagnostics: RenderDiagnostics,
+        progressHandler: ((Double) -> Void)?
+    ) async throws {
+        do {
+            let sourceAsset = AVURLAsset(url: inputURL)
+            let videoTracks = try await sourceAsset.loadTracks(withMediaType: .video)
+            guard let videoTrack = videoTracks.first else {
+                throw RenderError.exportFailed("HDR tone-mapping requires a video track in intermediate export.")
+            }
+
+            let sourceDuration = try await sourceAsset.load(.duration)
+            let sourceNaturalSize = (try? await videoTrack.load(.naturalSize)) ?? CGSize(width: 1920, height: 1080)
+            let outputSize = CGSize(
+                width: evenDimension(max(2, Int(sourceNaturalSize.width.rounded()))),
+                height: evenDimension(max(2, Int(sourceNaturalSize.height.rounded())))
+            )
+            let nominalFrameRate = (try? await videoTrack.load(.nominalFrameRate)) ?? 0
+            let frameRate = max(Double(nominalFrameRate), 30.0)
+            let estimatedFrames = max(Int(ceil(max(sourceDuration.seconds, 0.01) * frameRate)), 1)
+            let toneMapSettings = hdrToneMapParameters()
+
+            let reader = try AVAssetReader(asset: sourceAsset)
+            let videoOutputSettings: [String: Any] = [
+                kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)
+            ]
+            let videoOutput = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: videoOutputSettings)
+            videoOutput.alwaysCopiesSampleData = false
+            guard reader.canAdd(videoOutput) else {
+                throw RenderError.exportFailed("Unable to configure HDR tone-map reader video output.")
+            }
+            reader.add(videoOutput)
+
+            let fileType = fileType(for: container)
+            let writer = try AVAssetWriter(outputURL: outputURL, fileType: fileType)
+            let hdrColorConfiguration = colorConfiguration(for: .hdr)
+            let videoWriterSettings = hdrToneMappedVideoSettings(
+                renderSize: outputSize,
+                frameRate: frameRate,
+                colorConfiguration: hdrColorConfiguration
+            )
+            guard writer.canApply(outputSettings: videoWriterSettings, forMediaType: .video) else {
+                throw RenderError.exportFailed("Unable to apply HDR writer settings for tone-mapping pass.")
+            }
+
+            let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoWriterSettings)
+            videoInput.expectsMediaDataInRealTime = false
+            guard writer.canAdd(videoInput) else {
+                throw RenderError.exportFailed("Unable to add HDR tone-map writer video input.")
+            }
+            writer.add(videoInput)
+
+            let pixelBufferAttributes: [String: Any] = [
+                kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA),
+                kCVPixelBufferWidthKey as String: Int(outputSize.width),
+                kCVPixelBufferHeightKey as String: Int(outputSize.height),
+                kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
+                kCVPixelBufferCGImageCompatibilityKey as String: true
+            ]
+            let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+                assetWriterInput: videoInput,
+                sourcePixelBufferAttributes: pixelBufferAttributes
+            )
+
+            let audioTracks = try await sourceAsset.loadTracks(withMediaType: .audio)
+            var audioPipelines: [ToneMapAudioPipeline] = []
+            for audioTrack in audioTracks {
+                let output = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)
+                output.alwaysCopiesSampleData = false
+                guard reader.canAdd(output) else {
+                    continue
+                }
+                reader.add(output)
+
+                let sourceFormatHint = (try? await audioTrack.load(.formatDescriptions))?.first
+                let input = AVAssetWriterInput(mediaType: .audio, outputSettings: nil, sourceFormatHint: sourceFormatHint)
+                input.expectsMediaDataInRealTime = false
+                guard writer.canAdd(input) else {
+                    continue
+                }
+                writer.add(input)
+                audioPipelines.append(ToneMapAudioPipeline(output: output, input: input))
+            }
+
+            guard writer.startWriting() else {
+                throw RenderError.exportFailed(writer.error?.localizedDescription ?? "Failed to start HDR tone-map writer.")
+            }
+            guard reader.startReading() else {
+                throw RenderError.exportFailed(reader.error?.localizedDescription ?? "Failed to start HDR tone-map reader.")
+            }
+            writer.startSession(atSourceTime: .zero)
+
+            diagnostics.add(
+                "HDR tone-map pass started: source=\(inputURL.path), output=\(outputURL.path), " +
+                "size=\(Int(outputSize.width))x\(Int(outputSize.height)), frameRate=\(String(format: "%.2f", frameRate)), estimatedFrames=\(estimatedFrames)"
+            )
+
+            let ciContext = CIContext(options: [CIContextOption.cacheIntermediates: false])
+            var frameCount = 0
+
+            while let sampleBuffer = videoOutput.copyNextSampleBuffer() {
+                try Task.checkCancellation()
+
+                guard let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+                    continue
+                }
+
+                try await waitForWriterInputReadiness(videoInput)
+                guard let pool = adaptor.pixelBufferPool else {
+                    throw RenderError.exportFailed("HDR tone-map writer pixel buffer pool unavailable.")
+                }
+
+                var destinationBuffer: CVPixelBuffer?
+                let creationStatus = CVPixelBufferPoolCreatePixelBuffer(nil, pool, &destinationBuffer)
+                guard creationStatus == kCVReturnSuccess, let destinationBuffer else {
+                    throw RenderError.exportFailed("Unable to allocate destination pixel buffer for HDR tone-map pass.")
+                }
+
+                let sourceImage = CIImage(cvImageBuffer: imageBuffer)
+                let mappedImage = toneMappedHDRImage(sourceImage, parameters: toneMapSettings)
+                let renderBounds = CGRect(origin: .zero, size: outputSize)
+                ciContext.render(mappedImage, to: destinationBuffer, bounds: renderBounds, colorSpace: nil)
+
+                let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+                guard adaptor.append(destinationBuffer, withPresentationTime: presentationTime) else {
+                    throw RenderError.exportFailed(writer.error?.localizedDescription ?? "Failed to append HDR tone-mapped frame.")
+                }
+
+                frameCount += 1
+                if frameCount == 1 || frameCount.isMultiple(of: 12) {
+                    let toneMapProgress = min(Double(frameCount) / Double(estimatedFrames), 1.0)
+                    progressHandler?(0.55 + toneMapProgress * 0.44)
+                }
+            }
+            videoInput.markAsFinished()
+
+            if reader.status == .failed {
+                throw RenderError.exportFailed(reader.error?.localizedDescription ?? "HDR tone-map video read failed.")
+            }
+
+            for pipeline in audioPipelines {
+                while let sampleBuffer = pipeline.output.copyNextSampleBuffer() {
+                    try Task.checkCancellation()
+                    try await waitForWriterInputReadiness(pipeline.input)
+                    guard pipeline.input.append(sampleBuffer) else {
+                        throw RenderError.exportFailed(writer.error?.localizedDescription ?? "Failed to append audio during HDR tone-map pass.")
+                    }
+                }
+                pipeline.input.markAsFinished()
+            }
+
+            if reader.status == .failed {
+                throw RenderError.exportFailed(reader.error?.localizedDescription ?? "HDR tone-map read failed.")
+            }
+
+            try await finish(writer: writer)
+            diagnostics.add("HDR tone-map pass completed: renderedFrames=\(frameCount), audioTracks=\(audioPipelines.count)")
+        } catch {
+            try? FileManager.default.removeItem(at: outputURL)
+            throw RenderError.exportFailed("HDR tone-mapping failed. \(describe(error))")
+        }
+    }
+
+    private func hdrToneMappedVideoSettings(
+        renderSize: CGSize,
+        frameRate: Double,
+        colorConfiguration: VideoColorConfiguration
+    ) -> [String: Any] {
+        let width = Int(renderSize.width.rounded())
+        let height = Int(renderSize.height.rounded())
+        let bitrate = estimatedHDRBitrate(renderSize: renderSize, frameRate: frameRate)
+
+        return [
+            AVVideoCodecKey: AVVideoCodecType.hevc,
+            AVVideoWidthKey: width,
+            AVVideoHeightKey: height,
+            AVVideoColorPropertiesKey: [
+                AVVideoColorPrimariesKey: colorConfiguration.colorPrimaries,
+                AVVideoTransferFunctionKey: colorConfiguration.colorTransferFunction,
+                AVVideoYCbCrMatrixKey: colorConfiguration.colorYCbCrMatrix
+            ],
+            AVVideoCompressionPropertiesKey: [
+                AVVideoAverageBitRateKey: bitrate,
+                AVVideoAllowFrameReorderingKey: false
+            ]
+        ]
+    }
+
+    private func toneMappedHDRImage(_ sourceImage: CIImage, parameters: HDRToneMapParameters) -> CIImage {
+        var outputImage = sourceImage
+
+        if let exposureFilter = CIFilter(name: "CIExposureAdjust") {
+            exposureFilter.setValue(outputImage, forKey: kCIInputImageKey)
+            exposureFilter.setValue(parameters.exposureEV, forKey: kCIInputEVKey)
+            outputImage = exposureFilter.outputImage ?? outputImage
+        }
+
+        if let colorControls = CIFilter(name: "CIColorControls") {
+            colorControls.setValue(outputImage, forKey: kCIInputImageKey)
+            colorControls.setValue(parameters.contrast, forKey: kCIInputContrastKey)
+            colorControls.setValue(parameters.saturation, forKey: kCIInputSaturationKey)
+            outputImage = colorControls.outputImage ?? outputImage
+        }
+
+        if let toneCurve = CIFilter(name: "CIToneCurve") {
+            toneCurve.setValue(outputImage, forKey: kCIInputImageKey)
+            toneCurve.setValue(CIVector(cgPoint: parameters.point0), forKey: "inputPoint0")
+            toneCurve.setValue(CIVector(cgPoint: parameters.point1), forKey: "inputPoint1")
+            toneCurve.setValue(CIVector(cgPoint: parameters.point2), forKey: "inputPoint2")
+            toneCurve.setValue(CIVector(cgPoint: parameters.point3), forKey: "inputPoint3")
+            toneCurve.setValue(CIVector(cgPoint: parameters.point4), forKey: "inputPoint4")
+            outputImage = toneCurve.outputImage ?? outputImage
+        }
+
+        if let shadowHighlight = CIFilter(name: "CIHighlightShadowAdjust") {
+            shadowHighlight.setValue(outputImage, forKey: kCIInputImageKey)
+            shadowHighlight.setValue(parameters.shadowLift, forKey: "inputShadowAmount")
+            shadowHighlight.setValue(parameters.highlightCompression, forKey: "inputHighlightAmount")
+            outputImage = shadowHighlight.outputImage ?? outputImage
+        }
+
+        return outputImage
+    }
+
+    private func waitForWriterInputReadiness(_ input: AVAssetWriterInput) async throws {
+        while !input.isReadyForMoreMediaData {
+            try Task.checkCancellation()
+            try await Task.sleep(nanoseconds: 2_000_000)
+        }
+    }
+
+    private func finish(writer: AVAssetWriter) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            writer.finishWriting {
+                if writer.status == .completed {
+                    continuation.resume(returning: ())
+                } else {
+                    continuation.resume(
+                        throwing: RenderError.exportFailed(
+                            writer.error?.localizedDescription ?? "HDR tone-map writer failed with status \(writer.status.rawValue)"
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private func fileType(for container: ContainerFormat) -> AVFileType {
+        container == .mp4 ? .mp4 : .mov
+    }
+
+    private func temporaryRenderURL(fileType: AVFileType) -> URL {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("MonthlyVideoGenerator", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fileExtension = fileType == .mp4 ? "mp4" : "mov"
+        return directory.appendingPathComponent(UUID().uuidString).appendingPathExtension(fileExtension)
+    }
+
+    private func estimatedHDRBitrate(renderSize: CGSize, frameRate: Double) -> Int {
+        let pixelsPerFrame = max(renderSize.width * renderSize.height, 1)
+        let bitsPerPixel: Double = 0.11
+        let estimate = pixelsPerFrame * frameRate * bitsPerPixel
+        return max(Int(estimate.rounded()), 12_000_000)
+    }
+
+    private func evenDimension(_ value: Int) -> Int {
+        value.isMultiple(of: 2) ? value : value + 1
     }
 
     private func export(session: AVAssetExportSession) async throws {
