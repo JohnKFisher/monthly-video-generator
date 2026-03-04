@@ -63,6 +63,7 @@ Operational updates after first packaged run:
 - Added full HDR re-grade/tone-map pass after composition export so HDR output applies explicit per-frame tone mapping instead of metadata-only signaling.
 - Added persistent style/export preferences in app settings so title/crossfade/still-duration and export controls restore between launches.
 - Improved progress reporting so the UI progress bar now advances across materialization, composition/export, and HDR tone-map phases instead of jumping only at start/end.
+- Hotfix: HDR tone-map pass now fails with explicit timeout/status errors when writer input stalls, preventing indefinite “hang” behavior.
 
 ## Decisions Log
 
@@ -88,6 +89,7 @@ Operational updates after first packaged run:
 - 2026-03-04: Implemented two-pass HDR export path with explicit per-frame tone mapping and HDR Main10 re-encode for stronger perceptual HDR output.
 - 2026-03-04: Persisted style and export option selections to local defaults so frequent controls retain prior values across app relaunches.
 - 2026-03-04: Added phase-aware render progress callbacks and UI progress mapping so progress remains useful throughout long exports.
+- 2026-03-04: Added bounded writer-readiness waits in HDR tone mapping so stalled encoder states produce clear failures instead of unbounded waits.
 
 ## Changes Since Last Update
 
@@ -116,6 +118,7 @@ Operational updates after first packaged run:
 - 2026-03-04: Added full HDR tone-mapping render pass (reader/writer regrade after composition export) and tests that lock in HDR-pass gating behavior.
 - 2026-03-04: Added `UserDefaults` persistence for style/export selections (opening title toggle/text, crossfade, still duration, container/codec/resolution/dynamic range/audio layout/bitrate mode).
 - 2026-03-04: Wired determinate progress updates end-to-end (materialization, insertion/export polling, HDR tone mapping) and surfaced percent status text in the app UI.
+- 2026-03-04: Hardened HDR tone-map writer readiness waits with timeout + writer-status checks to prevent apparent hangs on problematic exports.
 
 ## Risks/Blockers
 
@@ -132,4 +135,4 @@ Operational updates after first packaged run:
 
 ## Last Updated
 
-2026-03-04 12:53 America/New_York by Codex
+2026-03-04 13:48 America/New_York by Codex

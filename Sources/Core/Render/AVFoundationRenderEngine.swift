@@ -642,7 +642,11 @@ public final class AVFoundationRenderEngine {
                     continue
                 }
 
-                try await waitForWriterInputReadiness(videoInput)
+                try await waitForWriterInputReadiness(
+                    videoInput,
+                    writer: writer,
+                    context: "video frame \(frameCount + 1)"
+                )
                 guard let pool = adaptor.pixelBufferPool else {
                     throw RenderError.exportFailed("HDR tone-map writer pixel buffer pool unavailable.")
                 }
@@ -675,10 +679,14 @@ public final class AVFoundationRenderEngine {
                 throw RenderError.exportFailed(reader.error?.localizedDescription ?? "HDR tone-map video read failed.")
             }
 
-            for pipeline in audioPipelines {
+            for (audioIndex, pipeline) in audioPipelines.enumerated() {
                 while let sampleBuffer = pipeline.output.copyNextSampleBuffer() {
                     try Task.checkCancellation()
-                    try await waitForWriterInputReadiness(pipeline.input)
+                    try await waitForWriterInputReadiness(
+                        pipeline.input,
+                        writer: writer,
+                        context: "audio track \(audioIndex + 1)"
+                    )
                     guard pipeline.input.append(sampleBuffer) else {
                         throw RenderError.exportFailed(writer.error?.localizedDescription ?? "Failed to append audio during HDR tone-map pass.")
                     }
@@ -759,9 +767,35 @@ public final class AVFoundationRenderEngine {
         return outputImage
     }
 
-    private func waitForWriterInputReadiness(_ input: AVAssetWriterInput) async throws {
+    private func waitForWriterInputReadiness(
+        _ input: AVAssetWriterInput,
+        writer: AVAssetWriter,
+        context: String
+    ) async throws {
+        let stallTimeoutSeconds: TimeInterval = 120
+        let startedAt = Date()
+
         while !input.isReadyForMoreMediaData {
             try Task.checkCancellation()
+            switch writer.status {
+            case .failed:
+                throw RenderError.exportFailed(
+                    writer.error?.localizedDescription ?? "HDR tone-map writer failed while waiting for \(context)."
+                )
+            case .cancelled:
+                throw RenderError.exportFailed("HDR tone-map writer was cancelled while waiting for \(context).")
+            case .completed:
+                throw RenderError.exportFailed("HDR tone-map writer completed unexpectedly while waiting for \(context).")
+            default:
+                break
+            }
+
+            if Date().timeIntervalSince(startedAt) >= stallTimeoutSeconds {
+                throw RenderError.exportFailed(
+                    "Timed out after \(Int(stallTimeoutSeconds))s waiting for writer readiness (\(context)); writer status \(writer.status.rawValue)."
+                )
+            }
+
             try await Task.sleep(nanoseconds: 2_000_000)
         }
     }
