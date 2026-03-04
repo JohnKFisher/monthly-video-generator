@@ -17,6 +17,22 @@ This project follows a strict milestone workflow:
 swift build
 ```
 
+## Build `.app` Bundle
+
+```bash
+./scripts/build_app.sh
+```
+
+This creates:
+
+- `dist/MonthlyVideoGenerator.app`
+
+Optional override:
+
+```bash
+BUILD_NUMBER=42 ./scripts/build_app.sh
+```
+
 ## Test
 
 ```bash

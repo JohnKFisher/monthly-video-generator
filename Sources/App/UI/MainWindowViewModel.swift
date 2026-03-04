@@ -61,6 +61,7 @@ final class MainWindowViewModel: ObservableObject {
     @Published var warnings: [String] = []
     @Published var lastOutputPath: String = ""
 
+    let appVersionBuildLabel: String
     let months = Array(1...12)
     let years: [Int]
 
@@ -71,6 +72,7 @@ final class MainWindowViewModel: ObservableObject {
     private let runReportService = RunReportService()
 
     init() {
+        appVersionBuildLabel = AppMetadata.versionBuildLabel
         let now = Date()
         let calendar = Calendar.current
         let currentYear = calendar.component(.year, from: now)

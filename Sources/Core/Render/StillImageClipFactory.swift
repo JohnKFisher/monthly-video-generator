@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import ImageIO
 #if canImport(AppKit)
 import AppKit
 #endif
@@ -9,10 +10,8 @@ public final class StillImageClipFactory {
 
     public func makeVideoClip(fromImageURL url: URL, duration: CMTime, renderSize: CGSize) async throws -> URL {
         #if canImport(AppKit)
-        guard let image = NSImage(contentsOf: url) else {
-            throw RenderError.exportFailed("Unable to load image at \(url.path)")
-        }
-        return try await makeVideoClip(fromImage: image, duration: duration, renderSize: renderSize)
+        let rasterizedImage = try loadRasterizedImage(from: url, renderSize: renderSize)
+        return try await makeVideoClip(fromRasterizedImage: rasterizedImage, duration: duration, renderSize: renderSize)
         #else
         throw RenderError.exportFailed("Image rendering requires AppKit support")
         #endif
@@ -20,15 +19,15 @@ public final class StillImageClipFactory {
 
     public func makeTitleCardClip(title: String, duration: CMTime, renderSize: CGSize) async throws -> URL {
         #if canImport(AppKit)
-        let image = makeTitleCardImage(title: title, renderSize: renderSize)
-        return try await makeVideoClip(fromImage: image, duration: duration, renderSize: renderSize)
+        let titleImage = try makeTitleCardRasterizedImage(title: title, renderSize: renderSize)
+        return try await makeVideoClip(fromRasterizedImage: titleImage, duration: duration, renderSize: renderSize)
         #else
         throw RenderError.exportFailed("Title card rendering requires AppKit support")
         #endif
     }
 
     #if canImport(AppKit)
-    private func makeVideoClip(fromImage image: NSImage, duration: CMTime, renderSize: CGSize) async throws -> URL {
+    private func makeVideoClip(fromRasterizedImage image: CGImage, duration: CMTime, renderSize: CGSize) async throws -> URL {
         let frameRate = 30
         let totalFrames = max(Int(ceil(duration.seconds * Double(frameRate))), 1)
         let outputURL = temporaryClipURL()
@@ -66,7 +65,7 @@ public final class StillImageClipFactory {
                 try await Task.sleep(nanoseconds: 5_000_000)
             }
 
-            guard let pixelBuffer = makePixelBuffer(from: image, renderSize: renderSize) else {
+            guard let pixelBuffer = makePixelBuffer(fromRasterizedImage: image, renderSize: renderSize) else {
                 throw RenderError.exportFailed("Failed to create pixel buffer")
             }
 
@@ -81,19 +80,93 @@ public final class StillImageClipFactory {
         return outputURL
     }
 
-    private func finish(writer: AVAssetWriter) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            writer.finishWriting {
-                if let error = writer.error {
-                    continuation.resume(throwing: RenderError.exportFailed(error.localizedDescription))
-                } else {
-                    continuation.resume(returning: ())
-                }
-            }
+    private func loadRasterizedImage(from url: URL, renderSize: CGSize) throws -> CGImage {
+        guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+            throw RenderError.exportFailed("Unable to load image source at \(url.path)")
         }
+
+        let maxDimension = max(1, Int(max(renderSize.width, renderSize.height).rounded()))
+        let thumbnailOptions: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxDimension
+        ]
+
+        let decodedImage = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, thumbnailOptions as CFDictionary)
+            ?? CGImageSourceCreateImageAtIndex(imageSource, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+
+        guard let decodedImage,
+              let rasterizedImage = rasterizedImage(decodedImage, renderSize: renderSize) else {
+            throw RenderError.exportFailed("Unable to decode image at \(url.path)")
+        }
+
+        return rasterizedImage
     }
 
-    private func makePixelBuffer(from image: NSImage, renderSize: CGSize) -> CVPixelBuffer? {
+    private func makeTitleCardRasterizedImage(title: String, renderSize: CGSize) throws -> CGImage {
+        let size = NSSize(width: renderSize.width, height: renderSize.height)
+        let image = NSImage(size: size)
+
+        image.lockFocus()
+        defer { image.unlockFocus() }
+
+        let background = NSColor(calibratedRed: 0.08, green: 0.10, blue: 0.14, alpha: 1.0)
+        background.setFill()
+        NSBezierPath(rect: NSRect(origin: .zero, size: size)).fill()
+
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: max(renderSize.width * 0.05, 42), weight: .semibold),
+            .foregroundColor: NSColor.white,
+            .paragraphStyle: paragraph
+        ]
+
+        let attributed = NSAttributedString(string: title, attributes: attributes)
+        let textRect = NSRect(x: renderSize.width * 0.1, y: renderSize.height * 0.4, width: renderSize.width * 0.8, height: renderSize.height * 0.2)
+        attributed.draw(in: textRect)
+
+        var proposedRect = CGRect(origin: .zero, size: size)
+        guard let rawImage = image.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil),
+              let safeImage = rasterizedImage(rawImage, renderSize: renderSize) else {
+            throw RenderError.exportFailed("Unable to create title card image")
+        }
+
+        return safeImage
+    }
+
+    private func rasterizedImage(_ sourceImage: CGImage, renderSize: CGSize) -> CGImage? {
+        let width = max(1, Int(renderSize.width.rounded()))
+        let height = max(1, Int(renderSize.height.rounded()))
+
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
+        ) else {
+            return nil
+        }
+
+        context.setFillColor(NSColor.black.cgColor)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        context.interpolationQuality = .high
+
+        let fittedRect = aspectFitRect(
+            imageSize: CGSize(width: sourceImage.width, height: sourceImage.height),
+            into: CGSize(width: width, height: height)
+        )
+        context.draw(sourceImage, in: fittedRect)
+
+        return context.makeImage()
+    }
+
+    private func makePixelBuffer(fromRasterizedImage image: CGImage, renderSize: CGSize) -> CVPixelBuffer? {
         var pixelBuffer: CVPixelBuffer?
         let result = CVPixelBufferCreate(
             kCFAllocatorDefault,
@@ -121,22 +194,29 @@ public final class StillImageClipFactory {
             bitsPerComponent: 8,
             bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
             space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
+            bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
         ) else {
             return nil
         }
 
         context.setFillColor(NSColor.black.cgColor)
         context.fill(CGRect(origin: .zero, size: renderSize))
-
-        guard let cgImage = image.cgImageRepresentation() else {
-            return nil
-        }
-
-        let fittedRect = aspectFitRect(imageSize: CGSize(width: cgImage.width, height: cgImage.height), into: renderSize)
-        context.draw(cgImage, in: fittedRect)
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(origin: .zero, size: renderSize))
 
         return buffer
+    }
+
+    private func finish(writer: AVAssetWriter) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            writer.finishWriting {
+                if let error = writer.error {
+                    continuation.resume(throwing: RenderError.exportFailed(error.localizedDescription))
+                } else {
+                    continuation.resume(returning: ())
+                }
+            }
+        }
     }
 
     private func aspectFitRect(imageSize: CGSize, into canvas: CGSize) -> CGRect {
@@ -155,33 +235,6 @@ public final class StillImageClipFactory {
         return CGRect(x: x, y: y, width: width, height: height)
     }
 
-    private func makeTitleCardImage(title: String, renderSize: CGSize) -> NSImage {
-        let size = NSSize(width: renderSize.width, height: renderSize.height)
-        let image = NSImage(size: size)
-
-        image.lockFocus()
-        defer { image.unlockFocus() }
-
-        let background = NSColor(calibratedRed: 0.08, green: 0.10, blue: 0.14, alpha: 1.0)
-        background.setFill()
-        NSBezierPath(rect: NSRect(origin: .zero, size: size)).fill()
-
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = .center
-
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: max(renderSize.width * 0.05, 42), weight: .semibold),
-            .foregroundColor: NSColor.white,
-            .paragraphStyle: paragraph
-        ]
-
-        let attributed = NSAttributedString(string: title, attributes: attributes)
-        let textRect = NSRect(x: renderSize.width * 0.1, y: renderSize.height * 0.4, width: renderSize.width * 0.8, height: renderSize.height * 0.2)
-        attributed.draw(in: textRect)
-
-        return image
-    }
-
     private func temporaryClipURL() -> URL {
         let fileManager = FileManager.default
         let directory = fileManager.temporaryDirectory.appendingPathComponent("MonthlyVideoGenerator", isDirectory: true)
@@ -190,12 +243,3 @@ public final class StillImageClipFactory {
     }
     #endif
 }
-
-#if canImport(AppKit)
-private extension NSImage {
-    func cgImageRepresentation() -> CGImage? {
-        var proposedRect = CGRect(origin: .zero, size: size)
-        return cgImage(forProposedRect: &proposedRect, context: nil, hints: nil)
-    }
-}
-#endif

@@ -6,9 +6,14 @@ struct MainWindowView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Monthly Video Generator")
-                .font(.title2)
-                .fontWeight(.semibold)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Monthly Video Generator")
+                    .font(.title2)
+                    .fontWeight(.semibold)
+                Text(viewModel.appVersionBuildLabel)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
             Picker("Source", selection: $viewModel.sourceMode) {
                 ForEach(MainWindowViewModel.SourceMode.allCases) { mode in
