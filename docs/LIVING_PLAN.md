@@ -61,6 +61,7 @@ Operational updates after first packaged run:
 - Hotfix: title-card fallback rendering now draws title text (instead of a blank card) when AppKit title rasterization fails.
 - Hotfix: renderer now applies explicit output color metadata based on export dynamic range (SDR=BT.709, HDR=BT.2020 HLG) instead of leaving dynamic-range choice advisory only.
 - Added full HDR re-grade/tone-map pass after composition export so HDR output applies explicit per-frame tone mapping instead of metadata-only signaling.
+- Added persistent style/export preferences in app settings so title/crossfade/still-duration and export controls restore between launches.
 
 ## Decisions Log
 
@@ -84,6 +85,7 @@ Operational updates after first packaged run:
 - 2026-03-04: Updated title-card fallback image generation to render readable title text rather than a blank screen.
 - 2026-03-04: Made dynamic-range selection operational by mapping SDR/HDR profile choice to concrete video composition color properties during export.
 - 2026-03-04: Implemented two-pass HDR export path with explicit per-frame tone mapping and HDR Main10 re-encode for stronger perceptual HDR output.
+- 2026-03-04: Persisted style and export option selections to local defaults so frequent controls retain prior values across app relaunches.
 
 ## Changes Since Last Update
 
@@ -110,6 +112,7 @@ Operational updates after first packaged run:
 - 2026-03-04: Updated fallback title-card renderer to include title text so title clips remain visible even after rasterization fallback.
 - 2026-03-04: Enforced explicit output color metadata mapping for SDR/HDR in render export and added regression tests for color-profile mapping.
 - 2026-03-04: Added full HDR tone-mapping render pass (reader/writer regrade after composition export) and tests that lock in HDR-pass gating behavior.
+- 2026-03-04: Added `UserDefaults` persistence for style/export selections (opening title toggle/text, crossfade, still duration, container/codec/resolution/dynamic range/audio layout/bitrate mode).
 
 ## Risks/Blockers
 
@@ -126,4 +129,4 @@ Operational updates after first packaged run:
 
 ## Last Updated
 
-2026-03-04 12:24 America/New_York by Codex
+2026-03-04 12:41 America/New_York by Codex

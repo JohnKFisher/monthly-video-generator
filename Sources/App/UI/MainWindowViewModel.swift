@@ -44,17 +44,37 @@ final class MainWindowViewModel: ObservableObject {
     @Published var outputDirectoryURL: URL
     @Published var outputFilename: String = "Monthly Slideshow"
 
-    @Published var includeOpeningTitle: Bool = true
-    @Published var openingTitleText: String
-    @Published var crossfadeDurationSeconds: Double = 0.75
-    @Published var stillImageDurationSeconds: Double = 3.0
+    @Published var includeOpeningTitle: Bool = true {
+        didSet { persistRenderSettings() }
+    }
+    @Published var openingTitleText: String {
+        didSet { persistRenderSettings() }
+    }
+    @Published var crossfadeDurationSeconds: Double = 0.75 {
+        didSet { persistRenderSettings() }
+    }
+    @Published var stillImageDurationSeconds: Double = 3.0 {
+        didSet { persistRenderSettings() }
+    }
 
-    @Published var selectedContainer: ContainerFormat = .mov
-    @Published var selectedVideoCodec: VideoCodec = .hevc
-    @Published var selectedResolutionPolicy: ResolutionPolicy = .matchSourceMax
-    @Published var selectedDynamicRange: DynamicRange = .sdr
-    @Published var selectedAudioLayout: AudioLayout = .stereo
-    @Published var selectedBitrateMode: BitrateMode = .balanced
+    @Published var selectedContainer: ContainerFormat = .mov {
+        didSet { persistRenderSettings() }
+    }
+    @Published var selectedVideoCodec: VideoCodec = .hevc {
+        didSet { persistRenderSettings() }
+    }
+    @Published var selectedResolutionPolicy: ResolutionPolicy = .matchSourceMax {
+        didSet { persistRenderSettings() }
+    }
+    @Published var selectedDynamicRange: DynamicRange = .sdr {
+        didSet { persistRenderSettings() }
+    }
+    @Published var selectedAudioLayout: AudioLayout = .stereo {
+        didSet { persistRenderSettings() }
+    }
+    @Published var selectedBitrateMode: BitrateMode = .balanced {
+        didSet { persistRenderSettings() }
+    }
 
     @Published var isRendering: Bool = false
     @Published var progress: Double = 0
@@ -71,6 +91,9 @@ final class MainWindowViewModel: ObservableObject {
     private let photoMaterializer = PhotoKitAssetMaterializer()
     private let exportProfileManager = ExportProfileManager()
     private let runReportService = RunReportService()
+    private let preferencesStore = UserDefaults.standard
+
+    private static let renderSettingsDefaultsKey = "MainWindowViewModel.renderSettings.v1"
 
     init() {
         appVersionBuildLabel = AppMetadata.versionBuildLabel
@@ -87,6 +110,8 @@ final class MainWindowViewModel: ObservableObject {
             .appendingPathComponent("Movies", isDirectory: true)
             .appendingPathComponent("Monthly Video Generator", isDirectory: true)
         outputDirectoryURL = moviesDirectory
+
+        applyPersistedRenderSettings()
     }
 
     func chooseInputFolder() {
@@ -270,5 +295,62 @@ final class MainWindowViewModel: ObservableObject {
             return trimmed
         }
         return monthYear.displayLabel
+    }
+
+    private func applyPersistedRenderSettings() {
+        guard let settings = loadPersistedRenderSettings() else {
+            return
+        }
+
+        includeOpeningTitle = settings.includeOpeningTitle
+        openingTitleText = settings.openingTitleText
+        crossfadeDurationSeconds = min(max(settings.crossfadeDurationSeconds, 0), 2)
+        stillImageDurationSeconds = min(max(settings.stillImageDurationSeconds, 1), 10)
+        selectedContainer = settings.selectedContainer
+        selectedVideoCodec = settings.selectedVideoCodec
+        selectedResolutionPolicy = settings.selectedResolutionPolicy
+        selectedDynamicRange = settings.selectedDynamicRange
+        selectedAudioLayout = settings.selectedAudioLayout
+        selectedBitrateMode = settings.selectedBitrateMode
+    }
+
+    private func loadPersistedRenderSettings() -> PersistedRenderSettings? {
+        guard let data = preferencesStore.data(forKey: Self.renderSettingsDefaultsKey) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(PersistedRenderSettings.self, from: data)
+    }
+
+    private func persistRenderSettings() {
+        let settings = PersistedRenderSettings(
+            includeOpeningTitle: includeOpeningTitle,
+            openingTitleText: openingTitleText,
+            crossfadeDurationSeconds: crossfadeDurationSeconds,
+            stillImageDurationSeconds: stillImageDurationSeconds,
+            selectedContainer: selectedContainer,
+            selectedVideoCodec: selectedVideoCodec,
+            selectedResolutionPolicy: selectedResolutionPolicy,
+            selectedDynamicRange: selectedDynamicRange,
+            selectedAudioLayout: selectedAudioLayout,
+            selectedBitrateMode: selectedBitrateMode
+        )
+
+        guard let data = try? JSONEncoder().encode(settings) else {
+            return
+        }
+        preferencesStore.set(data, forKey: Self.renderSettingsDefaultsKey)
+    }
+
+    private struct PersistedRenderSettings: Codable {
+        let includeOpeningTitle: Bool
+        let openingTitleText: String
+        let crossfadeDurationSeconds: Double
+        let stillImageDurationSeconds: Double
+        let selectedContainer: ContainerFormat
+        let selectedVideoCodec: VideoCodec
+        let selectedResolutionPolicy: ResolutionPolicy
+        let selectedDynamicRange: DynamicRange
+        let selectedAudioLayout: AudioLayout
+        let selectedBitrateMode: BitrateMode
     }
 }
