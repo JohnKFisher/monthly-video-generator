@@ -37,6 +37,7 @@ public final class StillImageClipFactory {
     private func makeVideoClip(fromRasterizedImage image: CGImage, duration: CMTime, renderSize: CGSize) async throws -> URL {
         let frameRate = 30
         let totalFrames = max(Int(ceil(duration.seconds * Double(frameRate))), 1)
+        let frameDuration = CMTime(value: 1, timescale: CMTimeScale(frameRate))
         let outputURL = temporaryClipURL()
 
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
@@ -76,12 +77,13 @@ public final class StillImageClipFactory {
                 throw RenderError.exportFailed("Failed to create pixel buffer")
             }
 
-            let time = CMTime(value: CMTimeValue(frame), timescale: CMTimeScale(frameRate))
+            let time = CMTimeMultiply(frameDuration, multiplier: Int32(frame))
             guard adaptor.append(pixelBuffer, withPresentationTime: time) else {
                 throw RenderError.exportFailed(writer.error?.localizedDescription ?? "Failed to append image frame")
             }
         }
 
+        writer.endSession(atSourceTime: duration)
         input.markAsFinished()
         try await finish(writer: writer)
         return outputURL

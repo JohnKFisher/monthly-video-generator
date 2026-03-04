@@ -64,7 +64,8 @@ public final class AVFoundationRenderEngine {
         for (index, clip) in clips.enumerated() {
             clipStartTimes.append(cursor)
             let trackIndex = index % 2
-            let insertRange = CMTimeRange(start: .zero, duration: clip.duration)
+            let insertDuration = minPositiveDuration(clip.duration, clip.videoTrackDuration) ?? clip.duration
+            let insertRange = CMTimeRange(start: .zero, duration: insertDuration)
 
             do {
                 try videoTracks[trackIndex].insertTimeRange(insertRange, of: clip.videoTrack, at: cursor)
@@ -73,14 +74,16 @@ public final class AVFoundationRenderEngine {
             }
 
             if clip.includeAudio, let audioTrack = clip.audioTrack {
+                let audioDuration = minPositiveDuration(clip.duration, clip.audioTrackDuration) ?? clip.duration
+                let audioRange = CMTimeRange(start: .zero, duration: audioDuration)
                 do {
-                    try audioTracks[trackIndex].insertTimeRange(insertRange, of: audioTrack, at: cursor)
+                    try audioTracks[trackIndex].insertTimeRange(audioRange, of: audioTrack, at: cursor)
                 } catch {
                     throw RenderError.exportFailed("Audio track insertion failed for \(clip.sourceDescription) at index \(index). \(describe(error))")
                 }
             }
 
-            cursor = add(cursor, clip.duration)
+            cursor = add(cursor, insertDuration)
             if index < clips.count - 1, transitionDuration > .zero {
                 cursor = subtract(cursor, transitionDuration)
             }
@@ -278,19 +281,28 @@ public final class AVFoundationRenderEngine {
             throw RenderError.exportFailed("Unable to load duration for \(sourceDescription). \(describe(error))")
         }
 
-        guard assetDuration > .zero || fallbackDuration > .zero else {
-            return nil
+        let videoTrackRange = (try? await videoTrack.load(.timeRange))
+        let videoTrackDuration = videoTrackRange?.duration
+        let clipDuration = smallestPositiveDuration([fallbackDuration, assetDuration, videoTrackDuration]) ?? fallbackDuration
+        guard clipDuration > .zero else {
+            throw RenderError.exportFailed("Clip duration is invalid for \(sourceDescription).")
         }
-
-        let clipDuration = assetDuration > .zero ? minTime(assetDuration, fallbackDuration) : fallbackDuration
         let naturalSize = (try? await videoTrack.load(.naturalSize)) ?? CGSize(width: 1920, height: 1080)
         let preferredTransform = (try? await videoTrack.load(.preferredTransform)) ?? .identity
 
         let audioTrack = includeAudio ? (try? await asset.loadTracks(withMediaType: .audio).first) : nil
+        let audioTrackDuration: CMTime?
+        if let audioTrack {
+            audioTrackDuration = (try? await audioTrack.load(.timeRange))?.duration
+        } else {
+            audioTrackDuration = nil
+        }
 
         return InputClip(
             videoTrack: videoTrack,
             audioTrack: audioTrack,
+            videoTrackDuration: videoTrackDuration,
+            audioTrackDuration: audioTrackDuration,
             duration: clipDuration,
             preferredTransform: preferredTransform,
             naturalSize: naturalSize,
@@ -385,6 +397,8 @@ public final class AVFoundationRenderEngine {
     private struct InputClip {
         let videoTrack: AVAssetTrack
         let audioTrack: AVAssetTrack?
+        let videoTrackDuration: CMTime?
+        let audioTrackDuration: CMTime?
         let duration: CMTime
         let preferredTransform: CGAffineTransform
         let naturalSize: CGSize
@@ -397,5 +411,20 @@ public final class AVFoundationRenderEngine {
         let nsError = error as NSError
         let reason = nsError.localizedFailureReason ?? nsError.localizedRecoverySuggestion ?? "No additional details."
         return "\(nsError.domain) code \(nsError.code): \(nsError.localizedDescription). \(reason)"
+    }
+
+    private func smallestPositiveDuration(_ values: [CMTime?]) -> CMTime? {
+        values
+            .compactMap { $0 }
+            .filter { isPositiveFiniteTime($0) }
+            .min { CMTimeCompare($0, $1) < 0 }
+    }
+
+    private func minPositiveDuration(_ lhs: CMTime?, _ rhs: CMTime?) -> CMTime? {
+        smallestPositiveDuration([lhs, rhs])
+    }
+
+    private func isPositiveFiniteTime(_ value: CMTime) -> Bool {
+        value.isValid && value.isNumeric && value.seconds.isFinite && value > .zero
     }
 }
