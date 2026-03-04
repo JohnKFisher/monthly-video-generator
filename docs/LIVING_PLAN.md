@@ -43,7 +43,7 @@ Implemented now:
 Open for S4 completion:
 - Migrate renderer to newer non-deprecated AVFoundation export APIs.
 - Enforce more export-profile options directly in encode settings (currently some are advisory/UI-level compatibility warnings).
-- Add richer progress reporting beyond start/finish updates.
+- Refine progress UX with ETA prediction and stronger cancellation affordances for long HDR jobs.
 
 Operational updates after first packaged run:
 - Added repeatable `.app` bundling script so each build produces a Finder app bundle.
@@ -64,6 +64,7 @@ Operational updates after first packaged run:
 - Added persistent style/export preferences in app settings so title/crossfade/still-duration and export controls restore between launches.
 - Improved progress reporting so the UI progress bar now advances across materialization, composition/export, and HDR tone-map phases instead of jumping only at start/end.
 - Hotfix: HDR tone-map pass now fails with explicit timeout/status errors when writer input stalls, preventing indefinite “hang” behavior.
+- Hotfix: HDR tone-map pass now interleaves audio sample appends while video frames are written, reducing writer backpressure stalls that previously timed out mid-pass.
 
 ## Decisions Log
 
@@ -90,6 +91,7 @@ Operational updates after first packaged run:
 - 2026-03-04: Persisted style and export option selections to local defaults so frequent controls retain prior values across app relaunches.
 - 2026-03-04: Added phase-aware render progress callbacks and UI progress mapping so progress remains useful throughout long exports.
 - 2026-03-04: Added bounded writer-readiness waits in HDR tone mapping so stalled encoder states produce clear failures instead of unbounded waits.
+- 2026-03-04: Changed HDR tone-map writer flow to drain audio incrementally during video encoding and in bounded bursts during finalization to avoid muxer starvation stalls.
 
 ## Changes Since Last Update
 
@@ -119,20 +121,21 @@ Operational updates after first packaged run:
 - 2026-03-04: Added `UserDefaults` persistence for style/export selections (opening title toggle/text, crossfade, still duration, container/codec/resolution/dynamic range/audio layout/bitrate mode).
 - 2026-03-04: Wired determinate progress updates end-to-end (materialization, insertion/export polling, HDR tone mapping) and surfaced percent status text in the app UI.
 - 2026-03-04: Hardened HDR tone-map writer readiness waits with timeout + writer-status checks to prevent apparent hangs on problematic exports.
+- 2026-03-04: Updated HDR tone-map audio handling to append ready audio samples during frame rendering and complete remaining audio in bounded bursts to prevent writer backpressure deadlocks.
 
 ## Risks/Blockers
 
 - Current renderer uses AVFoundation APIs that are deprecated on macOS 15+; functional now, but should be migrated.
-- Progress reporting is coarse (start/end) rather than granular throughout export.
+- Progress reporting is phase-based and monotonic but still ETA-free (not frame-accurate completion-time prediction).
 - Very large photo months may have long materialization times; additional user-facing progress granularity is still needed.
 - HDR exports now use an additional full-frame regrade pass and can take materially longer than SDR exports, especially at large resolutions.
 
 ## Next Actions (Top 3)
 
 1. Complete S4 by wiring deeper export controls to encode behavior and migrating deprecations.
-2. Add granular render/materialization progress and stronger cancellation UX.
+2. Add ETA-oriented progress forecasting and stronger cancellation UX.
 3. Add integration tests and smoke samples for mixed-orientation clips and larger photo month datasets.
 
 ## Last Updated
 
-2026-03-04 13:48 America/New_York by Codex
+2026-03-04 14:10 America/New_York by Codex

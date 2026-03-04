@@ -532,6 +532,12 @@ public final class AVFoundationRenderEngine {
         let input: AVAssetWriterInput
     }
 
+    private struct ToneMapAudioPipelineState {
+        let pipeline: ToneMapAudioPipeline
+        var isExhausted: Bool = false
+        var appendedSamples: Int = 0
+    }
+
     private func applyHDRToneMapping(
         from inputURL: URL,
         to outputURL: URL,
@@ -600,7 +606,7 @@ public final class AVFoundationRenderEngine {
             )
 
             let audioTracks = try await sourceAsset.loadTracks(withMediaType: .audio)
-            var audioPipelines: [ToneMapAudioPipeline] = []
+            var audioPipelines: [ToneMapAudioPipelineState] = []
             for audioTrack in audioTracks {
                 let output = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)
                 output.alwaysCopiesSampleData = false
@@ -616,7 +622,7 @@ public final class AVFoundationRenderEngine {
                     continue
                 }
                 writer.add(input)
-                audioPipelines.append(ToneMapAudioPipeline(output: output, input: input))
+                audioPipelines.append(ToneMapAudioPipelineState(pipeline: ToneMapAudioPipeline(output: output, input: input)))
             }
 
             guard writer.startWriting() else {
@@ -666,6 +672,11 @@ public final class AVFoundationRenderEngine {
                 guard adaptor.append(destinationBuffer, withPresentationTime: presentationTime) else {
                     throw RenderError.exportFailed(writer.error?.localizedDescription ?? "Failed to append HDR tone-mapped frame.")
                 }
+                _ = try appendReadyAudioSamples(
+                    from: &audioPipelines,
+                    writer: writer,
+                    perTrackLimit: 4
+                )
 
                 frameCount += 1
                 if frameCount == 1 || frameCount.isMultiple(of: 12) {
@@ -679,19 +690,42 @@ public final class AVFoundationRenderEngine {
                 throw RenderError.exportFailed(reader.error?.localizedDescription ?? "HDR tone-map video read failed.")
             }
 
-            for (audioIndex, pipeline) in audioPipelines.enumerated() {
-                while let sampleBuffer = pipeline.output.copyNextSampleBuffer() {
-                    try Task.checkCancellation()
+            while audioPipelines.contains(where: { !$0.isExhausted }) {
+                var appendedInPass = 0
+                for index in audioPipelines.indices {
+                    if audioPipelines[index].isExhausted {
+                        continue
+                    }
+
+                    let pipeline = audioPipelines[index].pipeline
                     try await waitForWriterInputReadiness(
                         pipeline.input,
                         writer: writer,
-                        context: "audio track \(audioIndex + 1)"
+                        context: "audio track \(index + 1)"
                     )
+                    guard let sampleBuffer = pipeline.output.copyNextSampleBuffer() else {
+                        pipeline.input.markAsFinished()
+                        audioPipelines[index].isExhausted = true
+                        continue
+                    }
                     guard pipeline.input.append(sampleBuffer) else {
                         throw RenderError.exportFailed(writer.error?.localizedDescription ?? "Failed to append audio during HDR tone-map pass.")
                     }
+                    audioPipelines[index].appendedSamples += 1
+                    appendedInPass += 1
+
+                    let burstAppended = try appendReadyAudioSamples(
+                        from: &audioPipelines,
+                        writer: writer,
+                        trackIndex: index,
+                        perTrackLimit: 8
+                    )
+                    appendedInPass += burstAppended
                 }
-                pipeline.input.markAsFinished()
+
+                if appendedInPass == 0 {
+                    try await Task.sleep(nanoseconds: 2_000_000)
+                }
             }
 
             if reader.status == .failed {
@@ -699,7 +733,10 @@ public final class AVFoundationRenderEngine {
             }
 
             try await finish(writer: writer)
-            diagnostics.add("HDR tone-map pass completed: renderedFrames=\(frameCount), audioTracks=\(audioPipelines.count)")
+            let appendedAudioSamples = audioPipelines.reduce(0) { $0 + $1.appendedSamples }
+            diagnostics.add(
+                "HDR tone-map pass completed: renderedFrames=\(frameCount), audioTracks=\(audioPipelines.count), audioSamples=\(appendedAudioSamples)"
+            )
         } catch {
             try? FileManager.default.removeItem(at: outputURL)
             throw RenderError.exportFailed("HDR tone-mapping failed. \(describe(error))")
@@ -798,6 +835,47 @@ public final class AVFoundationRenderEngine {
 
             try await Task.sleep(nanoseconds: 2_000_000)
         }
+    }
+
+    private func appendReadyAudioSamples(
+        from pipelines: inout [ToneMapAudioPipelineState],
+        writer: AVAssetWriter,
+        trackIndex: Int? = nil,
+        perTrackLimit: Int
+    ) throws -> Int {
+        let indices: [Int]
+        if let trackIndex {
+            indices = [trackIndex]
+        } else {
+            indices = Array(pipelines.indices)
+        }
+
+        var appended = 0
+        for index in indices {
+            guard pipelines.indices.contains(index), !pipelines[index].isExhausted else {
+                continue
+            }
+
+            let pipeline = pipelines[index].pipeline
+            var appendedForTrack = 0
+            while appendedForTrack < perTrackLimit, pipeline.input.isReadyForMoreMediaData {
+                guard let sampleBuffer = pipeline.output.copyNextSampleBuffer() else {
+                    pipeline.input.markAsFinished()
+                    pipelines[index].isExhausted = true
+                    break
+                }
+
+                guard pipeline.input.append(sampleBuffer) else {
+                    throw RenderError.exportFailed(writer.error?.localizedDescription ?? "Failed to append audio during HDR tone-map pass.")
+                }
+
+                pipelines[index].appendedSamples += 1
+                appendedForTrack += 1
+                appended += 1
+            }
+        }
+
+        return appended
     }
 
     private func finish(writer: AVAssetWriter) async throws {
