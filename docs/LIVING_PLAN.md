@@ -67,6 +67,7 @@ Operational updates after first packaged run:
 - Hotfix: HDR tone-map pass now interleaves audio sample appends while video frames are written, reducing writer backpressure stalls that previously timed out mid-pass.
 - Hotfix: HDR tone-map pass now uses a standards-based identity 10-bit pipeline (HLG/BT.2020) with explicit HDR metadata insertion policy instead of a creative filter stack that caused severe clipping/saturation artifacts.
 - Hotfix: HDR writer settings now enforce HEVC Main10 with explicit metadata policy (Auto + recompute), and fall back to HLG static signaling (`metadata insertion = None`) when encoder support is limited.
+- Added render-complete success alert and an explicit “Open Render Folder” action in the UI for faster post-export discovery.
 
 ## Decisions Log
 
@@ -128,6 +129,7 @@ Operational updates after first packaged run:
 - 2026-03-04: Updated HDR tone-map audio handling to append ready audio samples during frame rendering and complete remaining audio in bounded bursts to prevent writer backpressure deadlocks.
 - 2026-03-04: Updated HDR writer configuration to HEVC Main10 + BT.2020 HLG metadata policy, removed creative tone-curve adjustments, and rendered HDR pass in 10-bit x420 buffers.
 - 2026-03-04: Added HDR writer-settings regression tests that verify Main10 profile, metadata insertion mode, and dynamic metadata regeneration policy.
+- 2026-03-04: Added completion alert and output-folder quick-open control for post-render UX clarity.
 
 ## Risks/Blockers
 
@@ -144,4 +146,4 @@ Operational updates after first packaged run:
 
 ## Last Updated
 
-2026-03-04 14:59 America/New_York by Codex
+2026-03-04 15:34 America/New_York by Codex

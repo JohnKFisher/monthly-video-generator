@@ -81,6 +81,7 @@ final class MainWindowViewModel: ObservableObject {
     @Published var statusMessage: String = "Idle"
     @Published var warnings: [String] = []
     @Published var lastOutputPath: String = ""
+    @Published var showRenderCompleteAlert: Bool = false
 
     let appVersionBuildLabel: String
     let months = Array(1...12)
@@ -162,6 +163,19 @@ final class MainWindowViewModel: ObservableObject {
         statusMessage = "Cancelling render..."
     }
 
+    func openRenderedOutputFolder() {
+        #if canImport(AppKit)
+        let outputPath = lastOutputPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let directoryURL: URL
+        if outputPath.isEmpty {
+            directoryURL = outputDirectoryURL
+        } else {
+            directoryURL = URL(fileURLWithPath: outputPath).deletingLastPathComponent()
+        }
+        NSWorkspace.shared.open(directoryURL)
+        #endif
+    }
+
     private func performRender() async {
         do {
             isRendering = true
@@ -169,6 +183,7 @@ final class MainWindowViewModel: ObservableObject {
             warnings = []
             statusMessage = "Preparing media..."
             lastOutputPath = ""
+            showRenderCompleteAlert = false
 
             let monthYear = MonthYear(month: selectedMonth, year: selectedYear)
             let openingTitle = includeOpeningTitle ? resolvedOpeningTitle(for: monthYear) : nil
@@ -251,9 +266,11 @@ final class MainWindowViewModel: ObservableObject {
             lastOutputPath = outputURL.path
             progress = 1.0
             statusMessage = "Render complete"
+            showRenderCompleteAlert = true
         } catch {
             progress = 0
             statusMessage = formatErrorForDisplay(error)
+            showRenderCompleteAlert = false
         }
 
         isRendering = false

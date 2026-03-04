@@ -157,9 +157,15 @@ struct MainWindowView: View {
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if !viewModel.lastOutputPath.isEmpty {
-                    Text(viewModel.lastOutputPath)
-                        .font(.caption)
-                        .textSelection(.enabled)
+                    HStack(alignment: .top, spacing: 10) {
+                        Text(viewModel.lastOutputPath)
+                            .font(.caption)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Button("Open Render Folder") {
+                            viewModel.openRenderedOutputFolder()
+                        }
+                    }
                 }
             }
 
@@ -177,5 +183,17 @@ struct MainWindowView: View {
         }
         .padding(20)
         .frame(minWidth: 860, minHeight: 760)
+        .alert("Render Complete", isPresented: $viewModel.showRenderCompleteAlert) {
+            Button("Open Folder") {
+                viewModel.openRenderedOutputFolder()
+            }
+            Button("OK", role: .cancel) {}
+        } message: {
+            if viewModel.lastOutputPath.isEmpty {
+                Text("The slideshow was exported successfully.")
+            } else {
+                Text(viewModel.lastOutputPath)
+            }
+        }
     }
 }
