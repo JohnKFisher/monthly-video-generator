@@ -19,7 +19,14 @@ public final class StillImageClipFactory {
 
     public func makeTitleCardClip(title: String, duration: CMTime, renderSize: CGSize) async throws -> URL {
         #if canImport(AppKit)
-        let titleImage = try makeTitleCardRasterizedImage(title: title, renderSize: renderSize)
+        let titleImage: CGImage
+        do {
+            titleImage = try await MainActor.run { [renderSize, title] in
+                try Self.makeTitleCardRasterizedImage(title: title, renderSize: renderSize)
+            }
+        } catch {
+            titleImage = try makeFallbackTitleCardImage(renderSize: renderSize)
+        }
         return try await makeVideoClip(fromRasterizedImage: titleImage, duration: duration, renderSize: renderSize)
         #else
         throw RenderError.exportFailed("Title card rendering requires AppKit support")
@@ -97,14 +104,15 @@ public final class StillImageClipFactory {
             ?? CGImageSourceCreateImageAtIndex(imageSource, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
 
         guard let decodedImage,
-              let rasterizedImage = rasterizedImage(decodedImage, renderSize: renderSize) else {
+              let rasterizedImage = Self.rasterizedImage(decodedImage, renderSize: renderSize) else {
             throw RenderError.exportFailed("Unable to decode image at \(url.path)")
         }
 
         return rasterizedImage
     }
 
-    private func makeTitleCardRasterizedImage(title: String, renderSize: CGSize) throws -> CGImage {
+    @MainActor
+    private static func makeTitleCardRasterizedImage(title: String, renderSize: CGSize) throws -> CGImage {
         let size = NSSize(width: renderSize.width, height: renderSize.height)
         let image = NSImage(size: size)
 
@@ -130,14 +138,39 @@ public final class StillImageClipFactory {
 
         var proposedRect = CGRect(origin: .zero, size: size)
         guard let rawImage = image.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil),
-              let safeImage = rasterizedImage(rawImage, renderSize: renderSize) else {
+              let safeImage = Self.rasterizedImage(rawImage, renderSize: renderSize) else {
             throw RenderError.exportFailed("Unable to create title card image")
         }
 
         return safeImage
     }
 
-    private func rasterizedImage(_ sourceImage: CGImage, renderSize: CGSize) -> CGImage? {
+    private func makeFallbackTitleCardImage(renderSize: CGSize) throws -> CGImage {
+        let width = max(1, Int(renderSize.width.rounded()))
+        let height = max(1, Int(renderSize.height.rounded()))
+
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
+        ) else {
+            throw RenderError.exportFailed("Unable to create fallback title card image at \(width)x\(height)")
+        }
+
+        context.setFillColor(CGColor(red: 0.08, green: 0.10, blue: 0.14, alpha: 1.0))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+
+        guard let image = context.makeImage() else {
+            throw RenderError.exportFailed("Unable to finalize fallback title card image at \(width)x\(height)")
+        }
+        return image
+    }
+
+    private static func rasterizedImage(_ sourceImage: CGImage, renderSize: CGSize) -> CGImage? {
         let width = max(1, Int(renderSize.width.rounded()))
         let height = max(1, Int(renderSize.height.rounded()))
 
@@ -157,7 +190,7 @@ public final class StillImageClipFactory {
         context.fill(CGRect(x: 0, y: 0, width: width, height: height))
         context.interpolationQuality = .high
 
-        let fittedRect = aspectFitRect(
+        let fittedRect = Self.aspectFitRect(
             imageSize: CGSize(width: sourceImage.width, height: sourceImage.height),
             into: CGSize(width: width, height: height)
         )
@@ -219,7 +252,7 @@ public final class StillImageClipFactory {
         }
     }
 
-    private func aspectFitRect(imageSize: CGSize, into canvas: CGSize) -> CGRect {
+    private static func aspectFitRect(imageSize: CGSize, into canvas: CGSize) -> CGRect {
         guard imageSize.width > 0, imageSize.height > 0 else {
             return CGRect(origin: .zero, size: canvas)
         }

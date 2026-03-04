@@ -49,6 +49,7 @@ Operational updates after first packaged run:
 - Added repeatable `.app` bundling script so each build produces a Finder app bundle.
 - Added visible app version/build label in the main window.
 - Patched still-image rendering path to decode and rasterize source images once before frame emission to reduce provider-related crash risk.
+- Hotfix: title card generation now runs on the main actor with a fallback solid-card path to prevent immediate export failure when title card rasterization fails.
 
 ## Decisions Log
 
@@ -60,6 +61,7 @@ Operational updates after first packaged run:
 - 2026-03-04: Standardized app bundling via `scripts/build_app.sh` with `VERSION` file + generated build number.
 - 2026-03-04: Surface `CFBundleShortVersionString` and `CFBundleVersion` in UI for runtime traceability.
 - 2026-03-04: Switched still image clip creation to ImageIO decode + rasterization path to address crash in CoreGraphics provider reads.
+- 2026-03-04: Added title-card creation fallback and main-actor AppKit rendering path after user-reported `Unable to create title card image` runtime failure.
 
 ## Changes Since Last Update
 
@@ -74,6 +76,7 @@ Operational updates after first packaged run:
 - 2026-03-04: Added `VERSION` file and dynamic build number injection into app `Info.plist`.
 - 2026-03-04: Added version/build label to main UI.
 - 2026-03-04: Reworked still-image rendering to use pre-rasterized CGImage frames for stability.
+- 2026-03-04: Added title-card hotfix to avoid export abort on title rasterization failure.
 
 ## Risks/Blockers
 
@@ -89,4 +92,4 @@ Operational updates after first packaged run:
 
 ## Last Updated
 
-2026-03-04 00:15 America/New_York by Codex
+2026-03-04 08:51 America/New_York by Codex
