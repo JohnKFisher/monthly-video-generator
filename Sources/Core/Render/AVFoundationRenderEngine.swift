@@ -1,0 +1,351 @@
+import AVFoundation
+import Foundation
+
+public final class AVFoundationRenderEngine {
+    private var currentSession: AVAssetExportSession?
+    private let stillImageClipFactory: StillImageClipFactory
+
+    public init(stillImageClipFactory: StillImageClipFactory = StillImageClipFactory()) {
+        self.stillImageClipFactory = stillImageClipFactory
+    }
+
+    public func cancelCurrentRender() {
+        currentSession?.cancelExport()
+    }
+
+    public func render(
+        timeline: Timeline,
+        style: StyleProfile,
+        exportProfile: ExportProfile,
+        outputTarget: OutputTarget,
+        photoMaterializer: PhotoAssetMaterializing?,
+        progressHandler: ((Double) -> Void)? = nil
+    ) async throws -> URL {
+        guard !timeline.segments.isEmpty else {
+            throw RenderError.noRenderableMedia
+        }
+
+        let renderSize = resolveRenderSize(from: timeline, policy: exportProfile.resolution)
+        var temporaryURLs: [URL] = []
+        defer {
+            for url in temporaryURLs {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+
+        let clips = try await materializeInputClips(
+            segments: timeline.segments,
+            renderSize: renderSize,
+            photoMaterializer: photoMaterializer,
+            temporaryURLs: &temporaryURLs
+        )
+
+        guard !clips.isEmpty else {
+            throw RenderError.noRenderableMedia
+        }
+
+        let composition = AVMutableComposition()
+        guard
+            let firstVideoTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
+            let secondVideoTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
+            let firstAudioTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid),
+            let secondAudioTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+        else {
+            throw RenderError.exportFailed("Failed to allocate composition tracks")
+        }
+
+        let videoTracks = [firstVideoTrack, secondVideoTrack]
+        let audioTracks = [firstAudioTrack, secondAudioTrack]
+
+        let transitionDuration = effectiveTransitionDuration(clips: clips, requestedSeconds: style.crossfadeDurationSeconds)
+        var clipStartTimes: [CMTime] = []
+        var cursor = CMTime.zero
+
+        for (index, clip) in clips.enumerated() {
+            clipStartTimes.append(cursor)
+            let trackIndex = index % 2
+            let insertRange = CMTimeRange(start: .zero, duration: clip.duration)
+
+            try videoTracks[trackIndex].insertTimeRange(insertRange, of: clip.videoTrack, at: cursor)
+
+            if clip.includeAudio, let audioTrack = clip.audioTrack {
+                try audioTracks[trackIndex].insertTimeRange(insertRange, of: audioTrack, at: cursor)
+            }
+
+            cursor = add(cursor, clip.duration)
+            if index < clips.count - 1, transitionDuration > .zero {
+                cursor = subtract(cursor, transitionDuration)
+            }
+        }
+
+        let videoComposition = AVMutableVideoComposition()
+        videoComposition.renderSize = renderSize
+        videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
+        videoComposition.instructions = buildInstructions(
+            clips: clips,
+            clipStartTimes: clipStartTimes,
+            transitionDuration: transitionDuration,
+            compositionTracks: videoTracks
+        )
+
+        let outputURL = try OutputPathResolver.resolveUniqueURL(target: outputTarget, container: exportProfile.container)
+        let presetName = bestPreset(for: exportProfile, composition: composition)
+        guard let session = AVAssetExportSession(asset: composition, presetName: presetName) else {
+            throw RenderError.exportSessionUnavailable
+        }
+
+        currentSession = session
+        session.outputURL = outputURL
+        session.outputFileType = preferredFileType(container: exportProfile.container, session: session)
+        session.shouldOptimizeForNetworkUse = false
+        session.videoComposition = videoComposition
+
+        progressHandler?(0.01)
+        try await export(session: session)
+        progressHandler?(1.0)
+        currentSession = nil
+
+        return outputURL
+    }
+
+    private func buildInstructions(
+        clips: [InputClip],
+        clipStartTimes: [CMTime],
+        transitionDuration: CMTime,
+        compositionTracks: [AVCompositionTrack]
+    ) -> [AVVideoCompositionInstructionProtocol] {
+        var instructions: [AVMutableVideoCompositionInstruction] = []
+
+        for index in clips.indices {
+            let clip = clips[index]
+            var passStart = clipStartTimes[index]
+            var passDuration = clip.duration
+
+            if transitionDuration > .zero {
+                if index > 0 {
+                    passStart = add(passStart, transitionDuration)
+                    passDuration = subtract(passDuration, transitionDuration)
+                }
+                if index < clips.count - 1 {
+                    passDuration = subtract(passDuration, transitionDuration)
+                }
+            }
+
+            if passDuration > .zero {
+                let instruction = AVMutableVideoCompositionInstruction()
+                instruction.timeRange = CMTimeRange(start: passStart, duration: passDuration)
+
+                let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: compositionTracks[index % 2])
+                layerInstruction.setTransform(clip.preferredTransform, at: passStart)
+                instruction.layerInstructions = [layerInstruction]
+                instructions.append(instruction)
+            }
+
+            if index < clips.count - 1, transitionDuration > .zero {
+                let transitionStart = subtract(add(clipStartTimes[index], clip.duration), transitionDuration)
+                let transitionInstruction = AVMutableVideoCompositionInstruction()
+                transitionInstruction.timeRange = CMTimeRange(start: transitionStart, duration: transitionDuration)
+
+                let fromTrack = compositionTracks[index % 2]
+                let toTrack = compositionTracks[(index + 1) % 2]
+
+                let fromLayer = AVMutableVideoCompositionLayerInstruction(assetTrack: fromTrack)
+                fromLayer.setTransform(clips[index].preferredTransform, at: transitionStart)
+                fromLayer.setOpacityRamp(
+                    fromStartOpacity: 1.0,
+                    toEndOpacity: 0.0,
+                    timeRange: transitionInstruction.timeRange
+                )
+
+                let toLayer = AVMutableVideoCompositionLayerInstruction(assetTrack: toTrack)
+                toLayer.setTransform(clips[index + 1].preferredTransform, at: transitionStart)
+                toLayer.setOpacityRamp(
+                    fromStartOpacity: 0.0,
+                    toEndOpacity: 1.0,
+                    timeRange: transitionInstruction.timeRange
+                )
+
+                transitionInstruction.layerInstructions = [toLayer, fromLayer]
+                instructions.append(transitionInstruction)
+            }
+        }
+
+        return instructions.sorted {
+            $0.timeRange.start < $1.timeRange.start
+        }
+    }
+
+    private func materializeInputClips(
+        segments: [TimelineSegment],
+        renderSize: CGSize,
+        photoMaterializer: PhotoAssetMaterializing?,
+        temporaryURLs: inout [URL]
+    ) async throws -> [InputClip] {
+        var clips: [InputClip] = []
+
+        for segment in segments {
+            switch segment.asset {
+            case let .titleCard(title):
+                let titleURL = try await stillImageClipFactory.makeTitleCardClip(title: title, duration: segment.duration, renderSize: renderSize)
+                temporaryURLs.append(titleURL)
+                if let clip = try await makeClip(assetURL: titleURL, fallbackDuration: segment.duration, includeAudio: false, isTemporary: true) {
+                    clips.append(clip)
+                }
+
+            case let .media(item):
+                switch item.type {
+                case .image:
+                    let sourceURL = try await resolveURL(for: item, photoMaterializer: photoMaterializer)
+                    let imageClipURL = try await stillImageClipFactory.makeVideoClip(fromImageURL: sourceURL, duration: segment.duration, renderSize: renderSize)
+                    temporaryURLs.append(imageClipURL)
+                    if let clip = try await makeClip(assetURL: imageClipURL, fallbackDuration: segment.duration, includeAudio: false, isTemporary: true) {
+                        clips.append(clip)
+                    }
+
+                case .video:
+                    let sourceURL = try await resolveURL(for: item, photoMaterializer: photoMaterializer)
+                    if let clip = try await makeClip(assetURL: sourceURL, fallbackDuration: segment.duration, includeAudio: true, isTemporary: false) {
+                        clips.append(clip)
+                    }
+                }
+            }
+        }
+
+        return clips
+    }
+
+    private func resolveURL(for item: MediaItem, photoMaterializer: PhotoAssetMaterializing?) async throws -> URL {
+        switch item.locator {
+        case let .file(url):
+            return url
+        case let .photoAsset(localIdentifier):
+            guard let photoMaterializer else {
+                throw RenderError.unsupportedPhotoAssetWithoutMaterializer(localIdentifier)
+            }
+            return try await photoMaterializer.materializePhotoAsset(localIdentifier: localIdentifier, preferredFilename: item.filename)
+        }
+    }
+
+    private func makeClip(
+        assetURL: URL,
+        fallbackDuration: CMTime,
+        includeAudio: Bool,
+        isTemporary: Bool
+    ) async throws -> InputClip? {
+        let asset = AVURLAsset(url: assetURL)
+        let videoTracks = try await asset.loadTracks(withMediaType: .video)
+
+        guard let videoTrack = videoTracks.first else {
+            return nil
+        }
+
+        let assetDuration = (try? await asset.load(.duration)) ?? fallbackDuration
+        let clipDuration = assetDuration > .zero ? minTime(assetDuration, fallbackDuration) : fallbackDuration
+        let naturalSize = (try? await videoTrack.load(.naturalSize)) ?? CGSize(width: 1920, height: 1080)
+        let preferredTransform = (try? await videoTrack.load(.preferredTransform)) ?? .identity
+
+        let audioTrack = includeAudio ? (try? await asset.loadTracks(withMediaType: .audio).first) : nil
+
+        return InputClip(
+            videoTrack: videoTrack,
+            audioTrack: audioTrack,
+            duration: clipDuration,
+            preferredTransform: preferredTransform,
+            naturalSize: naturalSize,
+            isTemporary: isTemporary,
+            includeAudio: includeAudio
+        )
+    }
+
+    private func effectiveTransitionDuration(clips: [InputClip], requestedSeconds: Double) -> CMTime {
+        guard clips.count > 1, requestedSeconds > 0 else {
+            return .zero
+        }
+
+        let requested = CMTime(seconds: requestedSeconds, preferredTimescale: 600)
+        let halfOfShortest = clips
+            .map { CMTime(seconds: max($0.duration.seconds / 2.0, 0), preferredTimescale: 600) }
+            .min() ?? .zero
+
+        return minTime(requested, halfOfShortest)
+    }
+
+    private func resolveRenderSize(from timeline: Timeline, policy: ResolutionPolicy) -> CGSize {
+        switch policy {
+        case .fixed1080p:
+            return CGSize(width: 1920, height: 1080)
+        case .fixed4K:
+            return CGSize(width: 3840, height: 2160)
+        case .matchSourceMax:
+            let mediaItems = timeline.segments.compactMap { segment -> MediaItem? in
+                if case let .media(item) = segment.asset {
+                    return item
+                }
+                return nil
+            }
+
+            let maxWidth = mediaItems.map { $0.pixelSize.width }.max() ?? 1920
+            let maxHeight = mediaItems.map { $0.pixelSize.height }.max() ?? 1080
+
+            let width = max(640, Int(maxWidth.rounded()))
+            let height = max(360, Int(maxHeight.rounded()))
+            return CGSize(width: width.isMultiple(of: 2) ? width : width + 1, height: height.isMultiple(of: 2) ? height : height + 1)
+        }
+    }
+
+    private func bestPreset(for profile: ExportProfile, composition: AVAsset) -> String {
+        let preferred = profile.videoCodec == .hevc ? AVAssetExportPresetHEVCHighestQuality : AVAssetExportPresetHighestQuality
+        let compatible = AVAssetExportSession.exportPresets(compatibleWith: composition)
+        if compatible.contains(preferred) {
+            return preferred
+        }
+        return AVAssetExportPresetHighestQuality
+    }
+
+    private func preferredFileType(container: ContainerFormat, session: AVAssetExportSession) -> AVFileType {
+        let preferred: AVFileType = container == .mp4 ? .mp4 : .mov
+        if session.supportedFileTypes.contains(preferred) {
+            return preferred
+        }
+        return session.supportedFileTypes.first ?? .mov
+    }
+
+    private func export(session: AVAssetExportSession) async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            session.exportAsynchronously {
+                switch session.status {
+                case .completed:
+                    continuation.resume(returning: ())
+                case .cancelled:
+                    continuation.resume(throwing: RenderError.exportFailed("Render cancelled"))
+                case .failed:
+                    continuation.resume(throwing: RenderError.exportFailed(session.error?.localizedDescription ?? "Unknown export failure"))
+                default:
+                    continuation.resume(throwing: RenderError.exportFailed("Unexpected export status: \(session.status.rawValue)"))
+                }
+            }
+        }
+    }
+
+    private func add(_ lhs: CMTime, _ rhs: CMTime) -> CMTime {
+        CMTimeAdd(lhs, rhs)
+    }
+
+    private func subtract(_ lhs: CMTime, _ rhs: CMTime) -> CMTime {
+        CMTimeSubtract(lhs, rhs)
+    }
+
+    private func minTime(_ lhs: CMTime, _ rhs: CMTime) -> CMTime {
+        CMTimeCompare(lhs, rhs) <= 0 ? lhs : rhs
+    }
+
+    private struct InputClip {
+        let videoTrack: AVAssetTrack
+        let audioTrack: AVAssetTrack?
+        let duration: CMTime
+        let preferredTransform: CGAffineTransform
+        let naturalSize: CGSize
+        let isTemporary: Bool
+        let includeAudio: Bool
+    }
+}
