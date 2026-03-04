@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreText
 import Foundation
 import ImageIO
 #if canImport(AppKit)
@@ -25,7 +26,7 @@ public final class StillImageClipFactory {
                 try Self.makeTitleCardRasterizedImage(title: title, renderSize: renderSize)
             }
         } catch {
-            titleImage = try makeFallbackTitleCardImage(renderSize: renderSize)
+            titleImage = try makeFallbackTitleCardImage(renderSize: renderSize, title: title)
         }
         return try await makeVideoClip(fromRasterizedImage: titleImage, duration: duration, renderSize: renderSize)
         #else
@@ -170,7 +171,7 @@ public final class StillImageClipFactory {
         return safeImage
     }
 
-    private func makeFallbackTitleCardImage(renderSize: CGSize) throws -> CGImage {
+    private func makeFallbackTitleCardImage(renderSize: CGSize, title: String) throws -> CGImage {
         let width = max(1, Int(renderSize.width.rounded()))
         let height = max(1, Int(renderSize.height.rounded()))
 
@@ -189,10 +190,49 @@ public final class StillImageClipFactory {
         context.setFillColor(CGColor(red: 0.08, green: 0.10, blue: 0.14, alpha: 1.0))
         context.fill(CGRect(x: 0, y: 0, width: width, height: height))
 
+        drawFallbackTitle(
+            text: resolvedFallbackTitleText(from: title),
+            context: context,
+            renderSize: CGSize(width: width, height: height)
+        )
+
         guard let image = context.makeImage() else {
             throw RenderError.exportFailed("Unable to finalize fallback title card image at \(width)x\(height)")
         }
         return image
+    }
+
+    private func resolvedFallbackTitleText(from title: String) -> String {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Monthly Video" : trimmed
+    }
+
+    private func drawFallbackTitle(text: String, context: CGContext, renderSize: CGSize) {
+        let fontSize = max(renderSize.width * 0.05, 42)
+        let font = CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize, nil)
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            NSAttributedString.Key(rawValue: kCTFontAttributeName as String): font,
+            NSAttributedString.Key(rawValue: kCTForegroundColorAttributeName as String): CGColor(red: 1, green: 1, blue: 1, alpha: 1)
+        ]
+
+        let attributed = NSAttributedString(string: text, attributes: attributes)
+        let line = CTLineCreateWithAttributedString(attributed as CFAttributedString)
+        var ascent: CGFloat = 0
+        var descent: CGFloat = 0
+        var leading: CGFloat = 0
+        let textWidth = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
+        let textHeight = ascent + descent + leading
+        let textPosition = CGPoint(
+            x: max((renderSize.width - textWidth) / 2, renderSize.width * 0.1),
+            y: max((renderSize.height - textHeight) / 2, renderSize.height * 0.35)
+        )
+
+        context.saveGState()
+        context.textMatrix = .identity
+        context.textPosition = textPosition
+        CTLineDraw(line, context)
+        context.restoreGState()
     }
 
     private static func rasterizedImage(_ sourceImage: CGImage, renderSize: CGSize) -> CGImage? {

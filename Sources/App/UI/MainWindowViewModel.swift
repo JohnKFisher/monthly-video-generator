@@ -45,6 +45,7 @@ final class MainWindowViewModel: ObservableObject {
     @Published var outputFilename: String = "Monthly Slideshow"
 
     @Published var includeOpeningTitle: Bool = true
+    @Published var openingTitleText: String
     @Published var crossfadeDurationSeconds: Double = 0.75
     @Published var stillImageDurationSeconds: Double = 3.0
 
@@ -76,8 +77,10 @@ final class MainWindowViewModel: ObservableObject {
         let now = Date()
         let calendar = Calendar.current
         let currentYear = calendar.component(.year, from: now)
-        selectedMonth = calendar.component(.month, from: now)
+        let currentMonth = calendar.component(.month, from: now)
+        selectedMonth = currentMonth
         selectedYear = currentYear
+        openingTitleText = MonthYear(month: currentMonth, year: currentYear).displayLabel
         years = Array((currentYear - 15)...(currentYear + 2)).reversed()
 
         let moviesDirectory = FileManager.default.homeDirectoryForCurrentUser
@@ -143,7 +146,7 @@ final class MainWindowViewModel: ObservableObject {
             lastOutputPath = ""
 
             let monthYear = MonthYear(month: selectedMonth, year: selectedYear)
-            let openingTitle = includeOpeningTitle ? monthYear.displayLabel : nil
+            let openingTitle = includeOpeningTitle ? resolvedOpeningTitle(for: monthYear) : nil
 
             let style = StyleProfile(
                 openingTitle: openingTitle,
@@ -259,5 +262,13 @@ final class MainWindowViewModel: ObservableObject {
         }
 
         return parts.joined(separator: "\n")
+    }
+
+    private func resolvedOpeningTitle(for monthYear: MonthYear) -> String {
+        let trimmed = openingTitleText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            return trimmed
+        }
+        return monthYear.displayLabel
     }
 }

@@ -57,6 +57,8 @@ Operational updates after first packaged run:
 - Hotfix: generated still/title intermediate clips now prefer ProRes 422 for large frame sizes, with runtime codec compatibility probing/fallback, to avoid invalid high-resolution intermediates causing insertion failures.
 - Added a regression test that generates a 5712x4284 still-image clip and verifies composition track insertion succeeds.
 - Hotfix: render input clips now retain their backing `AVAsset` objects through composition insertion, preventing index-0 `AVFoundationErrorDomain -11800` (`NSOSStatus -12780`) caused by invalidated track references.
+- Added opening-title text input in the Style panel so title card text can be set explicitly for each render.
+- Hotfix: title-card fallback rendering now draws title text (instead of a blank card) when AppKit title rasterization fails.
 
 ## Decisions Log
 
@@ -76,6 +78,8 @@ Operational updates after first packaged run:
 - 2026-03-04: Switched large-dimension intermediate still/title encoding strategy to ProRes 422 first (with codec compatibility probing/fallback) after diagnostics showed immediate insertion failure on generated 5712x4284 clips.
 - 2026-03-04: Added a regression test for large-dimension still clip generation and composition insertion to keep `-12780` failures from regressing silently.
 - 2026-03-04: Added strong lifetime retention for source `AVAsset` instances inside render input clips so AVFoundation track insertion operates on valid backing assets.
+- 2026-03-04: Added explicit opening-title text input with non-empty fallback behavior when the field is blank.
+- 2026-03-04: Updated title-card fallback image generation to render readable title text rather than a blank screen.
 
 ## Changes Since Last Update
 
@@ -98,6 +102,8 @@ Operational updates after first packaged run:
 - 2026-03-04: Updated still/title intermediate codec selection to ProRes 422-first with compatibility probing for large dimensions.
 - 2026-03-04: Added `StillImageClipFactoryTests.testLargeStillClipCanBeInsertedIntoCompositionTrack` to lock in large-frame insertion behavior.
 - 2026-03-04: Added render-path asset retention hotfix for generated and source clips to prevent `-12780` insertion failures at index 0.
+- 2026-03-04: Added opening-title text field to UI/view-model wiring and used it in style generation with a month/year fallback when blank.
+- 2026-03-04: Updated fallback title-card renderer to include title text so title clips remain visible even after rasterization fallback.
 
 ## Risks/Blockers
 
@@ -113,4 +119,4 @@ Operational updates after first packaged run:
 
 ## Last Updated
 
-2026-03-04 10:29 America/New_York by Codex
+2026-03-04 11:16 America/New_York by Codex

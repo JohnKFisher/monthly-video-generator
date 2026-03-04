@@ -58,6 +58,13 @@ struct MainWindowView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Toggle("Opening title card", isOn: $viewModel.includeOpeningTitle)
 
+                    if viewModel.includeOpeningTitle {
+                        TextField("Title text", text: $viewModel.openingTitleText)
+                        Text("If left blank, uses the selected month/year label.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
                     HStack {
                         Text("Crossfade")
                         Slider(value: $viewModel.crossfadeDurationSeconds, in: 0...2, step: 0.05)
