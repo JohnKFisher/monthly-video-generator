@@ -146,6 +146,12 @@ struct MainWindowView: View {
                             Text("Smart").tag(ResolutionPolicy.smart)
                         }
 
+                        Picker("Frame Rate", selection: $viewModel.selectedFrameRatePolicy) {
+                            Text("30 fps").tag(FrameRatePolicy.fps30)
+                            Text("60 fps").tag(FrameRatePolicy.fps60)
+                            Text("Smart").tag(FrameRatePolicy.smart)
+                        }
+
                         Picker("Range", selection: $viewModel.selectedDynamicRange) {
                             ForEach(DynamicRange.allCases, id: \.self) { range in
                                 Text(range.rawValue.uppercased()).tag(range)
@@ -185,6 +191,16 @@ struct MainWindowView: View {
                     Text(viewModel.bitrateModeDescription)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    Text(viewModel.frameRateDescription)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    if let photosSmartFrameRateDescription = viewModel.photosSmartFrameRateDescription {
+                        Text(photosSmartFrameRateDescription)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
 
                     Toggle("Write diagnostics log (.log)", isOn: $viewModel.writeDiagnosticsLog)
 

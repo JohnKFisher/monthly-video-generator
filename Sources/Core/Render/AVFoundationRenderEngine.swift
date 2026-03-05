@@ -47,15 +47,18 @@ public final class AVFoundationRenderEngine {
         diagnostics.add("Style: title=\(style.openingTitle ?? "none"), titleDuration=\(style.titleDurationSeconds), crossfade=\(style.crossfadeDurationSeconds), stillDuration=\(style.stillImageDurationSeconds)")
         diagnostics.add(
             "Export profile: container=\(exportProfile.container.rawValue), codec=\(exportProfile.videoCodec.rawValue), " +
+            "frameRate=\(exportProfile.frameRate.rawValue), " +
             "resolution=\(exportProfile.resolution.normalized.rawValue), dynamicRange=\(exportProfile.dynamicRange.rawValue), " +
             "hdrFFmpegBinaryMode=\(exportProfile.hdrFFmpegBinaryMode.rawValue), " +
             "audioLayout=\(exportProfile.audioLayout.rawValue), bitrate=\(exportProfile.bitrateMode.rawValue)"
         )
 
         let requestedRenderSize = resolveRenderSize(from: timeline, policy: exportProfile.resolution)
+        let resolvedFrameRate = resolveFrameRate(from: timeline, policy: exportProfile.frameRate)
         let requiresFFmpegHDR = shouldApplyHDRToneMapping(for: exportProfile)
         let renderSize = constrainedRenderSizeForExport(requestedSize: requestedRenderSize, profile: exportProfile)
         diagnostics.add("Render size: \(Int(renderSize.width))x\(Int(renderSize.height))")
+        diagnostics.add("Resolved output frame rate: \(resolvedFrameRate) fps")
         if let liveDiagnosticsLogURL {
             _ = writeDiagnosticsReport(
                 diagnostics.renderReport(outcome: "in_progress", error: nil),
@@ -75,6 +78,7 @@ public final class AVFoundationRenderEngine {
             let clips = try await materializeInputClips(
                 segments: timeline.segments,
                 renderSize: renderSize,
+                frameRate: resolvedFrameRate,
                 exportDynamicRange: exportProfile.dynamicRange,
                 photoMaterializer: photoMaterializer,
                 temporaryURLs: &temporaryURLs,
@@ -108,7 +112,7 @@ public final class AVFoundationRenderEngine {
                     transitionDurationSeconds: max(transitionDuration.seconds, 0),
                     outputURL: outputURL,
                     renderSize: renderSize,
-                    frameRate: 30,
+                    frameRate: resolvedFrameRate,
                     bitrateMode: exportProfile.bitrateMode,
                     container: exportProfile.container
                 )
@@ -206,7 +210,7 @@ public final class AVFoundationRenderEngine {
 
             let videoComposition = AVMutableVideoComposition()
             videoComposition.renderSize = renderSize
-            videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
+            videoComposition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(resolvedFrameRate))
             videoComposition.instructions = buildInstructions(
                 clips: clips,
                 clipStartTimes: clipStartTimes,
@@ -376,6 +380,7 @@ public final class AVFoundationRenderEngine {
     private func materializeInputClips(
         segments: [TimelineSegment],
         renderSize: CGSize,
+        frameRate: Int,
         exportDynamicRange: DynamicRange,
         photoMaterializer: PhotoAssetMaterializing?,
         temporaryURLs: inout [URL],
@@ -392,7 +397,12 @@ public final class AVFoundationRenderEngine {
             reportProgress(segmentProgress, handler: progressHandler)
             switch segment.asset {
             case let .titleCard(title):
-                let titleURL = try await stillImageClipFactory.makeTitleCardClip(title: title, duration: segment.duration, renderSize: renderSize)
+                let titleURL = try await stillImageClipFactory.makeTitleCardClip(
+                    title: title,
+                    duration: segment.duration,
+                    renderSize: renderSize,
+                    frameRate: frameRate
+                )
                 temporaryURLs.append(titleURL)
                 diagnostics.add("Materialized title card clip at \(titleURL.path) for title '\(title)'")
                 if let clip = try await makeClip(
@@ -415,6 +425,7 @@ public final class AVFoundationRenderEngine {
                         fromImageURL: sourceURL,
                         duration: segment.duration,
                         renderSize: renderSize,
+                        frameRate: frameRate,
                         dynamicRange: exportDynamicRange
                     )
                     temporaryURLs.append(imageClipURL)
@@ -561,6 +572,10 @@ public final class AVFoundationRenderEngine {
 
     private func resolveRenderSize(from timeline: Timeline, policy: ResolutionPolicy) -> CGSize {
         RenderSizing.renderSize(for: timeline, policy: policy)
+    }
+
+    private func resolveFrameRate(from timeline: Timeline, policy: FrameRatePolicy) -> Int {
+        RenderSizing.frameRate(for: timeline, policy: policy)
     }
 
     func constrainedRenderSizeForExport(requestedSize: CGSize, profile: ExportProfile) -> CGSize {

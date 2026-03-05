@@ -18,6 +18,12 @@ public enum AudioCodec: String, CaseIterable, Codable, Sendable {
     case aac
 }
 
+public enum FrameRatePolicy: String, CaseIterable, Codable, Sendable {
+    case fps30
+    case fps60
+    case smart
+}
+
 public enum ResolutionPolicy: String, CaseIterable, Codable, Sendable {
     case fixed720p
     case matchSourceMax
@@ -90,6 +96,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
     public let container: ContainerFormat
     public let videoCodec: VideoCodec
     public let audioCodec: AudioCodec
+    public let frameRate: FrameRatePolicy
     public let resolution: ResolutionPolicy
     public let dynamicRange: DynamicRange
     public let hdrFFmpegBinaryMode: HDRFFmpegBinaryMode
@@ -100,6 +107,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         container: ContainerFormat,
         videoCodec: VideoCodec,
         audioCodec: AudioCodec,
+        frameRate: FrameRatePolicy = .smart,
         resolution: ResolutionPolicy,
         dynamicRange: DynamicRange,
         hdrFFmpegBinaryMode: HDRFFmpegBinaryMode = .autoSystemThenBundled,
@@ -109,6 +117,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         self.container = container
         self.videoCodec = videoCodec
         self.audioCodec = audioCodec
+        self.frameRate = frameRate
         self.resolution = resolution
         self.dynamicRange = dynamicRange
         self.hdrFFmpegBinaryMode = hdrFFmpegBinaryMode
@@ -120,6 +129,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         container: .mov,
         videoCodec: .hevc,
         audioCodec: .aac,
+        frameRate: .smart,
         resolution: .smart,
         dynamicRange: .sdr,
         hdrFFmpegBinaryMode: .autoSystemThenBundled,
@@ -131,10 +141,49 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         container: .mp4,
         videoCodec: .hevc,
         audioCodec: .aac,
+        frameRate: .smart,
         resolution: .smart,
         dynamicRange: .hdr,
         hdrFFmpegBinaryMode: .autoSystemThenBundled,
         audioLayout: .stereo,
         bitrateMode: .balanced
     )
+
+    private enum CodingKeys: String, CodingKey {
+        case container
+        case videoCodec
+        case audioCodec
+        case frameRate
+        case resolution
+        case dynamicRange
+        case hdrFFmpegBinaryMode
+        case audioLayout
+        case bitrateMode
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.container = try container.decode(ContainerFormat.self, forKey: .container)
+        self.videoCodec = try container.decode(VideoCodec.self, forKey: .videoCodec)
+        self.audioCodec = try container.decode(AudioCodec.self, forKey: .audioCodec)
+        self.frameRate = try container.decodeIfPresent(FrameRatePolicy.self, forKey: .frameRate) ?? .smart
+        self.resolution = try container.decode(ResolutionPolicy.self, forKey: .resolution)
+        self.dynamicRange = try container.decode(DynamicRange.self, forKey: .dynamicRange)
+        self.hdrFFmpegBinaryMode = try container.decodeIfPresent(HDRFFmpegBinaryMode.self, forKey: .hdrFFmpegBinaryMode) ?? .autoSystemThenBundled
+        self.audioLayout = try container.decode(AudioLayout.self, forKey: .audioLayout)
+        self.bitrateMode = try container.decode(BitrateMode.self, forKey: .bitrateMode)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.container, forKey: .container)
+        try container.encode(self.videoCodec, forKey: .videoCodec)
+        try container.encode(self.audioCodec, forKey: .audioCodec)
+        try container.encode(self.frameRate, forKey: .frameRate)
+        try container.encode(self.resolution, forKey: .resolution)
+        try container.encode(self.dynamicRange, forKey: .dynamicRange)
+        try container.encode(self.hdrFFmpegBinaryMode, forKey: .hdrFFmpegBinaryMode)
+        try container.encode(self.audioLayout, forKey: .audioLayout)
+        try container.encode(self.bitrateMode, forKey: .bitrateMode)
+    }
 }

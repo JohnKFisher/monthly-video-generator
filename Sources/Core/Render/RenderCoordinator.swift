@@ -50,10 +50,14 @@ public final class RenderCoordinator: @unchecked Sendable {
         return prepareFromItems(items, request: request)
     }
 
-    public func prepareFromItems(_ items: [MediaItem], request: RenderRequest) -> RenderPreparation {
+    public func prepareFromItems(
+        _ items: [MediaItem],
+        request: RenderRequest,
+        additionalWarnings: [String] = []
+    ) -> RenderPreparation {
         let timeline = timelineBuilder.buildTimeline(items: items, ordering: request.ordering, style: request.style)
 
-        var warnings: [String] = []
+        var warnings = additionalWarnings
         if timeline.estimatedDuration.seconds >= longDurationWarningThresholdSeconds {
             warnings.append("Estimated output duration is \(formatDuration(timeline.estimatedDuration)). This may take longer to export.")
         }

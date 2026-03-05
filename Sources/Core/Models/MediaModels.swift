@@ -30,6 +30,7 @@ public struct MediaItem: Equatable, Identifiable, @unchecked Sendable {
     public let type: MediaType
     public let captureDate: Date?
     public let duration: CMTime?
+    public let sourceFrameRate: Double?
     public let pixelSize: CGSize
     public let colorInfo: ColorInfo
     public let locator: MediaLocator
@@ -41,6 +42,7 @@ public struct MediaItem: Equatable, Identifiable, @unchecked Sendable {
         type: MediaType,
         captureDate: Date?,
         duration: CMTime?,
+        sourceFrameRate: Double? = nil,
         pixelSize: CGSize,
         colorInfo: ColorInfo,
         locator: MediaLocator,
@@ -51,6 +53,7 @@ public struct MediaItem: Equatable, Identifiable, @unchecked Sendable {
         self.type = type
         self.captureDate = captureDate
         self.duration = duration
+        self.sourceFrameRate = sourceFrameRate
         self.pixelSize = pixelSize
         self.colorInfo = colorInfo
         self.locator = locator
@@ -61,5 +64,20 @@ public struct MediaItem: Equatable, Identifiable, @unchecked Sendable {
     public var stableTieBreaker: String {
         let size = fileSizeBytes ?? -1
         return "\(filename.lowercased())::\(size)::\(id)"
+    }
+
+    public func withSourceFrameRate(_ sourceFrameRate: Double?) -> MediaItem {
+        MediaItem(
+            id: id,
+            type: type,
+            captureDate: captureDate,
+            duration: duration,
+            sourceFrameRate: sourceFrameRate,
+            pixelSize: pixelSize,
+            colorInfo: colorInfo,
+            locator: locator,
+            fileSizeBytes: fileSizeBytes,
+            filename: filename
+        )
     }
 }

@@ -7,6 +7,9 @@ enum RenderSizing {
     static let fixed4K = CGSize(width: 3840, height: 2160)
     static let smartCandidateSizes = [fixed720p, fixed1080p, fixed4K]
     static let defaultSize = fixed1080p
+    static let defaultFrameRate = 30
+    static let highFrameRate = 60
+    static let smartFrameRateThreshold = 50.0
 
     static func renderSize(for mediaItems: [MediaItem], policy: ResolutionPolicy) -> CGSize {
         switch policy.normalized {
@@ -45,6 +48,30 @@ enum RenderSizing {
         }
 
         return fixed4K
+    }
+
+    static func frameRate(for mediaItems: [MediaItem], policy: FrameRatePolicy) -> Int {
+        switch policy {
+        case .fps30:
+            return defaultFrameRate
+        case .fps60:
+            return highFrameRate
+        case .smart:
+            let shouldUseHighFrameRate = mediaItems.contains { item in
+                item.type == .video && (item.sourceFrameRate ?? 0) >= smartFrameRateThreshold
+            }
+            return shouldUseHighFrameRate ? highFrameRate : defaultFrameRate
+        }
+    }
+
+    static func frameRate(for timeline: Timeline, policy: FrameRatePolicy) -> Int {
+        let mediaItems = timeline.segments.compactMap { segment -> MediaItem? in
+            if case let .media(item) = segment.asset {
+                return item
+            }
+            return nil
+        }
+        return frameRate(for: mediaItems, policy: policy)
     }
 
     static func aspectFitTransform(

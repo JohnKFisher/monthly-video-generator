@@ -118,6 +118,29 @@ final class StillImageClipFactoryTests: XCTestCase {
         XCTAssertEqual(videoSize.height, renderSize.height, accuracy: 0.001)
     }
 
+    func testTitleCardClipUsesRequestedFrameRate() async throws {
+        let factory = StillImageClipFactory()
+        let clipURL = try await factory.makeTitleCardClip(
+            title: "60 fps",
+            duration: CMTime(seconds: 1, preferredTimescale: 600),
+            renderSize: CGSize(width: 1280, height: 720),
+            frameRate: 60
+        )
+
+        defer {
+            try? FileManager.default.removeItem(at: clipURL)
+        }
+
+        let asset = AVURLAsset(url: clipURL)
+        guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
+            XCTFail("Expected generated clip to contain a video track")
+            return
+        }
+
+        let nominalFrameRate = try await videoTrack.load(.nominalFrameRate)
+        XCTAssertGreaterThanOrEqual(Double(nominalFrameRate), 50)
+    }
+
     private func loadedVideoSize(url: URL) async throws -> CGSize {
         let asset = AVURLAsset(url: url)
         guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {

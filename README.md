@@ -68,6 +68,7 @@ New default export profile for fresh installs (existing saved preferences are pr
 
 - Container: `MP4`
 - Video: `HEVC` (`hvc1` Main10 on HDR path)
+- Frame rate: `Smart` (`30 fps` unless any selected video is `>= 50 fps`, then `60 fps`)
 - Resolution: `Smart` (smallest `16:9` tier that fits all selected media, maximum `4K`)
 - Dynamic range: `HDR` (HLG)
 - Audio: `AAC stereo`
@@ -77,6 +78,7 @@ New default export profile for fresh installs (existing saved preferences are pr
 Notes:
 
 - In HDR mode, codec/audio selections are constrained to effective renderer behavior (`HEVC` + `Stereo`).
+- In Apple Photos mode, Smart fps may inspect/download selected videos during render prep to decide between `30 fps` and `60 fps`, then reuse that materialized asset during export.
 - Title cards are rendered at the resolved output size for both fixed-tier and Smart exports.
 - Use the app's `Reset to Plex Defaults` action to apply this profile to an existing installation.
 

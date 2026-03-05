@@ -79,6 +79,7 @@ public final class StillImageClipFactory {
         fromImageURL url: URL,
         duration: CMTime,
         renderSize: CGSize,
+        frameRate: Int = 30,
         dynamicRange: DynamicRange = .sdr
     ) async throws -> URL {
         #if canImport(AppKit)
@@ -87,6 +88,7 @@ public final class StillImageClipFactory {
             fromRasterizedImage: payload.image,
             duration: duration,
             renderSize: renderSize,
+            frameRate: frameRate,
             colorConfiguration: payload.colorConfiguration
         )
         #else
@@ -94,7 +96,12 @@ public final class StillImageClipFactory {
         #endif
     }
 
-    public func makeTitleCardClip(title: String, duration: CMTime, renderSize: CGSize) async throws -> URL {
+    public func makeTitleCardClip(
+        title: String,
+        duration: CMTime,
+        renderSize: CGSize,
+        frameRate: Int = 30
+    ) async throws -> URL {
         #if canImport(AppKit)
         let titleImage: CGImage
         do {
@@ -108,6 +115,7 @@ public final class StillImageClipFactory {
             fromRasterizedImage: CIImage(cgImage: titleImage),
             duration: duration,
             renderSize: renderSize,
+            frameRate: frameRate,
             colorConfiguration: .bt709()
         )
         #else
@@ -120,9 +128,9 @@ public final class StillImageClipFactory {
         fromRasterizedImage image: CIImage,
         duration: CMTime,
         renderSize: CGSize,
+        frameRate: Int,
         colorConfiguration: IntermediateColorConfiguration
     ) async throws -> URL {
-        let frameRate = 30
         let totalFrames = max(Int(ceil(duration.seconds * Double(frameRate))), 1)
         let frameDuration = CMTime(value: 1, timescale: CMTimeScale(frameRate))
         let outputURL = temporaryClipURL()

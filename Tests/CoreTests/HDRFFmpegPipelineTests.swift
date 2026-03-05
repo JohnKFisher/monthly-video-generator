@@ -145,7 +145,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
             transitionDurationSeconds: 0.75,
             outputURL: URL(fileURLWithPath: "/tmp/out.mov"),
             renderSize: CGSize(width: 1920, height: 1080),
-            frameRate: 30,
+            frameRate: 60,
             bitrateMode: .qualityFirst,
             container: .mov
         )
@@ -156,6 +156,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("xfade=transition=fade"))
         XCTAssertTrue(joined.contains("acrossfade=d=0.750000"))
         XCTAssertTrue(joined.contains(":a:0]atrim"))
+        XCTAssertTrue(joined.contains("fps=60"))
         XCTAssertTrue(joined.contains("zscale="))
         XCTAssertFalse(joined.contains("gbrpf32le"))
         XCTAssertTrue(joined.contains("-progress pipe:2"))
@@ -221,6 +222,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
             container: .mov,
             videoCodec: .hevc,
             audioCodec: .aac,
+            frameRate: .fps60,
             resolution: .smart,
             dynamicRange: .hdr,
             hdrFFmpegBinaryMode: .bundledOnly,
@@ -232,6 +234,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         let decoded = try JSONDecoder().decode(ExportProfile.self, from: data)
 
         XCTAssertEqual(decoded.hdrFFmpegBinaryMode, .bundledOnly)
+        XCTAssertEqual(decoded.frameRate, .fps60)
     }
 
     func testPlexInfuseDefaultProfileCodableRoundTrip() throws {

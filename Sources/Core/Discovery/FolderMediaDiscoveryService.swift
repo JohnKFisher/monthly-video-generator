@@ -25,6 +25,7 @@ public final class FolderMediaDiscoveryService {
         items.reserveCapacity(fileURLs.count)
 
         for url in fileURLs {
+            try Task.checkCancellation()
             if let mediaItem = await buildMediaItem(for: url) {
                 items.append(mediaItem)
             }
@@ -96,11 +97,16 @@ public final class FolderMediaDiscoveryService {
             let tracks = try? await asset.loadTracks(withMediaType: .video)
 
             var finalSize = CGSize(width: 1920, height: 1080)
+            var sourceFrameRate: Double?
             if let track = tracks?.first,
                let naturalSize = try? await track.load(.naturalSize),
                let preferredTransform = try? await track.load(.preferredTransform) {
                 let transformed = naturalSize.applying(preferredTransform)
                 finalSize = CGSize(width: abs(transformed.width), height: abs(transformed.height))
+                let nominalFrameRate = (try? await track.load(.nominalFrameRate)) ?? 0
+                if nominalFrameRate > 0 {
+                    sourceFrameRate = Double(nominalFrameRate)
+                }
             }
 
             return MediaItem(
@@ -108,6 +114,7 @@ public final class FolderMediaDiscoveryService {
                 type: .video,
                 captureDate: captureDate,
                 duration: duration,
+                sourceFrameRate: sourceFrameRate,
                 pixelSize: finalSize,
                 colorInfo: .unknown,
                 locator: .file(url),

@@ -29,6 +29,7 @@ final class RenderPipelineTests: XCTestCase {
         XCTAssertEqual(profile.container, .mp4)
         XCTAssertEqual(profile.videoCodec, .hevc)
         XCTAssertEqual(profile.audioCodec, .aac)
+        XCTAssertEqual(profile.frameRate, .smart)
         XCTAssertEqual(profile.resolution, .smart)
         XCTAssertEqual(profile.dynamicRange, .hdr)
         XCTAssertEqual(profile.hdrFFmpegBinaryMode, .autoSystemThenBundled)
@@ -47,6 +48,7 @@ final class RenderPipelineTests: XCTestCase {
             container: .mp4,
             videoCodec: .h264,
             audioCodec: .aac,
+            frameRate: .smart,
             resolution: .matchSourceMax,
             dynamicRange: .hdr,
             hdrFFmpegBinaryMode: .autoSystemThenBundled,
@@ -69,6 +71,7 @@ final class RenderPipelineTests: XCTestCase {
             container: .mov,
             videoCodec: .h264,
             audioCodec: .aac,
+            frameRate: .fps30,
             resolution: .fixed1080p,
             dynamicRange: .sdr,
             hdrFFmpegBinaryMode: .autoSystemThenBundled,
@@ -95,6 +98,25 @@ final class RenderPipelineTests: XCTestCase {
         let encoded = try XCTUnwrap(String(data: data, encoding: .utf8))
 
         XCTAssertEqual(encoded, #""smart""#)
+    }
+
+    func testExportProfileDecodesMissingFrameRateAsSmart() throws {
+        let json = """
+        {
+          "audioCodec": "aac",
+          "audioLayout": "stereo",
+          "bitrateMode": "balanced",
+          "container": "mp4",
+          "dynamicRange": "hdr",
+          "hdrFFmpegBinaryMode": "autoSystemThenBundled",
+          "resolution": "smart",
+          "videoCodec": "hevc"
+        }
+        """
+
+        let decoded = try JSONDecoder().decode(ExportProfile.self, from: Data(json.utf8))
+
+        XCTAssertEqual(decoded.frameRate, .smart)
     }
 
     func testSmartRenderSizeChooses720p() {
@@ -142,12 +164,49 @@ final class RenderPipelineTests: XCTestCase {
         XCTAssertEqual(renderSize, RenderSizing.fixed4K)
     }
 
+    func testFrameRateResolverChooses30ForPhotoOnlySelections() {
+        let frameRate = RenderSizing.frameRate(
+            for: [makeMediaItem(size: CGSize(width: 1920, height: 1080))],
+            policy: .smart
+        )
+
+        XCTAssertEqual(frameRate, 30)
+    }
+
+    func testFrameRateResolverChooses30ForVideoUnderThreshold() {
+        let frameRate = RenderSizing.frameRate(
+            for: [makeVideoMediaItem(frameRate: 30)],
+            policy: .smart
+        )
+
+        XCTAssertEqual(frameRate, 30)
+    }
+
+    func testFrameRateResolverChooses60WhenAnyVideoMeetsThreshold() {
+        let frameRate = RenderSizing.frameRate(
+            for: [makeVideoMediaItem(frameRate: 29.97), makeVideoMediaItem(frameRate: 59.94)],
+            policy: .smart
+        )
+
+        XCTAssertEqual(frameRate, 60)
+    }
+
+    func testFrameRateResolverTreatsUnknownFrameRateAsNonTriggering() {
+        let frameRate = RenderSizing.frameRate(
+            for: [makeVideoMediaItem(frameRate: nil)],
+            policy: .smart
+        )
+
+        XCTAssertEqual(frameRate, 30)
+    }
+
     func testLongDurationWarningIsProduced() {
         let item = MediaItem(
             id: "video",
             type: .video,
             captureDate: Date(),
             duration: CMTime(seconds: 60 * 21, preferredTimescale: 600),
+            sourceFrameRate: 30,
             pixelSize: CGSize(width: 1920, height: 1080),
             colorInfo: .unknown,
             locator: .file(URL(fileURLWithPath: "/tmp/video.mov")),
@@ -196,6 +255,7 @@ final class RenderPipelineTests: XCTestCase {
             container: .mov,
             videoCodec: .hevc,
             audioCodec: .aac,
+            frameRate: .smart,
             resolution: .smart,
             dynamicRange: .hdr,
             audioLayout: .stereo,
@@ -211,6 +271,7 @@ final class RenderPipelineTests: XCTestCase {
             container: .mov,
             videoCodec: .hevc,
             audioCodec: .aac,
+            frameRate: .smart,
             resolution: .smart,
             dynamicRange: .sdr,
             audioLayout: .stereo,
@@ -226,6 +287,7 @@ final class RenderPipelineTests: XCTestCase {
             container: .mov,
             videoCodec: .hevc,
             audioCodec: .aac,
+            frameRate: .smart,
             resolution: .smart,
             dynamicRange: .hdr,
             audioLayout: .stereo,
@@ -235,6 +297,25 @@ final class RenderPipelineTests: XCTestCase {
         let warnings = manager.compatibilityWarnings(for: profile).map(\.message)
 
         XCTAssertTrue(warnings.contains { $0.contains("smallest 16:9 output tier") })
+        XCTAssertTrue(warnings.contains { $0.contains("Smart frame rate exports at 30 fps") })
+    }
+
+    func testFixed60FPSCompatibilityWarningMentionsCost() {
+        let manager = ExportProfileManager()
+        let profile = ExportProfile(
+            container: .mov,
+            videoCodec: .hevc,
+            audioCodec: .aac,
+            frameRate: .fps60,
+            resolution: .smart,
+            dynamicRange: .sdr,
+            audioLayout: .stereo,
+            bitrateMode: .balanced
+        )
+
+        let warnings = manager.compatibilityWarnings(for: profile).map(\.message)
+
+        XCTAssertTrue(warnings.contains { $0.contains("60 fps output increases render time") })
     }
 
     func testAspectFitTransformCentersFourByThreeLandscapeVideoWithinFrame() {
@@ -362,6 +443,21 @@ final class RenderPipelineTests: XCTestCase {
             locator: .file(URL(fileURLWithPath: "/tmp/\(UUID().uuidString).jpg")),
             fileSizeBytes: 1_000,
             filename: "fixture.jpg"
+        )
+    }
+
+    private func makeVideoMediaItem(frameRate: Double?) -> MediaItem {
+        MediaItem(
+            id: UUID().uuidString,
+            type: .video,
+            captureDate: Date(),
+            duration: CMTime(seconds: 2, preferredTimescale: 600),
+            sourceFrameRate: frameRate,
+            pixelSize: CGSize(width: 1920, height: 1080),
+            colorInfo: .unknown,
+            locator: .file(URL(fileURLWithPath: "/tmp/\(UUID().uuidString).mov")),
+            fileSizeBytes: 1_000,
+            filename: "fixture.mov"
         )
     }
 }

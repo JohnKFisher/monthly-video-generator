@@ -96,6 +96,9 @@ final class MainWindowViewModel: ObservableObject {
     @Published var selectedVideoCodec: VideoCodec = MainWindowViewModel.defaultExportProfile.videoCodec {
         didSet { handleRenderSettingChange(enforceHDRConstraints: true) }
     }
+    @Published var selectedFrameRatePolicy: FrameRatePolicy = MainWindowViewModel.defaultExportProfile.frameRate {
+        didSet { handleRenderSettingChange() }
+    }
     @Published var selectedResolutionPolicy: ResolutionPolicy = MainWindowViewModel.defaultExportProfile.resolution {
         didSet { handleRenderSettingChange() }
     }
@@ -134,6 +137,7 @@ final class MainWindowViewModel: ObservableObject {
     private let exportProfileManager = ExportProfileManager()
     private let runReportService = RunReportService()
     private let preferencesStore = UserDefaults.standard
+    private var renderTask: Task<Void, Never>?
     private var renderStatusDetail: String?
     private var isApplyingExportConstraints = false
     private var isRestoringPersistedSettings = false
@@ -220,11 +224,30 @@ final class MainWindowViewModel: ObservableObject {
         return "Bitrate mode has limited effect on SDR exports that use AVFoundation presets."
     }
 
+    var frameRateDescription: String {
+        switch selectedFrameRatePolicy {
+        case .fps30:
+            return "30 fps is the most compatible choice and keeps renders faster for photo-heavy slideshows."
+        case .fps60:
+            return "60 fps increases render time, CPU load, and file size significantly."
+        case .smart:
+            return "Smart exports at 30 fps unless any selected video is 50 fps or higher, then it exports at 60 fps."
+        }
+    }
+
+    var photosSmartFrameRateDescription: String? {
+        guard sourceMode == .photos, selectedFrameRatePolicy == .smart else {
+            return nil
+        }
+        return "In Apple Photos mode, Smart fps may inspect/download selected videos before rendering to decide between 30 and 60 fps."
+    }
+
     func resetExportSettingsToPlexDefaults() {
         let profile = exportProfileManager.defaultProfile()
         isRestoringPersistedSettings = true
         selectedContainer = profile.container
         selectedVideoCodec = profile.videoCodec
+        selectedFrameRatePolicy = profile.frameRate
         selectedResolutionPolicy = profile.resolution.normalized
         selectedDynamicRange = profile.dynamicRange
         selectedHDRBinaryMode = profile.hdrFFmpegBinaryMode
@@ -238,14 +261,19 @@ final class MainWindowViewModel: ObservableObject {
     }
 
     func startRender() {
-        guard !isRendering else { return }
+        guard !isRendering, renderTask == nil else { return }
 
-        Task {
+        renderTask = Task {
             await performRender()
+            await MainActor.run {
+                self.renderTask = nil
+            }
         }
     }
 
     func cancelRender() {
+        renderTask?.cancel()
+        photoMaterializer.cancelPendingRequests()
         coordinator.cancelCurrentRender()
         statusMessage = "Cancelling render..."
     }
@@ -289,6 +317,7 @@ final class MainWindowViewModel: ObservableObject {
                 container: selectedContainer,
                 videoCodec: selectedVideoCodec,
                 audioCodec: .aac,
+                frameRate: selectedFrameRatePolicy,
                 resolution: selectedResolutionPolicy.normalized,
                 dynamicRange: selectedDynamicRange,
                 hdrFFmpegBinaryMode: selectedHDRBinaryMode,
@@ -316,6 +345,7 @@ final class MainWindowViewModel: ObservableObject {
                     output: OutputTarget(directory: outputDirectoryURL, baseFilename: outputFilename)
                 )
                 preparation = try await coordinator.prepareFolderRender(request: request)
+                try Task.checkCancellation()
 
             case .photos:
                 let status = photoDiscovery.authorizationStatus()
@@ -337,7 +367,16 @@ final class MainWindowViewModel: ObservableObject {
                         output: OutputTarget(directory: outputDirectoryURL, baseFilename: outputFilename)
                     )
                     let discovered = try await photoDiscovery.discover(monthYear: monthYear)
-                    preparation = coordinator.prepareFromItems(discovered, request: request)
+                    try Task.checkCancellation()
+                    let inspection = try await inspectPhotoVideosForSmartFrameRateIfNeeded(
+                        discovered,
+                        exportProfile: exportProfile
+                    )
+                    preparation = coordinator.prepareFromItems(
+                        inspection.items,
+                        request: request,
+                        additionalWarnings: inspection.warnings
+                    )
 
                 case .album:
                     var selectedAlbumID = selectedPhotoAlbumID.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -364,7 +403,16 @@ final class MainWindowViewModel: ObservableObject {
                         output: OutputTarget(directory: outputDirectoryURL, baseFilename: outputFilename)
                     )
                     let discovered = try await photoDiscovery.discover(albumLocalIdentifier: selectedAlbumID)
-                    preparation = coordinator.prepareFromItems(discovered, request: request)
+                    try Task.checkCancellation()
+                    let inspection = try await inspectPhotoVideosForSmartFrameRateIfNeeded(
+                        discovered,
+                        exportProfile: exportProfile
+                    )
+                    preparation = coordinator.prepareFromItems(
+                        inspection.items,
+                        request: request,
+                        additionalWarnings: inspection.warnings
+                    )
                 }
             }
 
@@ -421,6 +469,10 @@ final class MainWindowViewModel: ObservableObject {
     }
 
     private func formatErrorForDisplay(_ error: Error) -> String {
+        if error is CancellationError {
+            return "Render cancelled"
+        }
+
         let nsError = error as NSError
         var parts: [String] = []
 
@@ -450,6 +502,30 @@ final class MainWindowViewModel: ObservableObject {
         }
 
         return parts.joined(separator: "\n")
+    }
+
+    private func inspectPhotoVideosForSmartFrameRateIfNeeded(
+        _ items: [MediaItem],
+        exportProfile: ExportProfile
+    ) async throws -> SmartFrameRateInspectionResult {
+        guard exportProfile.frameRate == .smart else {
+            return SmartFrameRateInspectionResult(items: items, warnings: [])
+        }
+
+        return try await photoMaterializer.prepareItemsForSmartFrameRate(
+            items,
+            progressHandler: { [weak self] fraction in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.progress = max(self.progress, 0.03 + min(max(fraction, 0), 1) * 0.05)
+                }
+            },
+            statusHandler: { [weak self] status in
+                Task { @MainActor in
+                    self?.statusMessage = status
+                }
+            }
+        )
     }
 
     private func resolvedOpeningTitle(for monthYear: MonthYear) -> String {
@@ -585,6 +661,7 @@ final class MainWindowViewModel: ObservableObject {
         selectedPhotoAlbumID = settings.selectedPhotoAlbumID ?? ""
         selectedContainer = settings.selectedContainer
         selectedVideoCodec = settings.selectedVideoCodec
+        selectedFrameRatePolicy = settings.selectedFrameRatePolicy ?? .smart
         selectedResolutionPolicy = settings.selectedResolutionPolicy.normalized
         selectedDynamicRange = settings.selectedDynamicRange
         selectedHDRBinaryMode = settings.selectedHDRBinaryMode ?? .autoSystemThenBundled
@@ -614,6 +691,7 @@ final class MainWindowViewModel: ObservableObject {
             selectedPhotoAlbumID: selectedPhotoAlbumID,
             selectedContainer: selectedContainer,
             selectedVideoCodec: selectedVideoCodec,
+            selectedFrameRatePolicy: selectedFrameRatePolicy,
             selectedResolutionPolicy: selectedResolutionPolicy.normalized,
             selectedDynamicRange: selectedDynamicRange,
             selectedHDRBinaryMode: selectedHDRBinaryMode,
@@ -637,6 +715,7 @@ final class MainWindowViewModel: ObservableObject {
         let selectedPhotoAlbumID: String?
         let selectedContainer: ContainerFormat
         let selectedVideoCodec: VideoCodec
+        let selectedFrameRatePolicy: FrameRatePolicy?
         let selectedResolutionPolicy: ResolutionPolicy
         let selectedDynamicRange: DynamicRange
         let selectedHDRBinaryMode: HDRFFmpegBinaryMode?

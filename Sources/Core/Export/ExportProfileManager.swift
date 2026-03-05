@@ -90,6 +90,23 @@ public final class ExportProfileManager {
             )
         }
 
+        switch profile.frameRate {
+        case .smart:
+            warnings.append(
+                ExportCompatibilityWarning(
+                    "Smart frame rate exports at 30 fps unless any selected video is 50 fps or higher, then it exports at 60 fps."
+                )
+            )
+        case .fps60:
+            warnings.append(
+                ExportCompatibilityWarning(
+                    "60 fps output increases render time, CPU load, and file size significantly."
+                )
+            )
+        case .fps30:
+            break
+        }
+
         if profile.audioLayout == .surround51 {
             warnings.append(ExportCompatibilityWarning("5.1 output may downmix to stereo on devices without surround playback support."))
         }
@@ -110,6 +127,7 @@ public final class ExportProfileManager {
             container: profile.container,
             videoCodec: codec,
             audioCodec: profile.audioCodec,
+            frameRate: profile.frameRate,
             resolution: profile.resolution,
             dynamicRange: profile.dynamicRange,
             hdrFFmpegBinaryMode: profile.hdrFFmpegBinaryMode,
@@ -123,6 +141,7 @@ public final class ExportProfileManager {
             container: profile.container,
             videoCodec: profile.videoCodec,
             audioCodec: profile.audioCodec,
+            frameRate: profile.frameRate,
             resolution: resolution,
             dynamicRange: profile.dynamicRange,
             hdrFFmpegBinaryMode: profile.hdrFFmpegBinaryMode,
@@ -136,6 +155,7 @@ public final class ExportProfileManager {
             container: profile.container,
             videoCodec: profile.videoCodec,
             audioCodec: profile.audioCodec,
+            frameRate: profile.frameRate,
             resolution: profile.resolution,
             dynamicRange: profile.dynamicRange,
             hdrFFmpegBinaryMode: profile.hdrFFmpegBinaryMode,
