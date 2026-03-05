@@ -40,8 +40,13 @@ To install pinned FFmpeg/ffprobe binaries into `third_party/ffmpeg/bin`:
 ```bash
 FFMPEG_BUNDLE_URL="https://example.com/ffmpeg-arm64-gpl.zip" \
 FFMPEG_BUNDLE_SHA256="<sha256>" \
+[FFPROBE_BUNDLE_URL="https://example.com/ffprobe-arm64"] \
+[FFPROBE_BUNDLE_SHA256="<sha256>"] \
 ./scripts/fetch_ffmpeg_bundle.sh
 ```
+
+For strict version matching, set both `FFPROBE_BUNDLE_URL` and `FFPROBE_BUNDLE_SHA256`
+from the same release/source as `FFMPEG_BUNDLE_URL`.
 
 Then run:
 
