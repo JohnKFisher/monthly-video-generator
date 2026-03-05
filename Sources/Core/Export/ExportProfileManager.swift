@@ -27,7 +27,7 @@ public final class ExportProfileManager {
 
     public func resolveProfile(for profile: ExportProfile) -> ExportProfileResolution {
         var warnings: [ExportCompatibilityWarning] = []
-        var effectiveProfile = profile
+        var effectiveProfile = withResolution(profile.resolution.normalized, in: profile)
 
         if effectiveProfile.dynamicRange == .hdr {
             if effectiveProfile.videoCodec != .hevc {
@@ -72,14 +72,6 @@ public final class ExportProfileManager {
                 )
             )
 
-            if profile.resolution == .matchSourceMax {
-                warnings.append(
-                    ExportCompatibilityWarning(
-                        "HDR exports with Match Source Max are capped to 4K-equivalent dimensions for reliability."
-                    )
-                )
-            }
-
             switch profile.hdrFFmpegBinaryMode {
             case .autoSystemThenBundled:
                 warnings.append(ExportCompatibilityWarning("HDR engine Auto mode uses system ffmpeg first, then bundled ffmpeg if required features are missing."))
@@ -88,6 +80,14 @@ public final class ExportProfileManager {
             case .bundledOnly:
                 warnings.append(ExportCompatibilityWarning("HDR engine Bundled Only mode requires bundled ffmpeg binaries in app resources or third_party/ffmpeg."))
             }
+        }
+
+        if profile.resolution == .smart {
+            warnings.append(
+                ExportCompatibilityWarning(
+                    "Smart resolution chooses the smallest 16:9 output tier that fits all selected media, up to 4K."
+                )
+            )
         }
 
         if profile.audioLayout == .surround51 {
@@ -111,6 +111,19 @@ public final class ExportProfileManager {
             videoCodec: codec,
             audioCodec: profile.audioCodec,
             resolution: profile.resolution,
+            dynamicRange: profile.dynamicRange,
+            hdrFFmpegBinaryMode: profile.hdrFFmpegBinaryMode,
+            audioLayout: profile.audioLayout,
+            bitrateMode: profile.bitrateMode
+        )
+    }
+
+    private func withResolution(_ resolution: ResolutionPolicy, in profile: ExportProfile) -> ExportProfile {
+        ExportProfile(
+            container: profile.container,
+            videoCodec: profile.videoCodec,
+            audioCodec: profile.audioCodec,
+            resolution: resolution,
             dynamicRange: profile.dynamicRange,
             hdrFFmpegBinaryMode: profile.hdrFFmpegBinaryMode,
             audioLayout: profile.audioLayout,

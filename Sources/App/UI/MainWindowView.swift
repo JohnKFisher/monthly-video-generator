@@ -140,9 +140,10 @@ struct MainWindowView: View {
 
                     HStack {
                         Picker("Resolution", selection: $viewModel.selectedResolutionPolicy) {
-                            Text("Match Source").tag(ResolutionPolicy.matchSourceMax)
+                            Text("720p").tag(ResolutionPolicy.fixed720p)
                             Text("1080p").tag(ResolutionPolicy.fixed1080p)
                             Text("4K").tag(ResolutionPolicy.fixed4K)
+                            Text("Smart").tag(ResolutionPolicy.smart)
                         }
 
                         Picker("Range", selection: $viewModel.selectedDynamicRange) {

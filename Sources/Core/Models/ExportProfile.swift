@@ -18,10 +18,50 @@ public enum AudioCodec: String, CaseIterable, Codable, Sendable {
     case aac
 }
 
-public enum ResolutionPolicy: Equatable, Codable, Sendable {
+public enum ResolutionPolicy: String, CaseIterable, Codable, Sendable {
+    case fixed720p
     case matchSourceMax
     case fixed1080p
     case fixed4K
+    case smart
+
+    public static var allCases: [ResolutionPolicy] {
+        [.fixed720p, .fixed1080p, .fixed4K, .smart]
+    }
+
+    public var normalized: ResolutionPolicy {
+        switch self {
+        case .matchSourceMax:
+            return .smart
+        case .fixed720p, .fixed1080p, .fixed4K, .smart:
+            return self
+        }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        switch rawValue {
+        case Self.fixed720p.rawValue:
+            self = .fixed720p
+        case Self.fixed1080p.rawValue:
+            self = .fixed1080p
+        case Self.fixed4K.rawValue:
+            self = .fixed4K
+        case Self.smart.rawValue, Self.matchSourceMax.rawValue:
+            self = .smart
+        default:
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Unsupported resolution policy: \(rawValue)"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(normalized.rawValue)
+    }
 }
 
 public enum DynamicRange: String, CaseIterable, Codable, Sendable {
@@ -80,7 +120,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         container: .mov,
         videoCodec: .hevc,
         audioCodec: .aac,
-        resolution: .matchSourceMax,
+        resolution: .smart,
         dynamicRange: .sdr,
         hdrFFmpegBinaryMode: .autoSystemThenBundled,
         audioLayout: .stereo,
@@ -91,7 +131,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         container: .mp4,
         videoCodec: .hevc,
         audioCodec: .aac,
-        resolution: .matchSourceMax,
+        resolution: .smart,
         dynamicRange: .hdr,
         hdrFFmpegBinaryMode: .autoSystemThenBundled,
         audioLayout: .stereo,

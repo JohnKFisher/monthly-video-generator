@@ -225,7 +225,7 @@ final class MainWindowViewModel: ObservableObject {
         isRestoringPersistedSettings = true
         selectedContainer = profile.container
         selectedVideoCodec = profile.videoCodec
-        selectedResolutionPolicy = profile.resolution
+        selectedResolutionPolicy = profile.resolution.normalized
         selectedDynamicRange = profile.dynamicRange
         selectedHDRBinaryMode = profile.hdrFFmpegBinaryMode
         selectedAudioLayout = profile.audioLayout
@@ -289,7 +289,7 @@ final class MainWindowViewModel: ObservableObject {
                 container: selectedContainer,
                 videoCodec: selectedVideoCodec,
                 audioCodec: .aac,
-                resolution: selectedResolutionPolicy,
+                resolution: selectedResolutionPolicy.normalized,
                 dynamicRange: selectedDynamicRange,
                 hdrFFmpegBinaryMode: selectedHDRBinaryMode,
                 audioLayout: selectedAudioLayout,
@@ -585,7 +585,7 @@ final class MainWindowViewModel: ObservableObject {
         selectedPhotoAlbumID = settings.selectedPhotoAlbumID ?? ""
         selectedContainer = settings.selectedContainer
         selectedVideoCodec = settings.selectedVideoCodec
-        selectedResolutionPolicy = settings.selectedResolutionPolicy
+        selectedResolutionPolicy = settings.selectedResolutionPolicy.normalized
         selectedDynamicRange = settings.selectedDynamicRange
         selectedHDRBinaryMode = settings.selectedHDRBinaryMode ?? .autoSystemThenBundled
         selectedAudioLayout = settings.selectedAudioLayout
@@ -614,7 +614,7 @@ final class MainWindowViewModel: ObservableObject {
             selectedPhotoAlbumID: selectedPhotoAlbumID,
             selectedContainer: selectedContainer,
             selectedVideoCodec: selectedVideoCodec,
-            selectedResolutionPolicy: selectedResolutionPolicy,
+            selectedResolutionPolicy: selectedResolutionPolicy.normalized,
             selectedDynamicRange: selectedDynamicRange,
             selectedHDRBinaryMode: selectedHDRBinaryMode,
             selectedAudioLayout: selectedAudioLayout,

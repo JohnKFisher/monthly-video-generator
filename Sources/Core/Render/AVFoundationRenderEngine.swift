@@ -47,7 +47,7 @@ public final class AVFoundationRenderEngine {
         diagnostics.add("Style: title=\(style.openingTitle ?? "none"), titleDuration=\(style.titleDurationSeconds), crossfade=\(style.crossfadeDurationSeconds), stillDuration=\(style.stillImageDurationSeconds)")
         diagnostics.add(
             "Export profile: container=\(exportProfile.container.rawValue), codec=\(exportProfile.videoCodec.rawValue), " +
-            "resolution=\(exportProfile.resolution), dynamicRange=\(exportProfile.dynamicRange.rawValue), " +
+            "resolution=\(exportProfile.resolution.normalized.rawValue), dynamicRange=\(exportProfile.dynamicRange.rawValue), " +
             "hdrFFmpegBinaryMode=\(exportProfile.hdrFFmpegBinaryMode.rawValue), " +
             "audioLayout=\(exportProfile.audioLayout.rawValue), bitrate=\(exportProfile.bitrateMode.rawValue)"
         )
@@ -55,13 +55,6 @@ public final class AVFoundationRenderEngine {
         let requestedRenderSize = resolveRenderSize(from: timeline, policy: exportProfile.resolution)
         let requiresFFmpegHDR = shouldApplyHDRToneMapping(for: exportProfile)
         let renderSize = constrainedRenderSizeForExport(requestedSize: requestedRenderSize, profile: exportProfile)
-        diagnostics.add("Render size requested: \(Int(requestedRenderSize.width))x\(Int(requestedRenderSize.height))")
-        if renderSize != requestedRenderSize {
-            diagnostics.add(
-                "HDR render size was capped for reliability: \(Int(requestedRenderSize.width))x\(Int(requestedRenderSize.height)) -> " +
-                "\(Int(renderSize.width))x\(Int(renderSize.height)) (max 4K-equivalent bounds)."
-            )
-        }
         diagnostics.add("Render size: \(Int(renderSize.width))x\(Int(renderSize.height))")
         if let liveDiagnosticsLogURL {
             _ = writeDiagnosticsReport(
@@ -218,6 +211,7 @@ public final class AVFoundationRenderEngine {
                 clips: clips,
                 clipStartTimes: clipStartTimes,
                 transitionDuration: transitionDuration,
+                renderSize: renderSize,
                 compositionTracks: videoTracks
             )
             let colorConfiguration = colorConfiguration(for: exportProfile.dynamicRange)
@@ -297,9 +291,11 @@ public final class AVFoundationRenderEngine {
         clips: [InputClip],
         clipStartTimes: [CMTime],
         transitionDuration: CMTime,
+        renderSize: CGSize,
         compositionTracks: [AVCompositionTrack]
     ) -> [AVVideoCompositionInstructionProtocol] {
         var instructions: [AVMutableVideoCompositionInstruction] = []
+        let blackBackground = CGColor(red: 0, green: 0, blue: 0, alpha: 1)
 
         for index in clips.indices {
             let clip = clips[index]
@@ -319,9 +315,15 @@ public final class AVFoundationRenderEngine {
             if passDuration > .zero {
                 let instruction = AVMutableVideoCompositionInstruction()
                 instruction.timeRange = CMTimeRange(start: passStart, duration: passDuration)
+                instruction.backgroundColor = blackBackground
 
                 let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: compositionTracks[index % 2])
-                layerInstruction.setTransform(clip.preferredTransform, at: passStart)
+                let transform = RenderSizing.aspectFitTransform(
+                    naturalSize: clip.naturalSize,
+                    preferredTransform: clip.preferredTransform,
+                    renderSize: renderSize
+                )
+                layerInstruction.setTransform(transform, at: passStart)
                 instruction.layerInstructions = [layerInstruction]
                 instructions.append(instruction)
             }
@@ -330,12 +332,18 @@ public final class AVFoundationRenderEngine {
                 let transitionStart = subtract(add(clipStartTimes[index], clip.duration), transitionDuration)
                 let transitionInstruction = AVMutableVideoCompositionInstruction()
                 transitionInstruction.timeRange = CMTimeRange(start: transitionStart, duration: transitionDuration)
+                transitionInstruction.backgroundColor = blackBackground
 
                 let fromTrack = compositionTracks[index % 2]
                 let toTrack = compositionTracks[(index + 1) % 2]
 
                 let fromLayer = AVMutableVideoCompositionLayerInstruction(assetTrack: fromTrack)
-                fromLayer.setTransform(clips[index].preferredTransform, at: transitionStart)
+                let fromTransform = RenderSizing.aspectFitTransform(
+                    naturalSize: clips[index].naturalSize,
+                    preferredTransform: clips[index].preferredTransform,
+                    renderSize: renderSize
+                )
+                fromLayer.setTransform(fromTransform, at: transitionStart)
                 fromLayer.setOpacityRamp(
                     fromStartOpacity: 1.0,
                     toEndOpacity: 0.0,
@@ -343,7 +351,12 @@ public final class AVFoundationRenderEngine {
                 )
 
                 let toLayer = AVMutableVideoCompositionLayerInstruction(assetTrack: toTrack)
-                toLayer.setTransform(clips[index + 1].preferredTransform, at: transitionStart)
+                let toTransform = RenderSizing.aspectFitTransform(
+                    naturalSize: clips[index + 1].naturalSize,
+                    preferredTransform: clips[index + 1].preferredTransform,
+                    renderSize: renderSize
+                )
+                toLayer.setTransform(toTransform, at: transitionStart)
                 toLayer.setOpacityRamp(
                     fromStartOpacity: 0.0,
                     toEndOpacity: 1.0,
@@ -547,50 +560,12 @@ public final class AVFoundationRenderEngine {
     }
 
     private func resolveRenderSize(from timeline: Timeline, policy: ResolutionPolicy) -> CGSize {
-        switch policy {
-        case .fixed1080p:
-            return CGSize(width: 1920, height: 1080)
-        case .fixed4K:
-            return CGSize(width: 3840, height: 2160)
-        case .matchSourceMax:
-            let mediaItems = timeline.segments.compactMap { segment -> MediaItem? in
-                if case let .media(item) = segment.asset {
-                    return item
-                }
-                return nil
-            }
-
-            let maxWidth = mediaItems.map { $0.pixelSize.width }.max() ?? 1920
-            let maxHeight = mediaItems.map { $0.pixelSize.height }.max() ?? 1080
-
-            let width = max(640, Int(maxWidth.rounded()))
-            let height = max(360, Int(maxHeight.rounded()))
-            return CGSize(width: width.isMultiple(of: 2) ? width : width + 1, height: height.isMultiple(of: 2) ? height : height + 1)
-        }
+        RenderSizing.renderSize(for: timeline, policy: policy)
     }
 
     func constrainedRenderSizeForExport(requestedSize: CGSize, profile: ExportProfile) -> CGSize {
-        let normalizedRequested = normalizedRenderSize(requestedSize)
-        guard profile.dynamicRange == .hdr, profile.resolution == .matchSourceMax else {
-            return normalizedRequested
-        }
-
-        let isLandscape = normalizedRequested.width >= normalizedRequested.height
-        let maxBounds = isLandscape
-            ? CGSize(width: 3840, height: 2160)
-            : CGSize(width: 2160, height: 3840)
-
-        if normalizedRequested.width <= maxBounds.width, normalizedRequested.height <= maxBounds.height {
-            return normalizedRequested
-        }
-
-        let scale = min(
-            maxBounds.width / max(normalizedRequested.width, 1),
-            maxBounds.height / max(normalizedRequested.height, 1)
-        )
-        let scaledWidth = evenFloorDimension(normalizedRequested.width * scale, minimum: 2)
-        let scaledHeight = evenFloorDimension(normalizedRequested.height * scale, minimum: 2)
-        return CGSize(width: scaledWidth, height: scaledHeight)
+        _ = profile
+        return normalizedRenderSize(requestedSize)
     }
 
     private func bestPreset(for profile: ExportProfile, composition: AVAsset) -> String {
@@ -1141,14 +1116,6 @@ public final class AVFoundationRenderEngine {
 
     private func evenDimension(_ value: Int) -> Int {
         value.isMultiple(of: 2) ? value : value + 1
-    }
-
-    private func evenFloorDimension(_ value: Double, minimum: Int) -> Int {
-        let floored = max(Int(floor(value)), minimum)
-        if floored.isMultiple(of: 2) {
-            return floored
-        }
-        return max(floored - 1, minimum)
     }
 
     private func normalizedRenderSize(_ size: CGSize) -> CGSize {

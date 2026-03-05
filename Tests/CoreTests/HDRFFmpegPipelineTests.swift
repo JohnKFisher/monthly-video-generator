@@ -221,7 +221,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
             container: .mov,
             videoCodec: .hevc,
             audioCodec: .aac,
-            resolution: .matchSourceMax,
+            resolution: .smart,
             dynamicRange: .hdr,
             hdrFFmpegBinaryMode: .bundledOnly,
             audioLayout: .stereo,

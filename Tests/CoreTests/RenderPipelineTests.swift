@@ -29,7 +29,7 @@ final class RenderPipelineTests: XCTestCase {
         XCTAssertEqual(profile.container, .mp4)
         XCTAssertEqual(profile.videoCodec, .hevc)
         XCTAssertEqual(profile.audioCodec, .aac)
-        XCTAssertEqual(profile.resolution, .matchSourceMax)
+        XCTAssertEqual(profile.resolution, .smart)
         XCTAssertEqual(profile.dynamicRange, .hdr)
         XCTAssertEqual(profile.hdrFFmpegBinaryMode, .autoSystemThenBundled)
         XCTAssertEqual(profile.audioLayout, .stereo)
@@ -56,6 +56,7 @@ final class RenderPipelineTests: XCTestCase {
 
         let resolved = manager.resolveProfile(for: selected)
 
+        XCTAssertEqual(resolved.effectiveProfile.resolution, .smart)
         XCTAssertEqual(resolved.effectiveProfile.videoCodec, .hevc)
         XCTAssertEqual(resolved.effectiveProfile.audioLayout, .stereo)
         XCTAssertTrue(resolved.warnings.contains { $0.message.contains("adjusted to HEVC") })
@@ -79,6 +80,66 @@ final class RenderPipelineTests: XCTestCase {
 
         XCTAssertEqual(resolved.effectiveProfile.videoCodec, .h264)
         XCTAssertEqual(resolved.effectiveProfile.audioLayout, .surround51)
+    }
+
+    func testResolutionPolicyDecodesLegacyMatchSourceMaxAsSmart() throws {
+        let data = Data(#""matchSourceMax""#.utf8)
+
+        let decoded = try JSONDecoder().decode(ResolutionPolicy.self, from: data)
+
+        XCTAssertEqual(decoded, .smart)
+    }
+
+    func testResolutionPolicyEncodesLegacyMatchSourceMaxAsSmart() throws {
+        let data = try JSONEncoder().encode(ResolutionPolicy.matchSourceMax)
+        let encoded = try XCTUnwrap(String(data: data, encoding: .utf8))
+
+        XCTAssertEqual(encoded, #""smart""#)
+    }
+
+    func testSmartRenderSizeChooses720p() {
+        let renderSize = RenderSizing.renderSize(
+            for: [
+                makeMediaItem(size: CGSize(width: 960, height: 540)),
+                makeMediaItem(size: CGSize(width: 1280, height: 720))
+            ],
+            policy: .smart
+        )
+
+        XCTAssertEqual(renderSize, RenderSizing.fixed720p)
+    }
+
+    func testSmartRenderSizeChooses1080p() {
+        let renderSize = RenderSizing.renderSize(
+            for: [
+                makeMediaItem(size: CGSize(width: 1440, height: 1080)),
+                makeMediaItem(size: CGSize(width: 1920, height: 1080))
+            ],
+            policy: .smart
+        )
+
+        XCTAssertEqual(renderSize, RenderSizing.fixed1080p)
+    }
+
+    func testSmartRenderSizeChooses4KWhenNeeded() {
+        let renderSize = RenderSizing.renderSize(
+            for: [
+                makeMediaItem(size: CGSize(width: 3840, height: 2160)),
+                makeMediaItem(size: CGSize(width: 2400, height: 1350))
+            ],
+            policy: .smart
+        )
+
+        XCTAssertEqual(renderSize, RenderSizing.fixed4K)
+    }
+
+    func testSmartRenderSizeFallsBackTo4KWhenNoLosslessTierFits() {
+        let renderSize = RenderSizing.renderSize(
+            for: [makeMediaItem(size: CGSize(width: 3024, height: 4032))],
+            policy: .smart
+        )
+
+        XCTAssertEqual(renderSize, RenderSizing.fixed4K)
     }
 
     func testLongDurationWarningIsProduced() {
@@ -135,7 +196,7 @@ final class RenderPipelineTests: XCTestCase {
             container: .mov,
             videoCodec: .hevc,
             audioCodec: .aac,
-            resolution: .matchSourceMax,
+            resolution: .smart,
             dynamicRange: .hdr,
             audioLayout: .stereo,
             bitrateMode: .balanced
@@ -150,7 +211,7 @@ final class RenderPipelineTests: XCTestCase {
             container: .mov,
             videoCodec: .hevc,
             audioCodec: .aac,
-            resolution: .matchSourceMax,
+            resolution: .smart,
             dynamicRange: .sdr,
             audioLayout: .stereo,
             bitrateMode: .balanced
@@ -159,73 +220,13 @@ final class RenderPipelineTests: XCTestCase {
         XCTAssertFalse(engine.shouldApplyHDRToneMapping(for: profile))
     }
 
-    func testHDRMatchSourceMaxRenderSizeIsCappedLandscape() {
-        let engine = AVFoundationRenderEngine()
-        let profile = ExportProfile(
-            container: .mov,
-            videoCodec: .hevc,
-            audioCodec: .aac,
-            resolution: .matchSourceMax,
-            dynamicRange: .hdr,
-            audioLayout: .stereo,
-            bitrateMode: .balanced
-        )
-
-        let capped = engine.constrainedRenderSizeForExport(
-            requestedSize: CGSize(width: 5712, height: 4284),
-            profile: profile
-        )
-
-        XCTAssertEqual(capped, CGSize(width: 2880, height: 2160))
-    }
-
-    func testHDRMatchSourceMaxRenderSizeIsCappedPortrait() {
-        let engine = AVFoundationRenderEngine()
-        let profile = ExportProfile(
-            container: .mov,
-            videoCodec: .hevc,
-            audioCodec: .aac,
-            resolution: .matchSourceMax,
-            dynamicRange: .hdr,
-            audioLayout: .stereo,
-            bitrateMode: .balanced
-        )
-
-        let capped = engine.constrainedRenderSizeForExport(
-            requestedSize: CGSize(width: 4284, height: 5712),
-            profile: profile
-        )
-
-        XCTAssertEqual(capped, CGSize(width: 2160, height: 2880))
-    }
-
-    func testSDRMatchSourceMaxRenderSizeIsNotCapped() {
-        let engine = AVFoundationRenderEngine()
-        let profile = ExportProfile(
-            container: .mov,
-            videoCodec: .hevc,
-            audioCodec: .aac,
-            resolution: .matchSourceMax,
-            dynamicRange: .sdr,
-            audioLayout: .stereo,
-            bitrateMode: .balanced
-        )
-
-        let capped = engine.constrainedRenderSizeForExport(
-            requestedSize: CGSize(width: 5712, height: 4284),
-            profile: profile
-        )
-
-        XCTAssertEqual(capped, CGSize(width: 5712, height: 4284))
-    }
-
-    func testHDRMatchSourceMaxCompatibilityWarningMentions4KCap() {
+    func testSmartCompatibilityWarningDescribesTierSelection() {
         let manager = ExportProfileManager()
         let profile = ExportProfile(
             container: .mov,
             videoCodec: .hevc,
             audioCodec: .aac,
-            resolution: .matchSourceMax,
+            resolution: .smart,
             dynamicRange: .hdr,
             audioLayout: .stereo,
             bitrateMode: .balanced
@@ -233,7 +234,38 @@ final class RenderPipelineTests: XCTestCase {
 
         let warnings = manager.compatibilityWarnings(for: profile).map(\.message)
 
-        XCTAssertTrue(warnings.contains { $0.contains("capped to 4K-equivalent dimensions") })
+        XCTAssertTrue(warnings.contains { $0.contains("smallest 16:9 output tier") })
+    }
+
+    func testAspectFitTransformCentersFourByThreeLandscapeVideoWithinFrame() {
+        let transform = RenderSizing.aspectFitTransform(
+            naturalSize: CGSize(width: 1440, height: 1080),
+            preferredTransform: .identity,
+            renderSize: RenderSizing.fixed1080p
+        )
+        let transformedBounds = CGRect(origin: .zero, size: CGSize(width: 1440, height: 1080)).applying(transform)
+
+        XCTAssertEqual(transformedBounds.width, 1440, accuracy: 0.001)
+        XCTAssertEqual(transformedBounds.height, 1080, accuracy: 0.001)
+        XCTAssertEqual(transformedBounds.minX, 240, accuracy: 0.001)
+        XCTAssertEqual(transformedBounds.minY, 0, accuracy: 0.001)
+        XCTAssertEqual(transformedBounds.midX, RenderSizing.fixed1080p.width / 2.0, accuracy: 0.001)
+    }
+
+    func testAspectFitTransformCentersPortraitVideoWithinFrame() {
+        let portraitTransform = CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 1080, ty: 0)
+        let transform = RenderSizing.aspectFitTransform(
+            naturalSize: CGSize(width: 1920, height: 1080),
+            preferredTransform: portraitTransform,
+            renderSize: RenderSizing.fixed1080p
+        )
+        let transformedBounds = CGRect(origin: .zero, size: CGSize(width: 1920, height: 1080)).applying(transform)
+
+        XCTAssertEqual(transformedBounds.width, 607.5, accuracy: 0.001)
+        XCTAssertEqual(transformedBounds.height, 1080, accuracy: 0.001)
+        XCTAssertEqual(transformedBounds.minX, 656.25, accuracy: 0.001)
+        XCTAssertEqual(transformedBounds.minY, 0, accuracy: 0.001)
+        XCTAssertEqual(transformedBounds.midX, RenderSizing.fixed1080p.width / 2.0, accuracy: 0.001)
     }
 
     func testHDRWriterSettingsUseMain10AndAutoMetadataInsertion() {
@@ -317,5 +349,19 @@ final class RenderPipelineTests: XCTestCase {
             return [:]
         }
         return compression
+    }
+
+    private func makeMediaItem(size: CGSize) -> MediaItem {
+        MediaItem(
+            id: UUID().uuidString,
+            type: .image,
+            captureDate: Date(),
+            duration: nil,
+            pixelSize: size,
+            colorInfo: .unknown,
+            locator: .file(URL(fileURLWithPath: "/tmp/\(UUID().uuidString).jpg")),
+            fileSizeBytes: 1_000,
+            filename: "fixture.jpg"
+        )
     }
 }

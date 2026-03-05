@@ -196,6 +196,8 @@ Operational updates after first packaged run:
 - 2026-03-05: Added `ExportProfile.plexInfuseAppleTV4KDefault`, switched manager defaults to this profile, and introduced profile-resolution hooks that enforce effective HDR codec/audio behavior.
 - 2026-03-05: Updated Export UI/view-model defaults and added `Reset to Plex Defaults`; HDR mode now locks codec/audio selectors to effective renderer constraints with explanatory copy.
 - 2026-03-05: Added regression tests for new default profile values, manager default resolution, HDR profile normalization behavior, and codable round-trip of the new preset.
+- 2026-03-05: Replaced `Match Source Max` with `Smart`/`720p`/`1080p`/`4K` resolution choices, normalized legacy saved `matchSourceMax` settings to `smart`, and made Smart the new default export resolution.
+- 2026-03-05: Added shared 16:9 Smart resolution sizing, applied aspect-fit video transforms with black background bars on the SDR AVFoundation path, and locked title cards to the final resolved output size.
 - 2026-03-05: Added Photos filter-mode controls (`Month/Year` or `Album`) in the Input panel, plus album refresh/loading state handling in the view model.
 - 2026-03-05: Added PhotoKit album discovery/render support and new `PhotosScope.album` model path with run-report-friendly source description.
 

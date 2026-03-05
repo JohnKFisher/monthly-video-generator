@@ -1,9 +1,9 @@
 import AVFoundation
-import Core
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 import XCTest
+@testable import Core
 
 final class StillImageClipFactoryTests: XCTestCase {
     func testLargeStillClipCanBeInsertedIntoCompositionTrack() async throws {
@@ -73,6 +73,64 @@ final class StillImageClipFactoryTests: XCTestCase {
         }
 
         XCTAssertNoThrow(try compositionTrack.insertTimeRange(trackRange, of: videoTrack, at: .zero))
+    }
+
+    func testTitleCardClipMatchesFixedTierRenderSize() async throws {
+        let renderSize = CGSize(width: 1280, height: 720)
+        let duration = CMTime(value: 1, timescale: 30)
+        let factory = StillImageClipFactory()
+        let clipURL = try await factory.makeTitleCardClip(title: "Fixed", duration: duration, renderSize: renderSize)
+
+        defer {
+            try? FileManager.default.removeItem(at: clipURL)
+        }
+
+        let videoSize = try await loadedVideoSize(url: clipURL)
+        XCTAssertEqual(videoSize.width, renderSize.width, accuracy: 0.001)
+        XCTAssertEqual(videoSize.height, renderSize.height, accuracy: 0.001)
+    }
+
+    func testTitleCardClipMatchesSmartResolvedRenderSize() async throws {
+        let renderSize = RenderSizing.renderSize(
+            for: [MediaItem(
+                id: "portrait",
+                type: .image,
+                captureDate: Date(),
+                duration: nil,
+                pixelSize: CGSize(width: 3024, height: 4032),
+                colorInfo: .unknown,
+                locator: .file(URL(fileURLWithPath: "/tmp/portrait.jpg")),
+                fileSizeBytes: 1_000,
+                filename: "portrait.jpg"
+            )],
+            policy: .smart
+        )
+        let duration = CMTime(value: 1, timescale: 30)
+        let factory = StillImageClipFactory()
+        let clipURL = try await factory.makeTitleCardClip(title: "Smart", duration: duration, renderSize: renderSize)
+
+        defer {
+            try? FileManager.default.removeItem(at: clipURL)
+        }
+
+        let videoSize = try await loadedVideoSize(url: clipURL)
+        XCTAssertEqual(videoSize.width, renderSize.width, accuracy: 0.001)
+        XCTAssertEqual(videoSize.height, renderSize.height, accuracy: 0.001)
+    }
+
+    private func loadedVideoSize(url: URL) async throws -> CGSize {
+        let asset = AVURLAsset(url: url)
+        guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
+            throw NSError(
+                domain: "StillImageClipFactoryTests",
+                code: 5,
+                userInfo: [NSLocalizedDescriptionKey: "Expected generated clip to contain a video track"]
+            )
+        }
+        let naturalSize = try await videoTrack.load(.naturalSize)
+        let preferredTransform = try await videoTrack.load(.preferredTransform)
+        let transformed = naturalSize.applying(preferredTransform)
+        return CGSize(width: abs(transformed.width), height: abs(transformed.height))
     }
 
     private func makeFixtureImage() throws -> URL {
