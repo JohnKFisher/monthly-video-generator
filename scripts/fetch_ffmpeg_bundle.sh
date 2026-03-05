@@ -59,12 +59,22 @@ else
   exit 1
 fi
 
-FFMPEG_PATH="$(find "$EXTRACT_DIR" -type f -name ffmpeg -perm -u+x | head -n 1 || true)"
-FFPROBE_PATH="$(find "$EXTRACT_DIR" -type f -name ffprobe -perm -u+x | head -n 1 || true)"
+FFMPEG_PATH="$(find "$EXTRACT_DIR" -type f -name ffmpeg | head -n 1 || true)"
+FFPROBE_PATH="$(find "$EXTRACT_DIR" -type f -name ffprobe | head -n 1 || true)"
 
-if [[ -z "$FFMPEG_PATH" || -z "$FFPROBE_PATH" ]]; then
-  echo "Failed to locate executable ffmpeg/ffprobe in extracted bundle."
+if [[ -z "$FFMPEG_PATH" ]]; then
+  echo "Failed to locate ffmpeg in extracted bundle."
   exit 1
+fi
+
+if [[ -z "$FFPROBE_PATH" ]]; then
+  echo "Bundle does not include ffprobe; attempting explicit fallback from local PATH."
+  SYSTEM_FFPROBE="$(command -v ffprobe || true)"
+  if [[ -z "$SYSTEM_FFPROBE" ]]; then
+    echo "No ffprobe found in PATH for fallback."
+    exit 1
+  fi
+  FFPROBE_PATH="$SYSTEM_FFPROBE"
 fi
 
 mkdir -p "$DEST_DIR"
@@ -78,6 +88,8 @@ archive_url=$ARCHIVE_URL
 archive_sha256=$ARCHIVE_SHA256
 installed_ffmpeg=$DEST_DIR/ffmpeg
 installed_ffprobe=$DEST_DIR/ffprobe
+source_ffmpeg=$FFMPEG_PATH
+source_ffprobe=$FFPROBE_PATH
 META
 
 printf 'Installed FFmpeg bundle to %s\n' "$DEST_DIR"
