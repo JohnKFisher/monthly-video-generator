@@ -6,6 +6,64 @@ import VideoToolbox
 import XCTest
 
 final class RenderPipelineTests: XCTestCase {
+    func testPlexInfuseAppleTV4KDefaultProfileMatchesLockedDefaults() {
+        let profile = ExportProfile.plexInfuseAppleTV4KDefault
+
+        XCTAssertEqual(profile.container, .mp4)
+        XCTAssertEqual(profile.videoCodec, .hevc)
+        XCTAssertEqual(profile.audioCodec, .aac)
+        XCTAssertEqual(profile.resolution, .matchSourceMax)
+        XCTAssertEqual(profile.dynamicRange, .hdr)
+        XCTAssertEqual(profile.hdrFFmpegBinaryMode, .autoSystemThenBundled)
+        XCTAssertEqual(profile.audioLayout, .stereo)
+        XCTAssertEqual(profile.bitrateMode, .balanced)
+    }
+
+    func testExportProfileManagerDefaultProfileUsesPlexInfuseAppleTV4KDefault() {
+        let manager = ExportProfileManager()
+        XCTAssertEqual(manager.defaultProfile(), .plexInfuseAppleTV4KDefault)
+    }
+
+    func testResolveProfileForHDRForcesHEVCAndStereo() {
+        let manager = ExportProfileManager()
+        let selected = ExportProfile(
+            container: .mp4,
+            videoCodec: .h264,
+            audioCodec: .aac,
+            resolution: .matchSourceMax,
+            dynamicRange: .hdr,
+            hdrFFmpegBinaryMode: .autoSystemThenBundled,
+            audioLayout: .surround51,
+            bitrateMode: .balanced
+        )
+
+        let resolved = manager.resolveProfile(for: selected)
+
+        XCTAssertEqual(resolved.effectiveProfile.videoCodec, .hevc)
+        XCTAssertEqual(resolved.effectiveProfile.audioLayout, .stereo)
+        XCTAssertTrue(resolved.warnings.contains { $0.message.contains("adjusted to HEVC") })
+        XCTAssertTrue(resolved.warnings.contains { $0.message.contains("adjusted to Stereo") })
+    }
+
+    func testResolveProfileForSDRKeepsSelectedCodecAndAudioLayout() {
+        let manager = ExportProfileManager()
+        let selected = ExportProfile(
+            container: .mov,
+            videoCodec: .h264,
+            audioCodec: .aac,
+            resolution: .fixed1080p,
+            dynamicRange: .sdr,
+            hdrFFmpegBinaryMode: .autoSystemThenBundled,
+            audioLayout: .surround51,
+            bitrateMode: .sizeFirst
+        )
+
+        let resolved = manager.resolveProfile(for: selected)
+
+        XCTAssertEqual(resolved.effectiveProfile.videoCodec, .h264)
+        XCTAssertEqual(resolved.effectiveProfile.audioLayout, .surround51)
+    }
+
     func testLongDurationWarningIsProduced() {
         let item = MediaItem(
             id: "video",

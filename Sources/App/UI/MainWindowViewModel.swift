@@ -45,41 +45,41 @@ final class MainWindowViewModel: ObservableObject {
     @Published var outputFilename: String = "Monthly Slideshow"
 
     @Published var includeOpeningTitle: Bool = true {
-        didSet { persistRenderSettings() }
+        didSet { handleRenderSettingChange() }
     }
     @Published var openingTitleText: String {
-        didSet { persistRenderSettings() }
+        didSet { handleRenderSettingChange() }
     }
     @Published var crossfadeDurationSeconds: Double = 0.75 {
-        didSet { persistRenderSettings() }
+        didSet { handleRenderSettingChange() }
     }
     @Published var stillImageDurationSeconds: Double = 3.0 {
-        didSet { persistRenderSettings() }
+        didSet { handleRenderSettingChange() }
     }
 
-    @Published var selectedContainer: ContainerFormat = .mov {
-        didSet { persistRenderSettings() }
+    @Published var selectedContainer: ContainerFormat = MainWindowViewModel.defaultExportProfile.container {
+        didSet { handleRenderSettingChange() }
     }
-    @Published var selectedVideoCodec: VideoCodec = .hevc {
-        didSet { persistRenderSettings() }
+    @Published var selectedVideoCodec: VideoCodec = MainWindowViewModel.defaultExportProfile.videoCodec {
+        didSet { handleRenderSettingChange(enforceHDRConstraints: true) }
     }
-    @Published var selectedResolutionPolicy: ResolutionPolicy = .matchSourceMax {
-        didSet { persistRenderSettings() }
+    @Published var selectedResolutionPolicy: ResolutionPolicy = MainWindowViewModel.defaultExportProfile.resolution {
+        didSet { handleRenderSettingChange() }
     }
-    @Published var selectedDynamicRange: DynamicRange = .sdr {
-        didSet { persistRenderSettings() }
+    @Published var selectedDynamicRange: DynamicRange = MainWindowViewModel.defaultExportProfile.dynamicRange {
+        didSet { handleRenderSettingChange(enforceHDRConstraints: true) }
     }
-    @Published var selectedHDRBinaryMode: HDRFFmpegBinaryMode = .autoSystemThenBundled {
-        didSet { persistRenderSettings() }
+    @Published var selectedHDRBinaryMode: HDRFFmpegBinaryMode = MainWindowViewModel.defaultExportProfile.hdrFFmpegBinaryMode {
+        didSet { handleRenderSettingChange() }
     }
-    @Published var selectedAudioLayout: AudioLayout = .stereo {
-        didSet { persistRenderSettings() }
+    @Published var selectedAudioLayout: AudioLayout = MainWindowViewModel.defaultExportProfile.audioLayout {
+        didSet { handleRenderSettingChange(enforceHDRConstraints: true) }
     }
-    @Published var selectedBitrateMode: BitrateMode = .balanced {
-        didSet { persistRenderSettings() }
+    @Published var selectedBitrateMode: BitrateMode = MainWindowViewModel.defaultExportProfile.bitrateMode {
+        didSet { handleRenderSettingChange() }
     }
     @Published var writeDiagnosticsLog: Bool = true {
-        didSet { persistRenderSettings() }
+        didSet { handleRenderSettingChange() }
     }
 
     @Published var isRendering: Bool = false
@@ -102,7 +102,10 @@ final class MainWindowViewModel: ObservableObject {
     private let runReportService = RunReportService()
     private let preferencesStore = UserDefaults.standard
     private var renderStatusDetail: String?
+    private var isApplyingExportConstraints = false
+    private var isRestoringPersistedSettings = false
 
+    private static let defaultExportProfile = ExportProfileManager().defaultProfile()
     private static let renderSettingsDefaultsKey = "MainWindowViewModel.renderSettings.v1"
 
     init() {
@@ -159,6 +162,38 @@ final class MainWindowViewModel: ObservableObject {
         #endif
     }
 
+    var isHDRSelectionLocked: Bool {
+        selectedDynamicRange == .hdr
+    }
+
+    var hdrSelectionLockReason: String {
+        "HDR currently exports as HEVC Main10 video with AAC stereo for Plex + Infuse playback on Apple TV 4K."
+    }
+
+    var bitrateModeDescription: String {
+        if selectedDynamicRange == .hdr {
+            return "Bitrate mode controls HDR FFmpeg encode quality, size, and speed tradeoffs."
+        }
+        return "Bitrate mode has limited effect on SDR exports that use AVFoundation presets."
+    }
+
+    func resetExportSettingsToPlexDefaults() {
+        let profile = exportProfileManager.defaultProfile()
+        isRestoringPersistedSettings = true
+        selectedContainer = profile.container
+        selectedVideoCodec = profile.videoCodec
+        selectedResolutionPolicy = profile.resolution
+        selectedDynamicRange = profile.dynamicRange
+        selectedHDRBinaryMode = profile.hdrFFmpegBinaryMode
+        selectedAudioLayout = profile.audioLayout
+        selectedBitrateMode = profile.bitrateMode
+        writeDiagnosticsLog = true
+        isRestoringPersistedSettings = false
+        enforceHDRSelectionConstraints()
+        persistRenderSettings()
+        warnings = exportProfileManager.compatibilityWarnings(for: profile).map(\.message)
+    }
+
     func startRender() {
         guard !isRendering else { return }
 
@@ -207,7 +242,7 @@ final class MainWindowViewModel: ObservableObject {
                 stillImageDurationSeconds: stillImageDurationSeconds
             )
 
-            let exportProfile = ExportProfile(
+            let selectedExportProfile = ExportProfile(
                 container: selectedContainer,
                 videoCodec: selectedVideoCodec,
                 audioCodec: .aac,
@@ -217,6 +252,8 @@ final class MainWindowViewModel: ObservableObject {
                 audioLayout: selectedAudioLayout,
                 bitrateMode: selectedBitrateMode
             )
+            let exportResolution = exportProfileManager.resolveProfile(for: selectedExportProfile)
+            let exportProfile = exportResolution.effectiveProfile
 
             let request: RenderRequest
             let preparation: RenderPreparation
@@ -259,7 +296,7 @@ final class MainWindowViewModel: ObservableObject {
                 preparation = coordinator.prepareFromItems(discovered, request: request)
             }
 
-            warnings = preparation.warnings + exportProfileManager.compatibilityWarnings(for: exportProfile).map(\.message)
+            warnings = preparation.warnings + exportResolution.warnings.map(\.message)
             progress = max(progress, 0.08)
 
             renderStatusDetail = nil
@@ -375,11 +412,41 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
 
+    private func handleRenderSettingChange(enforceHDRConstraints: Bool = false) {
+        guard !isRestoringPersistedSettings else {
+            return
+        }
+        if enforceHDRConstraints {
+            enforceHDRSelectionConstraints()
+        }
+        persistRenderSettings()
+    }
+
+    private func enforceHDRSelectionConstraints() {
+        guard selectedDynamicRange == .hdr else {
+            return
+        }
+        guard !isApplyingExportConstraints else {
+            return
+        }
+
+        isApplyingExportConstraints = true
+        defer { isApplyingExportConstraints = false }
+
+        if selectedVideoCodec != .hevc {
+            selectedVideoCodec = .hevc
+        }
+        if selectedAudioLayout != .stereo {
+            selectedAudioLayout = .stereo
+        }
+    }
+
     private func applyPersistedRenderSettings() {
         guard let settings = loadPersistedRenderSettings() else {
             return
         }
 
+        isRestoringPersistedSettings = true
         includeOpeningTitle = settings.includeOpeningTitle
         openingTitleText = settings.openingTitleText
         crossfadeDurationSeconds = min(max(settings.crossfadeDurationSeconds, 0), 2)
@@ -392,6 +459,9 @@ final class MainWindowViewModel: ObservableObject {
         selectedAudioLayout = settings.selectedAudioLayout
         selectedBitrateMode = settings.selectedBitrateMode
         writeDiagnosticsLog = settings.writeDiagnosticsLog ?? true
+        isRestoringPersistedSettings = false
+        enforceHDRSelectionConstraints()
+        persistRenderSettings()
     }
 
     private func loadPersistedRenderSettings() -> PersistedRenderSettings? {

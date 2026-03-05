@@ -86,4 +86,15 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         audioLayout: .stereo,
         bitrateMode: .balanced
     )
+
+    public static let plexInfuseAppleTV4KDefault = ExportProfile(
+        container: .mp4,
+        videoCodec: .hevc,
+        audioCodec: .aac,
+        resolution: .matchSourceMax,
+        dynamicRange: .hdr,
+        hdrFFmpegBinaryMode: .autoSystemThenBundled,
+        audioLayout: .stereo,
+        bitrateMode: .balanced
+    )
 }

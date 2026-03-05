@@ -8,18 +8,70 @@ public struct ExportCompatibilityWarning: Equatable {
     }
 }
 
+public struct ExportProfileResolution: Equatable {
+    public let effectiveProfile: ExportProfile
+    public let warnings: [ExportCompatibilityWarning]
+
+    public init(effectiveProfile: ExportProfile, warnings: [ExportCompatibilityWarning]) {
+        self.effectiveProfile = effectiveProfile
+        self.warnings = warnings
+    }
+}
+
 public final class ExportProfileManager {
     public init() {}
 
     public func defaultProfile() -> ExportProfile {
-        .balancedDefault
+        .plexInfuseAppleTV4KDefault
+    }
+
+    public func resolveProfile(for profile: ExportProfile) -> ExportProfileResolution {
+        var warnings: [ExportCompatibilityWarning] = []
+        var effectiveProfile = profile
+
+        if effectiveProfile.dynamicRange == .hdr {
+            if effectiveProfile.videoCodec != .hevc {
+                effectiveProfile = withVideoCodec(.hevc, in: effectiveProfile)
+                warnings.append(
+                    ExportCompatibilityWarning(
+                        "HDR currently exports as HEVC Main10. Selected codec was adjusted to HEVC."
+                    )
+                )
+            }
+
+            if effectiveProfile.audioLayout != .stereo {
+                effectiveProfile = withAudioLayout(.stereo, in: effectiveProfile)
+                warnings.append(
+                    ExportCompatibilityWarning(
+                        "HDR currently exports AAC stereo for Plex + Infuse playback. Selected audio layout was adjusted to Stereo."
+                    )
+                )
+            }
+        }
+
+        warnings.append(contentsOf: compatibilityWarnings(forEffectiveProfile: effectiveProfile))
+        return ExportProfileResolution(effectiveProfile: effectiveProfile, warnings: warnings)
     }
 
     public func compatibilityWarnings(for profile: ExportProfile) -> [ExportCompatibilityWarning] {
+        resolveProfile(for: profile).warnings
+    }
+
+    private func compatibilityWarnings(forEffectiveProfile profile: ExportProfile) -> [ExportCompatibilityWarning] {
         var warnings: [ExportCompatibilityWarning] = []
 
         if profile.dynamicRange == .hdr {
-            warnings.append(ExportCompatibilityWarning("HDR export may not play correctly on older SDR displays and players."))
+            warnings.append(
+                ExportCompatibilityWarning(
+                    "HDR output is tuned for Plex + Infuse on Apple TV 4K (HEVC Main10 + AAC stereo)."
+                )
+            )
+            warnings.append(
+                ExportCompatibilityWarning(
+                    "HDR output requires an HDR-capable display/player. SDR playback may appear tone-mapped or dimmer."
+                )
+            )
+
             if profile.resolution == .matchSourceMax {
                 warnings.append(
                     ExportCompatibilityWarning(
@@ -27,9 +79,10 @@ public final class ExportProfileManager {
                     )
                 )
             }
+
             switch profile.hdrFFmpegBinaryMode {
             case .autoSystemThenBundled:
-                warnings.append(ExportCompatibilityWarning("HDR engine auto mode uses system ffmpeg first, then bundled ffmpeg if required features are missing."))
+                warnings.append(ExportCompatibilityWarning("HDR engine Auto mode uses system ffmpeg first, then bundled ffmpeg if required features are missing."))
             case .systemOnly:
                 warnings.append(ExportCompatibilityWarning("HDR engine System Only mode can fail if local ffmpeg lacks zscale/xfade/acrossfade/Main10 support."))
             case .bundledOnly:
@@ -41,8 +94,8 @@ public final class ExportProfileManager {
             warnings.append(ExportCompatibilityWarning("5.1 output may downmix to stereo on devices without surround playback support."))
         }
 
-        if profile.videoCodec == .hevc && profile.container == .mp4 {
-            warnings.append(ExportCompatibilityWarning("HEVC in MP4 has reduced compatibility on legacy players. Consider MOV or H.264."))
+        if profile.container == .mov {
+            warnings.append(ExportCompatibilityWarning("MP4 is the default container for Plex + Infuse workflows. MOV may require remuxing in some server toolchains."))
         }
 
         if profile.resolution == .fixed4K {
@@ -50,5 +103,31 @@ public final class ExportProfileManager {
         }
 
         return warnings
+    }
+
+    private func withVideoCodec(_ codec: VideoCodec, in profile: ExportProfile) -> ExportProfile {
+        ExportProfile(
+            container: profile.container,
+            videoCodec: codec,
+            audioCodec: profile.audioCodec,
+            resolution: profile.resolution,
+            dynamicRange: profile.dynamicRange,
+            hdrFFmpegBinaryMode: profile.hdrFFmpegBinaryMode,
+            audioLayout: profile.audioLayout,
+            bitrateMode: profile.bitrateMode
+        )
+    }
+
+    private func withAudioLayout(_ audioLayout: AudioLayout, in profile: ExportProfile) -> ExportProfile {
+        ExportProfile(
+            container: profile.container,
+            videoCodec: profile.videoCodec,
+            audioCodec: profile.audioCodec,
+            resolution: profile.resolution,
+            dynamicRange: profile.dynamicRange,
+            hdrFFmpegBinaryMode: profile.hdrFFmpegBinaryMode,
+            audioLayout: audioLayout,
+            bitrateMode: profile.bitrateMode
+        )
     }
 }

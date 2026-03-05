@@ -95,6 +95,7 @@ struct MainWindowView: View {
                                 Text(codec.rawValue.uppercased()).tag(codec)
                             }
                         }
+                        .disabled(viewModel.isHDRSelectionLocked)
                     }
 
                     HStack {
@@ -125,6 +126,7 @@ struct MainWindowView: View {
                                 Text(layout == .stereo ? "Stereo" : "5.1").tag(layout)
                             }
                         }
+                        .disabled(viewModel.isHDRSelectionLocked)
 
                         Picker("Bitrate", selection: $viewModel.selectedBitrateMode) {
                             ForEach(BitrateMode.allCases, id: \.self) { mode in
@@ -132,6 +134,16 @@ struct MainWindowView: View {
                             }
                         }
                     }
+
+                    if viewModel.isHDRSelectionLocked {
+                        Text(viewModel.hdrSelectionLockReason)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Text(viewModel.bitrateModeDescription)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
                     Toggle("Write diagnostics log (.log)", isOn: $viewModel.writeDiagnosticsLog)
 
@@ -144,6 +156,10 @@ struct MainWindowView: View {
                         Button("Output Folder") {
                             viewModel.chooseOutputFolder()
                         }
+                    }
+
+                    Button("Reset to Plex Defaults") {
+                        viewModel.resetExportSettingsToPlexDefaults()
                     }
                 }
             }

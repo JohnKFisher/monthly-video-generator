@@ -39,10 +39,11 @@ Implemented now:
 - Safe output naming with auto-versioning in selected output directory.
 - PhotoKit discovery/materialization for month/year library rendering.
 - Export UI/model for container/codec/resolution/HDR/audio layout/bitrate mode.
+- Plex/Infuse-oriented default export preset for Apple TV 4K (`MP4 + HEVC + HDR + Stereo + Balanced + HDR Auto`), plus explicit UI reset action.
 
 Open for S4 completion:
 - Migrate renderer to newer non-deprecated AVFoundation export APIs.
-- Enforce more export-profile options directly in encode settings (currently some are advisory/UI-level compatibility warnings).
+- Continue tightening renderer-option parity where settings remain advisory outside HDR constraints.
 - Refine progress UX with ETA prediction and stronger cancellation affordances for long HDR jobs.
 
 Operational updates after first packaged run:
@@ -94,6 +95,8 @@ Operational updates after first packaged run:
 - Hotfix: FFmpeg watchdog now uses an extended late-stage no-progress timeout once combined progress reaches >=95%, avoiding premature hard-kill near completion/finalization.
 - Hotfix: FFmpeg pipe readers now run on a dedicated utility queue using blocking `availableData` reads to keep stderr/stdout draining in real time during long HDR encodes.
 - Established new known-good rollback checkpoint (`Post-ffmpeg HDR`): `checkpoint/20260305-known-good-post-ffmpeg-hdr`.
+- Updated defaults workflow for Plex + Infuse + Apple TV 4K: fresh installs now default to HDR MP4/HEVC profile, existing saved preferences remain untouched, and Export UI includes `Reset to Plex Defaults`.
+- Updated Export profile manager to resolve effective HDR settings (`HEVC` + `Stereo`) with explicit compatibility messaging so UI/behavior stay aligned.
 
 ## Decisions Log
 
@@ -127,6 +130,7 @@ Operational updates after first packaged run:
 - 2026-03-04: Added bundled FFmpeg acquisition policy (arm64, GPL-capable binary permitted) with SHA256 verification and explicit provenance logging.
 - 2026-03-04: Established rollback anchor tag `checkpoint/20260304-known-good-pre-ffmpeg-pivot` before FFmpeg HDR backend implementation.
 - 2026-03-05: Promoted the latest stable HDR/FFmpeg fixes as the new known-good rollback checkpoint `checkpoint/20260305-known-good-post-ffmpeg-hdr` (`Post-ffmpeg HDR`).
+- 2026-03-05: Approved defaults-first export policy for Plex + Infuse + Apple TV 4K with HDR as the default dynamic range and manual reset action for existing installations.
 
 ## Changes Since Last Update
 
@@ -187,6 +191,9 @@ Operational updates after first packaged run:
 - 2026-03-05: Replaced FFmpeg pipe `bytes.lines` readers with byte-level CR/LF parsing to keep stream draining robust under mixed carriage-return/newline output.
 - 2026-03-05: Changed stall watchdog to use a longer late-stage timeout (>=95% progress) before escalation, reducing false positives near encode finalization.
 - 2026-03-05: Moved FFmpeg stdout/stderr reads to a dedicated background queue (`availableData`) after diagnostics showed stream lines were still being delivered only at process teardown.
+- 2026-03-05: Added `ExportProfile.plexInfuseAppleTV4KDefault`, switched manager defaults to this profile, and introduced profile-resolution hooks that enforce effective HDR codec/audio behavior.
+- 2026-03-05: Updated Export UI/view-model defaults and added `Reset to Plex Defaults`; HDR mode now locks codec/audio selectors to effective renderer constraints with explanatory copy.
+- 2026-03-05: Added regression tests for new default profile values, manager default resolution, HDR profile normalization behavior, and codable round-trip of the new preset.
 
 ## Risks/Blockers
 
@@ -216,4 +223,4 @@ For the pre-FFmpeg-pivot baseline, use:
 
 ## Last Updated
 
-2026-03-05 14:02 America/New_York by Codex
+2026-03-05 15:10 America/New_York by Codex

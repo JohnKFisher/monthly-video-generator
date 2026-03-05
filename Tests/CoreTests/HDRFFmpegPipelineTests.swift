@@ -233,4 +233,13 @@ final class HDRFFmpegPipelineTests: XCTestCase {
 
         XCTAssertEqual(decoded.hdrFFmpegBinaryMode, .bundledOnly)
     }
+
+    func testPlexInfuseDefaultProfileCodableRoundTrip() throws {
+        let profile = ExportProfile.plexInfuseAppleTV4KDefault
+
+        let data = try JSONEncoder().encode(profile)
+        let decoded = try JSONDecoder().decode(ExportProfile.self, from: data)
+
+        XCTAssertEqual(decoded, profile)
+    }
 }

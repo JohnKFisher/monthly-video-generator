@@ -62,6 +62,23 @@ See:
 
 - `docs/THIRD_PARTY.md`
 
+## Default Export Profile (Plex + Infuse on Apple TV 4K)
+
+New default export profile for fresh installs (existing saved preferences are preserved):
+
+- Container: `MP4`
+- Video: `HEVC` (`hvc1` Main10 on HDR path)
+- Resolution: `Match Source` (HDR is reliability-capped to 4K-equivalent bounds)
+- Dynamic range: `HDR` (HLG)
+- Audio: `AAC stereo`
+- Bitrate mode: `Balanced`
+- HDR engine: `Auto (System then Bundled)`
+
+Notes:
+
+- In HDR mode, codec/audio selections are constrained to effective renderer behavior (`HEVC` + `Stereo`).
+- Use the app's `Reset to Plex Defaults` action to apply this profile to an existing installation.
+
 ## Known-Good Rollback
 
 Current known-good rollback checkpoint (`Post-ffmpeg HDR`):
