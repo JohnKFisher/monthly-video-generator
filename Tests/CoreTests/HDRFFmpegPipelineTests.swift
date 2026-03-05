@@ -163,6 +163,20 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("libx265"))
     }
 
+    func testProgressParserReadsOutTimeUS() {
+        var parser = FFmpegProgressParser()
+        parser.ingest(line: "out_time_us=1500000")
+        let progress = parser.progress(totalDurationMicroseconds: 3_000_000)
+        XCTAssertEqual(progress, 0.5, accuracy: 0.0001)
+    }
+
+    func testProgressParserReadsOutTimeMS() {
+        var parser = FFmpegProgressParser()
+        parser.ingest(line: "out_time_ms=600000")
+        let progress = parser.progress(totalDurationMicroseconds: 3_000_000)
+        XCTAssertEqual(progress, 0.2, accuracy: 0.0001)
+    }
+
     func testExportProfileCodablePreservesHDRBinaryMode() throws {
         let profile = ExportProfile(
             container: .mov,

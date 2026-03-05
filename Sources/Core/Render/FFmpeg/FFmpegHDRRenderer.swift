@@ -139,6 +139,7 @@ final class FFmpegHDRRenderer {
         } onCancel: {
             process.terminate()
         }
+        callbacks.log("FFmpeg process terminated: \(terminationDescription(status: termination.status, reason: termination.reason))")
 
         let stderrTail = await stderrTask.value
         _ = await stdoutTask.value
@@ -157,15 +158,12 @@ final class FFmpegHDRRenderer {
     }
 
     private func waitForTermination(of process: Process) async -> (status: Int32, reason: Process.TerminationReason) {
-        if !process.isRunning {
-            return (process.terminationStatus, process.terminationReason)
+        // Polling avoids a race where the process can exit between an isRunning check and
+        // assigning terminationHandler, which can otherwise leave the render task waiting forever.
+        while process.isRunning {
+            try? await Task.sleep(nanoseconds: 50_000_000)
         }
-
-        return await withCheckedContinuation { continuation in
-            process.terminationHandler = { completed in
-                continuation.resume(returning: (completed.terminationStatus, completed.terminationReason))
-            }
-        }
+        return (process.terminationStatus, process.terminationReason)
     }
 
     private func failureDetails(from stderrTail: [String]) -> String {

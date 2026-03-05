@@ -16,7 +16,7 @@ struct FFmpegProgressParser {
 
         let key = components[0]
         let value = components[1]
-        if key == "out_time_ms", let parsed = Int64(value) {
+        if (key == "out_time_ms" || key == "out_time_us"), let parsed = Int64(value) {
             latestOutTimeMS = max(parsed, 0)
         }
     }
