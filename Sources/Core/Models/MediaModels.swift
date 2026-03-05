@@ -9,13 +9,15 @@ public enum MediaType: String, Codable, Sendable {
 public struct ColorInfo: Equatable, Codable, Sendable {
     public let isHDR: Bool
     public let colorPrimaries: String?
+    public let transferFunction: String?
 
-    public init(isHDR: Bool, colorPrimaries: String?) {
+    public init(isHDR: Bool, colorPrimaries: String?, transferFunction: String? = nil) {
         self.isHDR = isHDR
         self.colorPrimaries = colorPrimaries
+        self.transferFunction = transferFunction
     }
 
-    public static let unknown = ColorInfo(isHDR: false, colorPrimaries: nil)
+    public static let unknown = ColorInfo(isHDR: false, colorPrimaries: nil, transferFunction: nil)
 }
 
 public enum MediaLocator: Equatable, Sendable {

@@ -71,6 +71,10 @@ Operational updates after first packaged run:
 - Hotfix: HDR pass now resolves per-frame source color tags (HLG/PQ/P3/709) instead of forcing HLG interpretation for every frame, and still-photo intermediates are now tagged from per-image source color space (P3 or BT.709) rather than one fixed BT.709 path.
 - Hotfix: HDR photo stills now use gain-map-aware decoding (when present) and are emitted as 10-bit BT.2020 HLG intermediates; non-HDR stills retain source-aware SDR tagging (P3/BT.709).
 - Added export option `Write diagnostics log (.log)` so diagnostics generation is explicitly user-controlled; when enabled, successful renders now produce a `.log` and run-report JSON includes the diagnostics path.
+- Pivoted HDR export backend from AVFoundation second-pass tone-mapping to capability-gated FFmpeg rendering (zscale + xfade + acrossfade + Main10 HEVC), with SDR remaining on AVFoundation.
+- Added HDR engine selection UI (`Auto/System/Bundled`) and persisted this preference with existing style/export settings.
+- Added FFmpeg binary acquisition + bundling workflow (`scripts/fetch_ffmpeg_bundle.sh`, `scripts/build_app.sh`) with checksum verification and provenance file.
+- Added a known-good pre-pivot checkpoint tag for deterministic rollback: `checkpoint/20260304-known-good-pre-ffmpeg-pivot`.
 
 ## Decisions Log
 
@@ -100,6 +104,9 @@ Operational updates after first packaged run:
 - 2026-03-04: Changed HDR tone-map writer flow to drain audio incrementally during video encoding and in bounded bursts during finalization to avoid muxer starvation stalls.
 - 2026-03-04: Replaced creative HDR filter grading with identity color-managed processing in a 10-bit x420 reader/writer path to preserve iPhone HDR appearance.
 - 2026-03-04: Adopted explicit VideoToolbox HDR metadata policy settings (`HDRMetadataInsertionMode`, `PreserveDynamicHDRMetadata`) with diagnostics and safe fallback behavior.
+- 2026-03-04: Approved quality-first HDR pivot to FFmpeg with capability gate (`zscale`, `xfade`, `acrossfade`, HEVC Main10), preferring system ffmpeg then bundled fallback.
+- 2026-03-04: Added bundled FFmpeg acquisition policy (arm64, GPL-capable binary permitted) with SHA256 verification and explicit provenance logging.
+- 2026-03-04: Established rollback anchor tag `checkpoint/20260304-known-good-pre-ffmpeg-pivot` before FFmpeg HDR backend implementation.
 
 ## Changes Since Last Update
 
@@ -137,20 +144,34 @@ Operational updates after first packaged run:
 - 2026-03-04: Added Smart HDR still-photo recovery path that applies ImageIO/CoreImage HDR gain maps and writes 10-bit HLG/BT.2020 still intermediates for HDR exports.
 - 2026-03-04: Added `StillImageClipFactoryTests.testLargeStillClipHDRModeCanBeInsertedIntoCompositionTrack` to lock in HDR-mode still intermediate insertion behavior.
 - 2026-03-04: Added diagnostics-log toggle in export settings and propagated diagnostics log path through render results into run-report JSON sidecars.
+- 2026-03-04: Added FFmpeg HDR pipeline modules (`FFmpegCapabilityProbe`, `FFmpegBinaryResolver`, `FFmpegCommandBuilder`, `FFmpegHDRRenderer`) and routed HDR exports through capability-gated FFmpeg backend.
+- 2026-03-04: Added HDR engine preference to `ExportProfile` and UI (`Auto/System/Bundled`) with persistence across launches.
+- 2026-03-04: Added HDR backend summary propagation into UI status and run-report JSON.
+- 2026-03-04: Added FFmpeg acquisition/bundling scripts and third-party licensing/provenance documentation.
+- 2026-03-04: Added FFmpeg pipeline unit tests for capability parsing, resolver fallback, command generation, and profile codable persistence.
 
 ## Risks/Blockers
 
 - Current renderer uses AVFoundation APIs that are deprecated on macOS 15+; functional now, but should be migrated.
 - Progress reporting is phase-based and monotonic but still ETA-free (not frame-accurate completion-time prediction).
 - Very large photo months may have long materialization times; additional user-facing progress granularity is still needed.
-- HDR exports now use an additional full-frame regrade pass and can take materially longer than SDR exports, especially at large resolutions.
+- HDR exports now use FFmpeg high-quality normalization/encode path and can take materially longer than SDR exports, especially at large resolutions.
+- FFmpeg bundling is operator-managed; missing/invalid bundled binaries will fail HDR export in `Bundled Only` mode.
 
 ## Next Actions (Top 3)
 
-1. Complete S4 by wiring deeper export controls to encode behavior and migrating deprecations.
-2. Add ETA-oriented progress forecasting and stronger cancellation UX.
-3. Add integration tests and smoke samples for mixed-orientation clips and larger photo month datasets.
+1. Complete S4 by finishing deprecated AVFoundation API migration on SDR path.
+2. Run manual HDR visual validation on mixed iPhone SDR/HDR months and tune FFmpeg normalization matrices if needed.
+3. Add integration smoke tests that execute the FFmpeg HDR path with fixture clips and verify metadata tags.
+
+## Rollback Procedure
+
+To return to the known-good baseline captured before the FFmpeg HDR pivot:
+
+1. `git fetch --tags`
+2. `git checkout checkpoint/20260304-known-good-pre-ffmpeg-pivot`
+3. Optional working branch from checkpoint: `git checkout -b codex/recover-known-good`
 
 ## Last Updated
 
-2026-03-04 15:39 America/New_York by Codex
+2026-03-04 20:20 America/New_York by Codex

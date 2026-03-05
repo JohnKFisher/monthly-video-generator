@@ -8,6 +8,7 @@ BUNDLE_ID="com.jkfisher.MonthlyVideoGenerator"
 VERSION_FILE="$ROOT_DIR/VERSION"
 DIST_DIR="$ROOT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/${APP_NAME}.app"
+THIRD_PARTY_FFMPEG_BIN_DIR="$ROOT_DIR/third_party/ffmpeg/bin"
 
 if [[ -f "$VERSION_FILE" ]]; then
   APP_VERSION="$(tr -d '[:space:]' < "$VERSION_FILE")"
@@ -38,6 +39,16 @@ rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
 cp "$EXECUTABLE_PATH" "$APP_BUNDLE/Contents/MacOS/$EXECUTABLE_NAME"
 chmod +x "$APP_BUNDLE/Contents/MacOS/$EXECUTABLE_NAME"
+
+if [[ -x "$THIRD_PARTY_FFMPEG_BIN_DIR/ffmpeg" && -x "$THIRD_PARTY_FFMPEG_BIN_DIR/ffprobe" ]]; then
+  mkdir -p "$APP_BUNDLE/Contents/Resources/FFmpeg"
+  cp "$THIRD_PARTY_FFMPEG_BIN_DIR/ffmpeg" "$APP_BUNDLE/Contents/Resources/FFmpeg/ffmpeg"
+  cp "$THIRD_PARTY_FFMPEG_BIN_DIR/ffprobe" "$APP_BUNDLE/Contents/Resources/FFmpeg/ffprobe"
+  chmod +x "$APP_BUNDLE/Contents/Resources/FFmpeg/ffmpeg" "$APP_BUNDLE/Contents/Resources/FFmpeg/ffprobe"
+  echo "Bundled FFmpeg binaries from: $THIRD_PARTY_FFMPEG_BIN_DIR"
+else
+  echo "No bundled FFmpeg binaries found at $THIRD_PARTY_FFMPEG_BIN_DIR (system FFmpeg auto mode remains available)."
+fi
 
 cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

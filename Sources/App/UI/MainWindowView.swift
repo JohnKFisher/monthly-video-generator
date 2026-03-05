@@ -111,6 +111,14 @@ struct MainWindowView: View {
                         }
                     }
 
+                    if viewModel.selectedDynamicRange == .hdr {
+                        Picker("HDR Engine", selection: $viewModel.selectedHDRBinaryMode) {
+                            Text("Auto (System then Bundled)").tag(HDRFFmpegBinaryMode.autoSystemThenBundled)
+                            Text("System Only").tag(HDRFFmpegBinaryMode.systemOnly)
+                            Text("Bundled Only").tag(HDRFFmpegBinaryMode.bundledOnly)
+                        }
+                    }
+
                     HStack {
                         Picker("Audio", selection: $viewModel.selectedAudioLayout) {
                             ForEach(AudioLayout.allCases, id: \.self) { layout in
@@ -171,6 +179,12 @@ struct MainWindowView: View {
                 }
                 if !viewModel.lastDiagnosticsPath.isEmpty {
                     Text("Diagnostics log: \(viewModel.lastDiagnosticsPath)")
+                        .font(.caption)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if !viewModel.lastBackendSummary.isEmpty {
+                    Text("Render backend: \(viewModel.lastBackendSummary)")
                         .font(.caption)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)

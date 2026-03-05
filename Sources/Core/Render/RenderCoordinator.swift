@@ -16,10 +16,12 @@ public struct RenderPreparation: @unchecked Sendable {
 public struct RenderResult: Sendable {
     public let outputURL: URL
     public let diagnosticsLogURL: URL?
+    public let backendSummary: String?
 
-    public init(outputURL: URL, diagnosticsLogURL: URL?) {
+    public init(outputURL: URL, diagnosticsLogURL: URL?, backendSummary: String?) {
         self.outputURL = outputURL
         self.diagnosticsLogURL = diagnosticsLogURL
+        self.backendSummary = backendSummary
     }
 }
 

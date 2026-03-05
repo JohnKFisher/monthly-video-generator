@@ -20,6 +20,14 @@ public final class ExportProfileManager {
 
         if profile.dynamicRange == .hdr {
             warnings.append(ExportCompatibilityWarning("HDR export may not play correctly on older SDR displays and players."))
+            switch profile.hdrFFmpegBinaryMode {
+            case .autoSystemThenBundled:
+                warnings.append(ExportCompatibilityWarning("HDR engine auto mode uses system ffmpeg first, then bundled ffmpeg if required features are missing."))
+            case .systemOnly:
+                warnings.append(ExportCompatibilityWarning("HDR engine System Only mode can fail if local ffmpeg lacks zscale/xfade/acrossfade/Main10 support."))
+            case .bundledOnly:
+                warnings.append(ExportCompatibilityWarning("HDR engine Bundled Only mode requires bundled ffmpeg binaries in app resources or third_party/ffmpeg."))
+            }
         }
 
         if profile.audioLayout == .surround51 {

@@ -2,3 +2,5 @@
 .build/
 .swiftpm/
 dist/
+third_party/ffmpeg/bin/
+third_party/ffmpeg/PROVENANCE.txt

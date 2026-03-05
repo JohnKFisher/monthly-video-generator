@@ -69,6 +69,9 @@ final class MainWindowViewModel: ObservableObject {
     @Published var selectedDynamicRange: DynamicRange = .sdr {
         didSet { persistRenderSettings() }
     }
+    @Published var selectedHDRBinaryMode: HDRFFmpegBinaryMode = .autoSystemThenBundled {
+        didSet { persistRenderSettings() }
+    }
     @Published var selectedAudioLayout: AudioLayout = .stereo {
         didSet { persistRenderSettings() }
     }
@@ -85,6 +88,7 @@ final class MainWindowViewModel: ObservableObject {
     @Published var warnings: [String] = []
     @Published var lastOutputPath: String = ""
     @Published var lastDiagnosticsPath: String = ""
+    @Published var lastBackendSummary: String = ""
     @Published var showRenderCompleteAlert: Bool = false
 
     let appVersionBuildLabel: String
@@ -188,6 +192,7 @@ final class MainWindowViewModel: ObservableObject {
             statusMessage = "Preparing media..."
             lastOutputPath = ""
             lastDiagnosticsPath = ""
+            lastBackendSummary = ""
             showRenderCompleteAlert = false
 
             let monthYear = MonthYear(month: selectedMonth, year: selectedYear)
@@ -206,6 +211,7 @@ final class MainWindowViewModel: ObservableObject {
                 audioCodec: .aac,
                 resolution: selectedResolutionPolicy,
                 dynamicRange: selectedDynamicRange,
+                hdrFFmpegBinaryMode: selectedHDRBinaryMode,
                 audioLayout: selectedAudioLayout,
                 bitrateMode: selectedBitrateMode
             )
@@ -270,18 +276,23 @@ final class MainWindowViewModel: ObservableObject {
                 request: request,
                 preparation: preparation,
                 outputURL: outputURL,
-                diagnosticsLogURL: renderResult.diagnosticsLogURL
+                diagnosticsLogURL: renderResult.diagnosticsLogURL,
+                renderBackendSummary: renderResult.backendSummary
             )
             let reportURL = outputURL.deletingPathExtension().appendingPathExtension("json")
             try? runReportService.write(report, to: reportURL)
 
             lastOutputPath = outputURL.path
             lastDiagnosticsPath = renderResult.diagnosticsLogURL?.path ?? ""
+            lastBackendSummary = renderResult.backendSummary ?? ""
             progress = 1.0
             if lastDiagnosticsPath.isEmpty {
                 statusMessage = "Render complete"
             } else {
                 statusMessage = "Render complete\nDiagnostics: \(lastDiagnosticsPath)"
+            }
+            if !lastBackendSummary.isEmpty {
+                statusMessage += "\nBackend: \(lastBackendSummary)"
             }
             showRenderCompleteAlert = true
         } catch {
@@ -353,6 +364,7 @@ final class MainWindowViewModel: ObservableObject {
         selectedVideoCodec = settings.selectedVideoCodec
         selectedResolutionPolicy = settings.selectedResolutionPolicy
         selectedDynamicRange = settings.selectedDynamicRange
+        selectedHDRBinaryMode = settings.selectedHDRBinaryMode ?? .autoSystemThenBundled
         selectedAudioLayout = settings.selectedAudioLayout
         selectedBitrateMode = settings.selectedBitrateMode
         writeDiagnosticsLog = settings.writeDiagnosticsLog ?? true
@@ -375,6 +387,7 @@ final class MainWindowViewModel: ObservableObject {
             selectedVideoCodec: selectedVideoCodec,
             selectedResolutionPolicy: selectedResolutionPolicy,
             selectedDynamicRange: selectedDynamicRange,
+            selectedHDRBinaryMode: selectedHDRBinaryMode,
             selectedAudioLayout: selectedAudioLayout,
             selectedBitrateMode: selectedBitrateMode,
             writeDiagnosticsLog: writeDiagnosticsLog
@@ -395,6 +408,7 @@ final class MainWindowViewModel: ObservableObject {
         let selectedVideoCodec: VideoCodec
         let selectedResolutionPolicy: ResolutionPolicy
         let selectedDynamicRange: DynamicRange
+        let selectedHDRBinaryMode: HDRFFmpegBinaryMode?
         let selectedAudioLayout: AudioLayout
         let selectedBitrateMode: BitrateMode
         let writeDiagnosticsLog: Bool?

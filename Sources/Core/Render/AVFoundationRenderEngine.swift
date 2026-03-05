@@ -6,13 +6,16 @@ import VideoToolbox
 public final class AVFoundationRenderEngine {
     private var currentSession: AVAssetExportSession?
     private let stillImageClipFactory: StillImageClipFactory
+    private let ffmpegHDRRenderer: FFmpegHDRRenderer
 
     public init(stillImageClipFactory: StillImageClipFactory = StillImageClipFactory()) {
         self.stillImageClipFactory = stillImageClipFactory
+        self.ffmpegHDRRenderer = FFmpegHDRRenderer()
     }
 
     public func cancelCurrentRender() {
         currentSession?.cancelExport()
+        ffmpegHDRRenderer.cancelCurrentRender()
     }
 
     public func render(
@@ -32,7 +35,12 @@ public final class AVFoundationRenderEngine {
         diagnostics.add("Render started")
         diagnostics.add("Timeline segments: \(timeline.segments.count)")
         diagnostics.add("Style: title=\(style.openingTitle ?? "none"), titleDuration=\(style.titleDurationSeconds), crossfade=\(style.crossfadeDurationSeconds), stillDuration=\(style.stillImageDurationSeconds)")
-        diagnostics.add("Export profile: container=\(exportProfile.container.rawValue), codec=\(exportProfile.videoCodec.rawValue), resolution=\(exportProfile.resolution), dynamicRange=\(exportProfile.dynamicRange.rawValue), audioLayout=\(exportProfile.audioLayout.rawValue), bitrate=\(exportProfile.bitrateMode.rawValue)")
+        diagnostics.add(
+            "Export profile: container=\(exportProfile.container.rawValue), codec=\(exportProfile.videoCodec.rawValue), " +
+            "resolution=\(exportProfile.resolution), dynamicRange=\(exportProfile.dynamicRange.rawValue), " +
+            "hdrFFmpegBinaryMode=\(exportProfile.hdrFFmpegBinaryMode.rawValue), " +
+            "audioLayout=\(exportProfile.audioLayout.rawValue), bitrate=\(exportProfile.bitrateMode.rawValue)"
+        )
 
         let renderSize = resolveRenderSize(from: timeline, policy: exportProfile.resolution)
         diagnostics.add("Render size: \(Int(renderSize.width))x\(Int(renderSize.height))")
@@ -59,6 +67,61 @@ public final class AVFoundationRenderEngine {
                 throw RenderError.noRenderableMedia
             }
 
+            let transitionDuration = effectiveTransitionDuration(clips: clips, requestedSeconds: style.crossfadeDurationSeconds)
+            diagnostics.add("Transition duration resolved: \(format(transitionDuration))")
+            let outputURL = try OutputPathResolver.resolveUniqueURL(target: outputTarget, container: exportProfile.container)
+            diagnostics.add("Resolved output URL: \(outputURL.path)")
+            let requiresFFmpegHDR = shouldApplyHDRToneMapping(for: exportProfile)
+            if requiresFFmpegHDR {
+                diagnostics.add("HDR export selected; routing to FFmpeg backend (mode=\(exportProfile.hdrFFmpegBinaryMode.rawValue)).")
+                let ffmpegPlan = FFmpegHDRRenderPlan(
+                    clips: clips.map { clip in
+                        FFmpegHDRClip(
+                            url: clip.assetURL,
+                            durationSeconds: max(clip.duration.seconds, 0.01),
+                            includeAudio: clip.includeAudio,
+                            hasAudioTrack: clip.audioTrack != nil,
+                            colorInfo: clip.colorInfo,
+                            sourceDescription: clip.sourceDescription
+                        )
+                    },
+                    transitionDurationSeconds: max(transitionDuration.seconds, 0),
+                    outputURL: outputURL,
+                    renderSize: renderSize,
+                    frameRate: 30,
+                    bitrateMode: exportProfile.bitrateMode,
+                    container: exportProfile.container
+                )
+
+                let binaryResolution = try await ffmpegHDRRenderer.render(
+                    plan: ffmpegPlan,
+                    binaryMode: exportProfile.hdrFFmpegBinaryMode,
+                    diagnostics: { diagnostics.add($0) },
+                    progressHandler: { ffmpegProgress in
+                        let mapped = 0.30 + min(max(ffmpegProgress, 0), 1) * 0.68
+                        self.reportProgress(mapped, handler: progressHandler)
+                    }
+                )
+                reportProgress(1.0, handler: progressHandler)
+                currentSession = nil
+
+                diagnostics.add("Render completed successfully")
+                let diagnosticsLogURL: URL?
+                if writeDiagnosticsLog {
+                    diagnosticsLogURL = writeDiagnosticsFile(
+                        diagnostics.renderReport(outcome: "success", error: nil),
+                        outputTarget: outputTarget
+                    )
+                } else {
+                    diagnosticsLogURL = nil
+                }
+                return RenderResult(
+                    outputURL: outputURL,
+                    diagnosticsLogURL: diagnosticsLogURL,
+                    backendSummary: binaryResolution.backendSummary
+                )
+            }
+
             let composition = AVMutableComposition()
             guard
                 let firstVideoTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
@@ -72,8 +135,6 @@ public final class AVFoundationRenderEngine {
             let videoTracks = [firstVideoTrack, secondVideoTrack]
             let audioTracks = [firstAudioTrack, secondAudioTrack]
 
-            let transitionDuration = effectiveTransitionDuration(clips: clips, requestedSeconds: style.crossfadeDurationSeconds)
-            diagnostics.add("Transition duration resolved: \(format(transitionDuration))")
             var clipStartTimes: [CMTime] = []
             var cursor = CMTime.zero
 
@@ -134,11 +195,8 @@ public final class AVFoundationRenderEngine {
                 "transfer=\(colorConfiguration.colorTransferFunction), matrix=\(colorConfiguration.colorYCbCrMatrix)"
             )
 
-            let outputURL = try OutputPathResolver.resolveUniqueURL(target: outputTarget, container: exportProfile.container)
-            diagnostics.add("Resolved output URL: \(outputURL.path)")
-            let requiresHDRToneMapping = shouldApplyHDRToneMapping(for: exportProfile)
             let exportStartProgress = 0.35
-            let exportEndProgress = requiresHDRToneMapping ? 0.55 : 0.98
+            let exportEndProgress = 0.98
             let presetName = bestPreset(for: exportProfile, composition: composition)
             diagnostics.add("Selected export preset: \(presetName)")
             guard let session = AVAssetExportSession(asset: composition, presetName: presetName) else {
@@ -147,16 +205,7 @@ public final class AVFoundationRenderEngine {
 
             currentSession = session
             let sessionFileType = preferredFileType(container: exportProfile.container, session: session)
-            let sessionOutputURL: URL
-            if requiresHDRToneMapping {
-                sessionOutputURL = temporaryRenderURL(fileType: sessionFileType)
-                temporaryURLs.append(sessionOutputURL)
-                diagnostics.add("HDR tone-mapping enabled; using intermediate export \(sessionOutputURL.path)")
-            } else {
-                sessionOutputURL = outputURL
-            }
-
-            session.outputURL = sessionOutputURL
+            session.outputURL = outputURL
             session.outputFileType = sessionFileType
             diagnostics.add("Selected output file type: \(session.outputFileType?.rawValue ?? "nil")")
             session.shouldOptimizeForNetworkUse = false
@@ -168,16 +217,6 @@ public final class AVFoundationRenderEngine {
                 progressEnd: exportEndProgress,
                 progressHandler: progressHandler
             )
-            if requiresHDRToneMapping {
-                reportProgress(0.55, handler: progressHandler)
-                try await applyHDRToneMapping(
-                    from: sessionOutputURL,
-                    to: outputURL,
-                    container: exportProfile.container,
-                    diagnostics: diagnostics,
-                    progressHandler: progressHandler
-                )
-            }
             reportProgress(1.0, handler: progressHandler)
             currentSession = nil
 
@@ -191,7 +230,11 @@ public final class AVFoundationRenderEngine {
             } else {
                 diagnosticsLogURL = nil
             }
-            return RenderResult(outputURL: outputURL, diagnosticsLogURL: diagnosticsLogURL)
+            return RenderResult(
+                outputURL: outputURL,
+                diagnosticsLogURL: diagnosticsLogURL,
+                backendSummary: "AVFoundation SDR backend"
+            )
         } catch {
             currentSession = nil
             diagnostics.add("Render failed with error: \(describe(error))")
@@ -304,6 +347,7 @@ public final class AVFoundationRenderEngine {
                     fallbackDuration: segment.duration,
                     includeAudio: false,
                     sourceDescription: "title card '\(title)'",
+                    sourceColorInfo: .unknown,
                     diagnostics: diagnostics,
                     isTemporary: true
                 ) {
@@ -327,6 +371,7 @@ public final class AVFoundationRenderEngine {
                         fallbackDuration: segment.duration,
                         includeAudio: false,
                         sourceDescription: "image \(item.filename)",
+                        sourceColorInfo: item.colorInfo,
                         diagnostics: diagnostics,
                         isTemporary: true
                     ) {
@@ -341,6 +386,7 @@ public final class AVFoundationRenderEngine {
                         fallbackDuration: segment.duration,
                         includeAudio: true,
                         sourceDescription: "video \(item.filename)",
+                        sourceColorInfo: item.colorInfo,
                         diagnostics: diagnostics,
                         isTemporary: false
                     ) {
@@ -373,6 +419,7 @@ public final class AVFoundationRenderEngine {
         fallbackDuration: CMTime,
         includeAudio: Bool,
         sourceDescription: String,
+        sourceColorInfo: ColorInfo,
         diagnostics: RenderDiagnostics,
         isTemporary: Bool
     ) async throws -> InputClip? {
@@ -417,11 +464,14 @@ public final class AVFoundationRenderEngine {
         }
 
         let codecDescription = await videoCodecDescription(for: videoTrack)
+        let resolvedColorInfo = await resolvedColorInfo(for: videoTrack, fallback: sourceColorInfo)
 
         diagnostics.add(
             "Clip ready: source=\(sourceDescription), asset=\(assetURL.path), clipDuration=\(format(clipDuration)), " +
             "assetDuration=\(format(assetDuration)), videoTrackRange=\(format(videoTrackRange)), " +
-            "audioTrackRange=\(format(audioTrackTimeRange)), codec=\(codecDescription), temp=\(isTemporary)"
+            "audioTrackRange=\(format(audioTrackTimeRange)), codec=\(codecDescription), " +
+            "colorPrimaries=\(resolvedColorInfo.colorPrimaries ?? "nil"), transfer=\(resolvedColorInfo.transferFunction ?? "nil"), " +
+            "isHDR=\(resolvedColorInfo.isHDR), temp=\(isTemporary)"
         )
 
         return InputClip(
@@ -438,7 +488,8 @@ public final class AVFoundationRenderEngine {
             naturalSize: naturalSize,
             sourceDescription: sourceDescription,
             isTemporary: isTemporary,
-            includeAudio: includeAudio
+            includeAudio: includeAudio,
+            colorInfo: resolvedColorInfo
         )
     }
 
@@ -1095,6 +1146,7 @@ public final class AVFoundationRenderEngine {
         let sourceDescription: String
         let isTemporary: Bool
         let includeAudio: Bool
+        let colorInfo: ColorInfo
     }
 
     private func describe(_ error: Error) -> String {
@@ -1120,6 +1172,30 @@ public final class AVFoundationRenderEngine {
         let mediaSubType = CMFormatDescriptionGetMediaSubType(firstDescription)
         let fourcc = fourCCString(mediaSubType)
         return "\(fourcc) (\(mediaSubType))"
+    }
+
+    private func resolvedColorInfo(for track: AVAssetTrack, fallback: ColorInfo) async -> ColorInfo {
+        guard let formatDescriptions = try? await track.load(.formatDescriptions),
+              let firstDescription = formatDescriptions.first else {
+            return fallback
+        }
+
+        let cmFormatDescription = firstDescription as CMFormatDescription
+        let extensions = CMFormatDescriptionGetExtensions(cmFormatDescription) as NSDictionary?
+        let primaries = extensions?[kCMFormatDescriptionExtension_ColorPrimaries] as? String ?? fallback.colorPrimaries
+        let transfer = extensions?[kCMFormatDescriptionExtension_TransferFunction] as? String ?? fallback.transferFunction
+        let transferLowercased = transfer?.lowercased() ?? ""
+        let isHDR = transferLowercased.contains("2100_hlg") ||
+            transferLowercased.contains("hlg") ||
+            transferLowercased.contains("smpte_st_2084") ||
+            transferLowercased.contains("pq") ||
+            fallback.isHDR
+
+        return ColorInfo(
+            isHDR: isHDR,
+            colorPrimaries: primaries,
+            transferFunction: transfer
+        )
     }
 
     private func fourCCString(_ value: FourCharCode) -> String {

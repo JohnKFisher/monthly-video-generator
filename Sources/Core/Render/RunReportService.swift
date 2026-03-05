@@ -8,6 +8,7 @@ public struct RunReport: Equatable {
     public let warnings: [String]
     public let outputPath: String
     public let diagnosticsLogPath: String?
+    public let renderBackendSummary: String?
     public let exportProfile: ExportProfile
 
     public init(
@@ -18,6 +19,7 @@ public struct RunReport: Equatable {
         warnings: [String],
         outputPath: String,
         diagnosticsLogPath: String?,
+        renderBackendSummary: String?,
         exportProfile: ExportProfile
     ) {
         self.generatedAt = generatedAt
@@ -27,6 +29,7 @@ public struct RunReport: Equatable {
         self.warnings = warnings
         self.outputPath = outputPath
         self.diagnosticsLogPath = diagnosticsLogPath
+        self.renderBackendSummary = renderBackendSummary
         self.exportProfile = exportProfile
     }
 }
@@ -39,6 +42,7 @@ public final class RunReportService {
         preparation: RenderPreparation,
         outputURL: URL,
         diagnosticsLogURL: URL?,
+        renderBackendSummary: String?,
         generatedAt: Date = Date()
     ) -> RunReport {
         let sourceDescription: String
@@ -57,6 +61,7 @@ public final class RunReportService {
             warnings: preparation.warnings,
             outputPath: outputURL.path,
             diagnosticsLogPath: diagnosticsLogURL?.path,
+            renderBackendSummary: renderBackendSummary,
             exportProfile: request.export
         )
     }
@@ -77,6 +82,7 @@ public final class RunReportService {
         let warnings: [String]
         let outputPath: String
         let diagnosticsLogPath: String?
+        let renderBackendSummary: String?
         let exportProfile: ExportProfile
 
         init(report: RunReport) {
@@ -87,6 +93,7 @@ public final class RunReportService {
             warnings = report.warnings
             outputPath = report.outputPath
             diagnosticsLogPath = report.diagnosticsLogPath
+            renderBackendSummary = report.renderBackendSummary
             exportProfile = report.exportProfile
         }
     }

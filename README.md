@@ -33,6 +33,44 @@ Optional override:
 BUILD_NUMBER=42 ./scripts/build_app.sh
 ```
 
+## Optional: Bundle FFmpeg For HDR
+
+To install pinned FFmpeg/ffprobe binaries into `third_party/ffmpeg/bin`:
+
+```bash
+FFMPEG_BUNDLE_URL="https://example.com/ffmpeg-arm64-gpl.zip" \
+FFMPEG_BUNDLE_SHA256="<sha256>" \
+./scripts/fetch_ffmpeg_bundle.sh
+```
+
+Then run:
+
+```bash
+./scripts/build_app.sh
+```
+
+If binaries are present, they are copied into:
+
+- `dist/MonthlyVideoGenerator.app/Contents/Resources/FFmpeg/`
+
+See:
+
+- `docs/THIRD_PARTY.md`
+
+## Known-Good Rollback
+
+Known-good checkpoint tag before the FFmpeg HDR pivot:
+
+- `checkpoint/20260304-known-good-pre-ffmpeg-pivot`
+
+Rollback commands:
+
+```bash
+git fetch --tags
+git checkout checkpoint/20260304-known-good-pre-ffmpeg-pivot
+git checkout -b codex/recover-known-good
+```
+
 ## Test
 
 ```bash

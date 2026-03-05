@@ -29,6 +29,12 @@ public enum DynamicRange: String, CaseIterable, Codable, Sendable {
     case hdr
 }
 
+public enum HDRFFmpegBinaryMode: String, CaseIterable, Codable, Sendable {
+    case autoSystemThenBundled
+    case systemOnly
+    case bundledOnly
+}
+
 public enum AudioLayout: String, CaseIterable, Codable, Sendable {
     case stereo
     case surround51
@@ -46,6 +52,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
     public let audioCodec: AudioCodec
     public let resolution: ResolutionPolicy
     public let dynamicRange: DynamicRange
+    public let hdrFFmpegBinaryMode: HDRFFmpegBinaryMode
     public let audioLayout: AudioLayout
     public let bitrateMode: BitrateMode
 
@@ -55,6 +62,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         audioCodec: AudioCodec,
         resolution: ResolutionPolicy,
         dynamicRange: DynamicRange,
+        hdrFFmpegBinaryMode: HDRFFmpegBinaryMode = .autoSystemThenBundled,
         audioLayout: AudioLayout,
         bitrateMode: BitrateMode
     ) {
@@ -63,6 +71,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         self.audioCodec = audioCodec
         self.resolution = resolution
         self.dynamicRange = dynamicRange
+        self.hdrFFmpegBinaryMode = hdrFFmpegBinaryMode
         self.audioLayout = audioLayout
         self.bitrateMode = bitrateMode
     }
@@ -73,6 +82,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         audioCodec: .aac,
         resolution: .matchSourceMax,
         dynamicRange: .sdr,
+        hdrFFmpegBinaryMode: .autoSystemThenBundled,
         audioLayout: .stereo,
         bitrateMode: .balanced
     )
