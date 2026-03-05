@@ -141,6 +141,10 @@ final class FFmpegHDRRenderer {
         }
         callbacks.log("FFmpeg process terminated: \(terminationDescription(status: termination.status, reason: termination.reason))")
 
+        // Force-close pipes after termination so line readers cannot hang waiting for EOF.
+        stdoutPipe.fileHandleForReading.closeFile()
+        stderrPipe.fileHandleForReading.closeFile()
+
         let stderrTail = await stderrTask.value
         _ = await stdoutTask.value
 
