@@ -123,8 +123,8 @@ final class FFmpegHDRRenderer {
                     }
                     callbacks.log("FFmpeg stderr: \(trimmed)")
                     tail.append(trimmed)
-                    if tail.count > 120 {
-                        tail.removeFirst(tail.count - 120)
+                    if tail.count > 240 {
+                        tail.removeFirst(tail.count - 240)
                     }
                 }
             } catch {
@@ -133,7 +133,7 @@ final class FFmpegHDRRenderer {
             return tail
         }
 
-        let terminationStatus: Int32 = try await withTaskCancellationHandler {
+        let termination: (status: Int32, reason: Process.TerminationReason) = try await withTaskCancellationHandler {
             try Task.checkCancellation()
             return await waitForTermination(of: process)
         } onCancel: {
@@ -143,10 +143,12 @@ final class FFmpegHDRRenderer {
         let stderrTail = await stderrTask.value
         _ = await stdoutTask.value
 
-        guard terminationStatus == 0 else {
-            let details = stderrTail.suffix(8).joined(separator: " | ")
+        guard termination.status == 0 else {
+            let details = failureDetails(from: stderrTail)
+            let terminationSummary = terminationDescription(status: termination.status, reason: termination.reason)
+            let detailSuffix = details.isEmpty ? "No additional stderr details." : details
             throw RenderError.exportFailed(
-                "FFmpeg HDR render failed (exit \(terminationStatus)). \(details)"
+                "FFmpeg HDR render failed (\(terminationSummary)). \(detailSuffix)"
             )
         }
 
@@ -154,11 +156,107 @@ final class FFmpegHDRRenderer {
         return resolution
     }
 
-    private func waitForTermination(of process: Process) async -> Int32 {
-        await withCheckedContinuation { continuation in
+    private func waitForTermination(of process: Process) async -> (status: Int32, reason: Process.TerminationReason) {
+        if !process.isRunning {
+            return (process.terminationStatus, process.terminationReason)
+        }
+
+        return await withCheckedContinuation { continuation in
             process.terminationHandler = { completed in
-                continuation.resume(returning: completed.terminationStatus)
+                continuation.resume(returning: (completed.terminationStatus, completed.terminationReason))
             }
+        }
+    }
+
+    private func failureDetails(from stderrTail: [String]) -> String {
+        let highlighted = stderrTail.filter { Self.isNoteworthyStderrLine($0) }
+        if !highlighted.isEmpty {
+            return highlighted.suffix(8).joined(separator: " | ")
+        }
+
+        let filteredTail = stderrTail.filter { !Self.isRoutineStderrLine($0) }
+        if !filteredTail.isEmpty {
+            return filteredTail.suffix(8).joined(separator: " | ")
+        }
+
+        return stderrTail.suffix(8).joined(separator: " | ")
+    }
+
+    private static func isNoteworthyStderrLine(_ line: String) -> Bool {
+        if isRoutineStderrLine(line) {
+            return false
+        }
+
+        let lowered = line.lowercased()
+        let keywords = [
+            "error",
+            "failed",
+            "fatal",
+            "invalid",
+            "unable",
+            "unsupported",
+            "no such",
+            "cannot",
+            "could not",
+            "out of memory",
+            "not enough",
+            "mismatch",
+            "overflow",
+            "killed",
+            "aborted",
+            "terminated"
+        ]
+        return keywords.contains { lowered.contains($0) }
+    }
+
+    private static func isRoutineStderrLine(_ line: String) -> Bool {
+        let lowered = line.lowercased()
+        if lowered == "stream mapping:" || lowered.hasPrefix("stream mapping:") {
+            return true
+        }
+        if lowered.hasPrefix("press [q] to stop") {
+            return true
+        }
+        if lowered.hasPrefix("stream #"), line.contains("->") {
+            return true
+        }
+        if lowered.contains("the \"sample_fmts\" option is deprecated") {
+            return true
+        }
+        if lowered.contains("the \"all_channel_counts\" option is deprecated") {
+            return true
+        }
+        return false
+    }
+
+    private func terminationDescription(status: Int32, reason: Process.TerminationReason) -> String {
+        switch reason {
+        case .exit:
+            return "exit \(status)"
+        case .uncaughtSignal:
+            if let signalName = signalName(for: status) {
+                return "signal \(status) (\(signalName))"
+            }
+            return "signal \(status)"
+        @unknown default:
+            return "status \(status)"
+        }
+    }
+
+    private func signalName(for signal: Int32) -> String? {
+        switch signal {
+        case 2:
+            return "SIGINT"
+        case 6:
+            return "SIGABRT"
+        case 9:
+            return "SIGKILL"
+        case 11:
+            return "SIGSEGV"
+        case 15:
+            return "SIGTERM"
+        default:
+            return nil
         }
     }
 

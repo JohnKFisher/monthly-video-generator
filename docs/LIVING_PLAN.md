@@ -75,6 +75,7 @@ Operational updates after first packaged run:
 - Added HDR engine selection UI (`Auto/System/Bundled`) and persisted this preference with existing style/export settings.
 - Added FFmpeg binary acquisition + bundling workflow (`scripts/fetch_ffmpeg_bundle.sh`, `scripts/build_app.sh`) with checksum verification and provenance file.
 - Added a known-good pre-pivot checkpoint tag for deterministic rollback: `checkpoint/20260304-known-good-pre-ffmpeg-pivot`.
+- Hotfix: FFmpeg HDR filter graph now avoids float RGB (`gbrpf32le`) intermediates to reduce high-resolution memory pressure and signal-9 failure risk; FFmpeg termination diagnostics now report signal-vs-exit and prioritize actionable stderr lines.
 
 ## Decisions Log
 
@@ -149,6 +150,8 @@ Operational updates after first packaged run:
 - 2026-03-04: Added HDR backend summary propagation into UI status and run-report JSON.
 - 2026-03-04: Added FFmpeg acquisition/bundling scripts and third-party licensing/provenance documentation.
 - 2026-03-04: Added FFmpeg pipeline unit tests for capability parsing, resolver fallback, command generation, and profile codable persistence.
+- 2026-03-04: Removed float RGB intermediate conversion (`gbrpf32le`) from FFmpeg HDR clip normalization path to reduce memory pressure on large `matchSourceMax` exports.
+- 2026-03-04: Improved FFmpeg HDR failure surfacing to include termination reason (`exit` vs `signal`) and stronger stderr detail selection.
 
 ## Risks/Blockers
 
@@ -174,4 +177,4 @@ To return to the known-good baseline captured before the FFmpeg HDR pivot:
 
 ## Last Updated
 
-2026-03-04 20:20 America/New_York by Codex
+2026-03-04 22:52 America/New_York by Codex

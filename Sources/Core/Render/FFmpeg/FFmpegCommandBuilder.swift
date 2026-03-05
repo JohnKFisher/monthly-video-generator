@@ -61,11 +61,12 @@ struct FFmpegCommandBuilder {
             guard let videoInputIndex = videoInputIndexForClip[index] else {
                 throw RenderError.exportFailed("FFmpeg command build failed: missing video input index for clip index \(index).")
             }
+            // Keep conversion in a 10-bit path to avoid large float RGB intermediates at high resolutions.
             filterParts.append(
                 "[\(videoInputIndex):v]trim=duration=\(formatSeconds(clipDuration)),setpts=PTS-STARTPTS,fps=\(plan.frameRate)," +
                 "scale=w=\(Int(plan.renderSize.width)):h=\(Int(plan.renderSize.height)):force_original_aspect_ratio=decrease:flags=lanczos," +
                 "pad=\(Int(plan.renderSize.width)):\(Int(plan.renderSize.height)):(ow-iw)/2:(oh-ih)/2:color=black," +
-                "format=gbrpf32le,\(normalizeFilter),format=yuv420p10le[v\(index)]"
+                "\(normalizeFilter),format=yuv420p10le[v\(index)]"
             )
 
             guard let audioInputIndex = audioInputIndexForClip[index] else {
