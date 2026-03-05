@@ -26,9 +26,12 @@ struct FFmpegCommandBuilder {
         var arguments: [String] = [
             "-hide_banner",
             "-y",
-            "-progress", "pipe:1",
+            // Route progress to stderr so it travels over the same stream we
+            // already drain for ffmpeg logs in GUI app runs.
+            "-progress", "pipe:2",
             "-stats_period", "0.5",
-            "-nostats"
+            "-nostats",
+            "-nostdin"
         ]
 
         var videoInputIndexForClip: [Int: Int] = [:]
@@ -129,7 +132,7 @@ struct FFmpegCommandBuilder {
                 "-crf", x265CRF(for: plan.bitrateMode),
                 "-pix_fmt", "yuv420p10le",
                 "-tag:v", "hvc1",
-                "-x265-params", "hdr-opt=1:colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc:repeat-headers=1"
+                "-x265-params", "colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc:repeat-headers=1"
             ])
 
         case .hevcVideoToolbox:

@@ -92,6 +92,7 @@ final class FFmpegHDRRenderer {
             }
             lock.lock()
             latestSpeed = speed
+            lastActivityAt = Date()
             lock.unlock()
         }
 
@@ -208,13 +209,16 @@ final class FFmpegHDRRenderer {
 
         async let stdoutTask: Void = Self.consumeStdout(
             handle: stdoutHandle,
+            callbacks: callbacks
+        )
+        async let stderrTask: [String] = Self.consumeStderr(
+            handle: stderrHandle,
             callbacks: callbacks,
             activityTracker: activityTracker,
             totalDurationMicroseconds: totalDurationMicroseconds,
             estimatedOutputBytes: estimatedOutputBytes,
             renderStartedAt: renderStartedAt
         )
-        async let stderrTask: [String] = Self.consumeStderr(handle: stderrHandle, callbacks: callbacks)
 
         let termination: ProcessTermination = try await withTaskCancellationHandler {
             try Task.checkCancellation()
@@ -270,48 +274,13 @@ final class FFmpegHDRRenderer {
 
     private static func consumeStdout(
         handle: FileHandle,
-        callbacks: CallbackRelay,
-        activityTracker: ActivityTracker,
-        totalDurationMicroseconds: Int64,
-        estimatedOutputBytes: UInt64,
-        renderStartedAt: Date
+        callbacks: CallbackRelay
     ) async {
-        var parser = FFmpegProgressParser()
         do {
             for try await line in handle.bytes.lines {
-                let previousOutTime = parser.latestOutTimeMS
-                let previousTotalSizeBytes = parser.latestTotalSizeBytes
-                let progressUpdate = parser.ingest(line: line)
-                if parser.latestOutTimeMS > previousOutTime {
-                    activityTracker.recordOutTime(parser.latestOutTimeMS)
-                }
-                if let totalSizeBytes = parser.latestTotalSizeBytes,
-                   totalSizeBytes > (previousTotalSizeBytes ?? 0) {
-                    activityTracker.recordOutputSize(UInt64(totalSizeBytes))
-                }
-                activityTracker.recordSpeed(parser.latestSpeed)
-                let trackedOutputSize = activityTracker.snapshot().latestOutputSizeBytes
-                let timelineProgress = parser.progress(totalDurationMicroseconds: totalDurationMicroseconds)
-                let sizeProgress = sizeProgress(
-                    outputSizeBytes: trackedOutputSize,
-                    estimatedOutputBytes: estimatedOutputBytes
-                )
-                let combinedProgress = max(
-                    timelineProgress,
-                    sizeProgress,
-                    warmupProgress(elapsed: Date().timeIntervalSince(renderStartedAt))
-                )
-                callbacks.report(combinedProgress)
-                if let progressUpdate {
-                    let outputSizeBytes = UInt64(progressUpdate.totalSizeBytes ?? 0)
-                    let preferredOutputSize = max(outputSizeBytes, trackedOutputSize)
-                    let statusMessage = statusLine(
-                        progress: combinedProgress,
-                        elapsed: Date().timeIntervalSince(renderStartedAt),
-                        outputSizeBytes: preferredOutputSize,
-                        speed: progressUpdate.speed
-                    )
-                    callbacks.updateStatus(statusMessage)
+                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    callbacks.log("FFmpeg stdout: \(trimmed)")
                 }
             }
         } catch {
@@ -319,12 +288,31 @@ final class FFmpegHDRRenderer {
         }
     }
 
-    private static func consumeStderr(handle: FileHandle, callbacks: CallbackRelay) async -> [String] {
+    private static func consumeStderr(
+        handle: FileHandle,
+        callbacks: CallbackRelay,
+        activityTracker: ActivityTracker,
+        totalDurationMicroseconds: Int64,
+        estimatedOutputBytes: UInt64,
+        renderStartedAt: Date
+    ) async -> [String] {
         var tail: [String] = []
+        var progressParser = FFmpegProgressParser()
         do {
             for try await line in handle.bytes.lines {
                 let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
                 if trimmed.isEmpty {
+                    continue
+                }
+                if consumeProgressLine(
+                    trimmed,
+                    parser: &progressParser,
+                    callbacks: callbacks,
+                    activityTracker: activityTracker,
+                    totalDurationMicroseconds: totalDurationMicroseconds,
+                    estimatedOutputBytes: estimatedOutputBytes,
+                    renderStartedAt: renderStartedAt
+                ) {
                     continue
                 }
                 callbacks.log("FFmpeg stderr: \(trimmed)")
@@ -337,6 +325,81 @@ final class FFmpegHDRRenderer {
             callbacks.log("FFmpeg stderr stream ended with error: \(error.localizedDescription)")
         }
         return tail
+    }
+
+    private static let ffmpegProgressKeys: Set<String> = [
+        "frame",
+        "fps",
+        "stream_0_0_q",
+        "bitrate",
+        "total_size",
+        "out_time_us",
+        "out_time_ms",
+        "out_time",
+        "dup_frames",
+        "drop_frames",
+        "speed",
+        "progress"
+    ]
+
+    @discardableResult
+    private static func consumeProgressLine(
+        _ line: String,
+        parser: inout FFmpegProgressParser,
+        callbacks: CallbackRelay,
+        activityTracker: ActivityTracker,
+        totalDurationMicroseconds: Int64,
+        estimatedOutputBytes: UInt64,
+        renderStartedAt: Date
+    ) -> Bool {
+        guard let equalsIndex = line.firstIndex(of: "=") else {
+            return false
+        }
+
+        let key = line[..<equalsIndex].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard ffmpegProgressKeys.contains(key) else {
+            return false
+        }
+
+        let previousOutTime = parser.latestOutTimeMS
+        let previousTotalSizeBytes = parser.latestTotalSizeBytes
+        let update = parser.ingest(line: line)
+
+        if parser.latestOutTimeMS > previousOutTime {
+            activityTracker.recordOutTime(parser.latestOutTimeMS)
+        }
+        if let totalSizeBytes = parser.latestTotalSizeBytes,
+           totalSizeBytes > (previousTotalSizeBytes ?? 0) {
+            activityTracker.recordOutputSize(UInt64(totalSizeBytes))
+        }
+        activityTracker.recordSpeed(parser.latestSpeed)
+
+        let snapshot = activityTracker.snapshot()
+        let timelineProgress = parser.progress(totalDurationMicroseconds: totalDurationMicroseconds)
+        let sizeProgress = sizeProgress(
+            outputSizeBytes: snapshot.latestOutputSizeBytes,
+            estimatedOutputBytes: estimatedOutputBytes
+        )
+        let combinedProgress = max(
+            timelineProgress,
+            sizeProgress,
+            warmupProgress(elapsed: Date().timeIntervalSince(renderStartedAt))
+        )
+        callbacks.report(combinedProgress)
+
+        if let update {
+            let outputSizeBytes = UInt64(update.totalSizeBytes ?? 0)
+            let preferredOutputSize = max(outputSizeBytes, snapshot.latestOutputSizeBytes)
+            callbacks.updateStatus(
+                statusLine(
+                    progress: combinedProgress,
+                    elapsed: Date().timeIntervalSince(renderStartedAt),
+                    outputSizeBytes: preferredOutputSize,
+                    speed: update.speed
+                )
+            )
+        }
+        return true
     }
 
     private func waitForTermination(

@@ -158,11 +158,14 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains(":a:0]atrim"))
         XCTAssertTrue(joined.contains("zscale="))
         XCTAssertFalse(joined.contains("gbrpf32le"))
+        XCTAssertTrue(joined.contains("-progress pipe:2"))
         XCTAssertTrue(joined.contains("-stats_period 0.5"))
+        XCTAssertTrue(joined.contains("-nostdin"))
         XCTAssertTrue(joined.contains("-color_trc arib-std-b67"))
         XCTAssertTrue(joined.contains("-color_primaries bt2020"))
         XCTAssertTrue(joined.contains("-colorspace bt2020nc"))
         XCTAssertTrue(joined.contains("libx265"))
+        XCTAssertFalse(joined.contains("hdr-opt=1"))
     }
 
     func testProgressParserReadsOutTimeUS() {

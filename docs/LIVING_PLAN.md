@@ -78,7 +78,7 @@ Operational updates after first packaged run:
 - Hotfix: FFmpeg HDR filter graph now avoids float RGB (`gbrpf32le`) intermediates to reduce high-resolution memory pressure and signal-9 failure risk; FFmpeg termination diagnostics now report signal-vs-exit and prioritize actionable stderr lines.
 - Hotfix: HDR exports using `Match Source Max` now cap FFmpeg render size to 4K-equivalent bounds (landscape max `3840x2160`, portrait max `2160x3840`) to reduce SIGKILL failures on very large source dimensions.
 - Hotfix: FFmpeg render completion wait now uses a race-free termination poll path so fast process exits cannot deadlock the export task at partial progress (for example, frozen around 31%).
-- Hotfix: FFmpeg command now sets `-stats_period 0.5` with `-progress pipe:1` so HDR progress updates continue during long encodes instead of appearing stuck at early percentages.
+- Hotfix: FFmpeg command now sets `-stats_period 0.5` with `-progress pipe:2` so HDR progress updates continue during long encodes instead of appearing stuck at early percentages.
 - Hotfix: diagnostics log files are now preallocated at render start (when enabled) and finalized to the same path on success/failure so a log file is visible during long renders.
 - Hotfix: FFmpeg progress callbacks are now decoupled from diagnostics lock contention so verbose stderr logging cannot starve UI progress updates.
 - Hotfix: FFmpeg stdout/stderr pipes are explicitly closed after process termination so async line readers cannot block render completion after a successful encode.
@@ -87,6 +87,8 @@ Operational updates after first packaged run:
 - Hotfix: FFmpeg HDR progress now includes fallback advancement from output-file growth and periodic heartbeat status updates so long encodes no longer appear frozen when `out_time` lags.
 - Hotfix: FFmpeg HDR stall detection now treats rising child-process CPU time as activity, avoiding false kills when encoders are still busy but not emitting `out_time` updates.
 - Hotfix: FFmpeg HDR watchdog escalation now attempts graceful shutdown first (`SIGINT`, then `SIGTERM`) before using `SIGKILL` as a last resort.
+- Hotfix: FFmpeg HDR progress now routes through stderr (`-progress pipe:2`) with explicit progress-line parsing, preventing stdout progress pipe backpressure from stalling long encodes.
+- Hotfix: FFmpeg HDR command now includes `-nostdin` and removes x265 `hdr-opt=1` for HLG output to avoid non-actionable HDR10-opt warnings during failure triage.
 
 ## Decisions Log
 
@@ -173,6 +175,8 @@ Operational updates after first packaged run:
 - 2026-03-05: Added FFmpeg HDR progress fallback based on estimated output-size growth plus periodic status heartbeats to keep UI progress moving during long startup/encode phases.
 - 2026-03-05: Updated FFmpeg stall detection to include child-process CPU-time activity and changed watchdog shutdown to graceful interrupt/terminate before hard kill.
 - 2026-03-05: Updated FFmpeg filtergraph audio selectors to explicit first-stream syntax (`a:0`) for better compatibility with multi-audio iPhone source files.
+- 2026-03-05: Moved FFmpeg progress stream to stderr (`pipe:2`) and parse/suppress progress key lines in stderr consumption to keep progress live without pipe-fill stalls.
+- 2026-03-05: Added `-nostdin` to FFmpeg HDR commands and removed x265 `hdr-opt=1` from HLG path to reduce misleading HDR10-opt warnings.
 
 ## Risks/Blockers
 
@@ -198,4 +202,4 @@ To return to the known-good baseline captured before the FFmpeg HDR pivot:
 
 ## Last Updated
 
-2026-03-05 11:14 America/New_York by Codex
+2026-03-05 11:35 America/New_York by Codex
