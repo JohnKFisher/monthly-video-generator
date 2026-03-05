@@ -7,6 +7,7 @@ public struct RunReport: Equatable {
     public let estimatedDurationSeconds: Double
     public let warnings: [String]
     public let outputPath: String
+    public let diagnosticsLogPath: String?
     public let exportProfile: ExportProfile
 
     public init(
@@ -16,6 +17,7 @@ public struct RunReport: Equatable {
         estimatedDurationSeconds: Double,
         warnings: [String],
         outputPath: String,
+        diagnosticsLogPath: String?,
         exportProfile: ExportProfile
     ) {
         self.generatedAt = generatedAt
@@ -24,6 +26,7 @@ public struct RunReport: Equatable {
         self.estimatedDurationSeconds = estimatedDurationSeconds
         self.warnings = warnings
         self.outputPath = outputPath
+        self.diagnosticsLogPath = diagnosticsLogPath
         self.exportProfile = exportProfile
     }
 }
@@ -35,6 +38,7 @@ public final class RunReportService {
         request: RenderRequest,
         preparation: RenderPreparation,
         outputURL: URL,
+        diagnosticsLogURL: URL?,
         generatedAt: Date = Date()
     ) -> RunReport {
         let sourceDescription: String
@@ -52,6 +56,7 @@ public final class RunReportService {
             estimatedDurationSeconds: preparation.timeline.estimatedDuration.seconds,
             warnings: preparation.warnings,
             outputPath: outputURL.path,
+            diagnosticsLogPath: diagnosticsLogURL?.path,
             exportProfile: request.export
         )
     }
@@ -71,6 +76,7 @@ public final class RunReportService {
         let estimatedDurationSeconds: Double
         let warnings: [String]
         let outputPath: String
+        let diagnosticsLogPath: String?
         let exportProfile: ExportProfile
 
         init(report: RunReport) {
@@ -80,6 +86,7 @@ public final class RunReportService {
             estimatedDurationSeconds = report.estimatedDurationSeconds
             warnings = report.warnings
             outputPath = report.outputPath
+            diagnosticsLogPath = report.diagnosticsLogPath
             exportProfile = report.exportProfile
         }
     }

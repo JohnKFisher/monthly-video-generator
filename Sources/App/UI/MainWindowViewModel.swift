@@ -75,12 +75,16 @@ final class MainWindowViewModel: ObservableObject {
     @Published var selectedBitrateMode: BitrateMode = .balanced {
         didSet { persistRenderSettings() }
     }
+    @Published var writeDiagnosticsLog: Bool = true {
+        didSet { persistRenderSettings() }
+    }
 
     @Published var isRendering: Bool = false
     @Published var progress: Double = 0
     @Published var statusMessage: String = "Idle"
     @Published var warnings: [String] = []
     @Published var lastOutputPath: String = ""
+    @Published var lastDiagnosticsPath: String = ""
     @Published var showRenderCompleteAlert: Bool = false
 
     let appVersionBuildLabel: String
@@ -183,6 +187,7 @@ final class MainWindowViewModel: ObservableObject {
             warnings = []
             statusMessage = "Preparing media..."
             lastOutputPath = ""
+            lastDiagnosticsPath = ""
             showRenderCompleteAlert = false
 
             let monthYear = MonthYear(month: selectedMonth, year: selectedYear)
@@ -250,22 +255,34 @@ final class MainWindowViewModel: ObservableObject {
             progress = max(progress, 0.08)
 
             statusMessage = "Rendering... 8%"
-            let outputURL = try await coordinator.render(
+            let renderResult = try await coordinator.render(
                 preparation: preparation,
                 request: request,
                 photoMaterializer: sourceMode == .photos ? photoMaterializer : nil,
+                writeDiagnosticsLog: writeDiagnosticsLog,
                 progressHandler: { [weak self] reportedProgress in
                     self?.applyReportedRenderProgress(reportedProgress)
                 }
             )
+            let outputURL = renderResult.outputURL
 
-            let report = runReportService.makeReport(request: request, preparation: preparation, outputURL: outputURL)
+            let report = runReportService.makeReport(
+                request: request,
+                preparation: preparation,
+                outputURL: outputURL,
+                diagnosticsLogURL: renderResult.diagnosticsLogURL
+            )
             let reportURL = outputURL.deletingPathExtension().appendingPathExtension("json")
             try? runReportService.write(report, to: reportURL)
 
             lastOutputPath = outputURL.path
+            lastDiagnosticsPath = renderResult.diagnosticsLogURL?.path ?? ""
             progress = 1.0
-            statusMessage = "Render complete"
+            if lastDiagnosticsPath.isEmpty {
+                statusMessage = "Render complete"
+            } else {
+                statusMessage = "Render complete\nDiagnostics: \(lastDiagnosticsPath)"
+            }
             showRenderCompleteAlert = true
         } catch {
             progress = 0
@@ -338,6 +355,7 @@ final class MainWindowViewModel: ObservableObject {
         selectedDynamicRange = settings.selectedDynamicRange
         selectedAudioLayout = settings.selectedAudioLayout
         selectedBitrateMode = settings.selectedBitrateMode
+        writeDiagnosticsLog = settings.writeDiagnosticsLog ?? true
     }
 
     private func loadPersistedRenderSettings() -> PersistedRenderSettings? {
@@ -358,7 +376,8 @@ final class MainWindowViewModel: ObservableObject {
             selectedResolutionPolicy: selectedResolutionPolicy,
             selectedDynamicRange: selectedDynamicRange,
             selectedAudioLayout: selectedAudioLayout,
-            selectedBitrateMode: selectedBitrateMode
+            selectedBitrateMode: selectedBitrateMode,
+            writeDiagnosticsLog: writeDiagnosticsLog
         )
 
         guard let data = try? JSONEncoder().encode(settings) else {
@@ -378,5 +397,6 @@ final class MainWindowViewModel: ObservableObject {
         let selectedDynamicRange: DynamicRange
         let selectedAudioLayout: AudioLayout
         let selectedBitrateMode: BitrateMode
+        let writeDiagnosticsLog: Bool?
     }
 }

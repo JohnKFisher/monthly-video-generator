@@ -21,8 +21,9 @@ public final class AVFoundationRenderEngine {
         exportProfile: ExportProfile,
         outputTarget: OutputTarget,
         photoMaterializer: PhotoAssetMaterializing?,
+        writeDiagnosticsLog: Bool,
         progressHandler: (@MainActor @Sendable (Double) -> Void)? = nil
-    ) async throws -> URL {
+    ) async throws -> RenderResult {
         guard !timeline.segments.isEmpty else {
             throw RenderError.noRenderableMedia
         }
@@ -47,6 +48,7 @@ public final class AVFoundationRenderEngine {
             let clips = try await materializeInputClips(
                 segments: timeline.segments,
                 renderSize: renderSize,
+                exportDynamicRange: exportProfile.dynamicRange,
                 photoMaterializer: photoMaterializer,
                 temporaryURLs: &temporaryURLs,
                 diagnostics: diagnostics,
@@ -180,14 +182,28 @@ public final class AVFoundationRenderEngine {
             currentSession = nil
 
             diagnostics.add("Render completed successfully")
-            return outputURL
+            let diagnosticsLogURL: URL?
+            if writeDiagnosticsLog {
+                diagnosticsLogURL = writeDiagnosticsFile(
+                    diagnostics.renderReport(outcome: "success", error: nil),
+                    outputTarget: outputTarget
+                )
+            } else {
+                diagnosticsLogURL = nil
+            }
+            return RenderResult(outputURL: outputURL, diagnosticsLogURL: diagnosticsLogURL)
         } catch {
             currentSession = nil
             diagnostics.add("Render failed with error: \(describe(error))")
-            let diagnosticURL = writeDiagnosticsFile(
-                diagnostics.renderReport(for: error),
-                outputTarget: outputTarget
-            )
+            let diagnosticURL: URL?
+            if writeDiagnosticsLog {
+                diagnosticURL = writeDiagnosticsFile(
+                    diagnostics.renderReport(outcome: "failure", error: error),
+                    outputTarget: outputTarget
+                )
+            } else {
+                diagnosticURL = nil
+            }
             let baseMessage = userFacingMessage(from: error)
             if let diagnosticURL {
                 throw RenderError.exportFailed("\(baseMessage)\nDiagnostics file: \(diagnosticURL.path)")
@@ -266,6 +282,7 @@ public final class AVFoundationRenderEngine {
     private func materializeInputClips(
         segments: [TimelineSegment],
         renderSize: CGSize,
+        exportDynamicRange: DynamicRange,
         photoMaterializer: PhotoAssetMaterializing?,
         temporaryURLs: inout [URL],
         diagnostics: RenderDiagnostics,
@@ -297,7 +314,12 @@ public final class AVFoundationRenderEngine {
                 switch item.type {
                 case .image:
                     let sourceURL = try await resolveURL(for: item, photoMaterializer: photoMaterializer)
-                    let imageClipURL = try await stillImageClipFactory.makeVideoClip(fromImageURL: sourceURL, duration: segment.duration, renderSize: renderSize)
+                    let imageClipURL = try await stillImageClipFactory.makeVideoClip(
+                        fromImageURL: sourceURL,
+                        duration: segment.duration,
+                        renderSize: renderSize,
+                        dynamicRange: exportDynamicRange
+                    )
                     temporaryURLs.append(imageClipURL)
                     diagnostics.add("Materialized still image clip for \(item.filename) at \(imageClipURL.path)")
                     if let clip = try await makeClip(
@@ -673,6 +695,8 @@ public final class AVFoundationRenderEngine {
                 throw RenderError.exportFailed("Unable to initialize HDR color space for tone-map pass.")
             }
             var frameCount = 0
+            var sourceColorSpaceCache: [String: CGColorSpace] = [:]
+            var loggedSourceColorSpace = false
 
             while let sampleBuffer = videoOutput.copyNextSampleBuffer() {
                 try Task.checkCancellation()
@@ -698,11 +722,25 @@ public final class AVFoundationRenderEngine {
 
                 let sourceImage = CIImage(
                     cvImageBuffer: imageBuffer,
-                    options: [.colorSpace: hdrColorSpace]
+                    options: [.colorSpace: toneMapSourceColorSpace(for: imageBuffer, cache: &sourceColorSpaceCache)]
                 )
                 let mappedImage = toneMappedHDRImage(sourceImage)
                 let renderBounds = CGRect(origin: .zero, size: outputSize)
                 ciContext.render(mappedImage, to: destinationBuffer, bounds: renderBounds, colorSpace: hdrColorSpace)
+
+                if !loggedSourceColorSpace {
+                    let colorPrimaries = cvAttachmentString(for: imageBuffer, key: kCVImageBufferColorPrimariesKey) ?? "nil"
+                    let transfer = cvAttachmentString(for: imageBuffer, key: kCVImageBufferTransferFunctionKey) ?? "nil"
+                    let matrix = cvAttachmentString(for: imageBuffer, key: kCVImageBufferYCbCrMatrixKey) ?? "nil"
+                    let sourceName = toneMapSourceColorSpaceName(
+                        colorPrimaries: cvAttachmentString(for: imageBuffer, key: kCVImageBufferColorPrimariesKey),
+                        transferFunction: cvAttachmentString(for: imageBuffer, key: kCVImageBufferTransferFunctionKey)
+                    ) as String
+                    diagnostics.add(
+                        "HDR tone-map source frame color tags: primaries=\(colorPrimaries), transfer=\(transfer), matrix=\(matrix), resolvedSourceSpace=\(sourceName)"
+                    )
+                    loggedSourceColorSpace = true
+                }
 
                 let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
                 guard adaptor.append(destinationBuffer, withPresentationTime: presentationTime) else {
@@ -811,6 +849,56 @@ public final class AVFoundationRenderEngine {
     private func toneMappedHDRImage(_ sourceImage: CIImage) -> CIImage {
         // Keep HDR pass visually identity-based; writer metadata policy handles HDR signaling.
         sourceImage
+    }
+
+    func toneMapSourceColorSpaceName(colorPrimaries: String?, transferFunction: String?) -> CFString {
+        if transferFunction == AVVideoTransferFunction_ITU_R_2100_HLG ||
+            transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG as String {
+            return CGColorSpace.itur_2100_HLG
+        }
+
+        if transferFunction == AVVideoTransferFunction_SMPTE_ST_2084_PQ ||
+            transferFunction == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ as String {
+            return CGColorSpace.itur_2100_PQ
+        }
+
+        if colorPrimaries == AVVideoColorPrimaries_P3_D65 ||
+            colorPrimaries == kCVImageBufferColorPrimaries_P3_D65 as String ||
+            colorPrimaries == kCVImageBufferColorPrimaries_DCI_P3 as String {
+            return CGColorSpace.displayP3
+        }
+
+        if colorPrimaries == AVVideoColorPrimaries_ITU_R_2020 ||
+            colorPrimaries == kCVImageBufferColorPrimaries_ITU_R_2020 as String {
+            // BT.2020 content without explicit HDR transfer can safely map as HDR HLG working space.
+            return CGColorSpace.itur_2100_HLG
+        }
+
+        return CGColorSpace.itur_709
+    }
+
+    private func toneMapSourceColorSpace(
+        for imageBuffer: CVImageBuffer,
+        cache: inout [String: CGColorSpace]
+    ) -> CGColorSpace {
+        let colorPrimaries = cvAttachmentString(for: imageBuffer, key: kCVImageBufferColorPrimariesKey)
+        let transfer = cvAttachmentString(for: imageBuffer, key: kCVImageBufferTransferFunctionKey)
+        let resolvedName = toneMapSourceColorSpaceName(colorPrimaries: colorPrimaries, transferFunction: transfer) as String
+
+        if let cached = cache[resolvedName] {
+            return cached
+        }
+
+        let resolved = CGColorSpace(name: resolvedName as CFString) ?? CGColorSpace(name: CGColorSpace.itur_709) ?? CGColorSpaceCreateDeviceRGB()
+        cache[resolvedName] = resolved
+        return resolved
+    }
+
+    private func cvAttachmentString(for imageBuffer: CVImageBuffer, key: CFString) -> String? {
+        guard let value = CVBufferCopyAttachment(imageBuffer, key, nil) else {
+            return nil
+        }
+        return value as? String
     }
 
     private func hdrToneMapPixelFormat() -> OSType {
@@ -1128,13 +1216,18 @@ public final class AVFoundationRenderEngine {
             lines.append("[\(timestamp())] \(line)")
         }
 
-        func renderReport(for error: Error) -> String {
+        func renderReport(outcome: String, error: Error?) -> String {
             var reportLines: [String] = []
             reportLines.append("MonthlyVideoGenerator export diagnostics")
             reportLines.append("run_id=\(runID)")
             reportLines.append("started_at=\(startedAt.ISO8601Format())")
             reportLines.append("ended_at=\(Date().ISO8601Format())")
-            reportLines.append("error=\(error)")
+            reportLines.append("outcome=\(outcome)")
+            if let error {
+                reportLines.append("error=\(error)")
+            } else {
+                reportLines.append("error=none")
+            }
             reportLines.append("")
             reportLines.append(contentsOf: lines)
             reportLines.append("")

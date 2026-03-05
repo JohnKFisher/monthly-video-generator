@@ -13,6 +13,16 @@ public struct RenderPreparation: @unchecked Sendable {
     }
 }
 
+public struct RenderResult: Sendable {
+    public let outputURL: URL
+    public let diagnosticsLogURL: URL?
+
+    public init(outputURL: URL, diagnosticsLogURL: URL?) {
+        self.outputURL = outputURL
+        self.diagnosticsLogURL = diagnosticsLogURL
+    }
+}
+
 public final class RenderCoordinator: @unchecked Sendable {
     private let folderDiscoveryService: FolderMediaDiscoveryService
     private let timelineBuilder: TimelineBuilder
@@ -53,14 +63,16 @@ public final class RenderCoordinator: @unchecked Sendable {
         preparation: RenderPreparation,
         request: RenderRequest,
         photoMaterializer: PhotoAssetMaterializing?,
+        writeDiagnosticsLog: Bool,
         progressHandler: (@MainActor @Sendable (Double) -> Void)?
-    ) async throws -> URL {
+    ) async throws -> RenderResult {
         try await renderEngine.render(
             timeline: preparation.timeline,
             style: request.style,
             exportProfile: request.export,
             outputTarget: request.output,
             photoMaterializer: photoMaterializer,
+            writeDiagnosticsLog: writeDiagnosticsLog,
             progressHandler: progressHandler
         )
     }

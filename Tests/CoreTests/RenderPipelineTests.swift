@@ -1,5 +1,6 @@
 import AVFoundation
 @testable import Core
+import CoreGraphics
 import Foundation
 import VideoToolbox
 import XCTest
@@ -123,6 +124,39 @@ final class RenderPipelineTests: XCTestCase {
             kVTHDRMetadataInsertionMode_None as String
         )
         XCTAssertEqual(compression[kVTCompressionPropertyKey_PreserveDynamicHDRMetadata as String] as? Bool, false)
+    }
+
+    func testToneMapSourceColorSpaceNameUsesHLGForHLGTransfer() {
+        let engine = AVFoundationRenderEngine()
+
+        let name = engine.toneMapSourceColorSpaceName(
+            colorPrimaries: AVVideoColorPrimaries_ITU_R_2020,
+            transferFunction: AVVideoTransferFunction_ITU_R_2100_HLG
+        )
+
+        XCTAssertEqual(name as String, CGColorSpace.itur_2100_HLG as String)
+    }
+
+    func testToneMapSourceColorSpaceNameDefaultsTo709ForUnknownTags() {
+        let engine = AVFoundationRenderEngine()
+
+        let name = engine.toneMapSourceColorSpaceName(
+            colorPrimaries: nil,
+            transferFunction: nil
+        )
+
+        XCTAssertEqual(name as String, CGColorSpace.itur_709 as String)
+    }
+
+    func testToneMapSourceColorSpaceNameUsesDisplayP3ForP3Primaries() {
+        let engine = AVFoundationRenderEngine()
+
+        let name = engine.toneMapSourceColorSpaceName(
+            colorPrimaries: AVVideoColorPrimaries_P3_D65,
+            transferFunction: AVVideoTransferFunction_ITU_R_709_2
+        )
+
+        XCTAssertEqual(name as String, CGColorSpace.displayP3 as String)
     }
 
     private func tryUnwrapCompressionSettings(_ settings: [String: Any]) -> [String: Any] {

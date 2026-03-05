@@ -68,6 +68,9 @@ Operational updates after first packaged run:
 - Hotfix: HDR tone-map pass now uses a standards-based identity 10-bit pipeline (HLG/BT.2020) with explicit HDR metadata insertion policy instead of a creative filter stack that caused severe clipping/saturation artifacts.
 - Hotfix: HDR writer settings now enforce HEVC Main10 with explicit metadata policy (Auto + recompute), and fall back to HLG static signaling (`metadata insertion = None`) when encoder support is limited.
 - Added render-complete success alert and an explicit “Open Render Folder” action in the UI for faster post-export discovery.
+- Hotfix: HDR pass now resolves per-frame source color tags (HLG/PQ/P3/709) instead of forcing HLG interpretation for every frame, and still-photo intermediates are now tagged from per-image source color space (P3 or BT.709) rather than one fixed BT.709 path.
+- Hotfix: HDR photo stills now use gain-map-aware decoding (when present) and are emitted as 10-bit BT.2020 HLG intermediates; non-HDR stills retain source-aware SDR tagging (P3/BT.709).
+- Added export option `Write diagnostics log (.log)` so diagnostics generation is explicitly user-controlled; when enabled, successful renders now produce a `.log` and run-report JSON includes the diagnostics path.
 
 ## Decisions Log
 
@@ -130,6 +133,10 @@ Operational updates after first packaged run:
 - 2026-03-04: Updated HDR writer configuration to HEVC Main10 + BT.2020 HLG metadata policy, removed creative tone-curve adjustments, and rendered HDR pass in 10-bit x420 buffers.
 - 2026-03-04: Added HDR writer-settings regression tests that verify Main10 profile, metadata insertion mode, and dynamic metadata regeneration policy.
 - 2026-03-04: Added completion alert and output-folder quick-open control for post-render UX clarity.
+- 2026-03-04: Added source-color-space-aware HDR conversion plus per-image still/photo intermediate color tagging (P3/BT.709) while keeping title cards BT.709 for predictable synthetic graphics output.
+- 2026-03-04: Added Smart HDR still-photo recovery path that applies ImageIO/CoreImage HDR gain maps and writes 10-bit HLG/BT.2020 still intermediates for HDR exports.
+- 2026-03-04: Added `StillImageClipFactoryTests.testLargeStillClipHDRModeCanBeInsertedIntoCompositionTrack` to lock in HDR-mode still intermediate insertion behavior.
+- 2026-03-04: Added diagnostics-log toggle in export settings and propagated diagnostics log path through render results into run-report JSON sidecars.
 
 ## Risks/Blockers
 
@@ -146,4 +153,4 @@ Operational updates after first packaged run:
 
 ## Last Updated
 
-2026-03-04 15:34 America/New_York by Codex
+2026-03-04 15:39 America/New_York by Codex

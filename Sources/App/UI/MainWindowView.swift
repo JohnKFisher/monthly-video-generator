@@ -125,6 +125,8 @@ struct MainWindowView: View {
                         }
                     }
 
+                    Toggle("Write diagnostics log (.log)", isOn: $viewModel.writeDiagnosticsLog)
+
                     HStack {
                         TextField("Output name", text: $viewModel.outputFilename)
                         Text(viewModel.outputDirectoryURL.path)
@@ -166,6 +168,12 @@ struct MainWindowView: View {
                             viewModel.openRenderedOutputFolder()
                         }
                     }
+                }
+                if !viewModel.lastDiagnosticsPath.isEmpty {
+                    Text("Diagnostics log: \(viewModel.lastDiagnosticsPath)")
+                        .font(.caption)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
 

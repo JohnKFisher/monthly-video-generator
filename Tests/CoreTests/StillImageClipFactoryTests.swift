@@ -38,6 +38,43 @@ final class StillImageClipFactoryTests: XCTestCase {
         XCTAssertNoThrow(try compositionTrack.insertTimeRange(trackRange, of: videoTrack, at: .zero))
     }
 
+    func testLargeStillClipHDRModeCanBeInsertedIntoCompositionTrack() async throws {
+        let renderSize = CGSize(width: 5712, height: 4284)
+        let duration = CMTime(value: 1, timescale: 30)
+        let factory = StillImageClipFactory()
+        let imageURL = try makeFixtureImage()
+        let clipURL = try await factory.makeVideoClip(
+            fromImageURL: imageURL,
+            duration: duration,
+            renderSize: renderSize,
+            dynamicRange: .hdr
+        )
+
+        defer {
+            try? FileManager.default.removeItem(at: imageURL)
+            try? FileManager.default.removeItem(at: clipURL)
+        }
+
+        let asset = AVURLAsset(url: clipURL)
+        guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
+            XCTFail("Expected generated HDR-mode clip to contain a video track")
+            return
+        }
+        let trackRange = try await videoTrack.load(.timeRange)
+        XCTAssertTrue(trackRange.duration > .zero)
+
+        let composition = AVMutableComposition()
+        guard let compositionTrack = composition.addMutableTrack(
+            withMediaType: .video,
+            preferredTrackID: kCMPersistentTrackID_Invalid
+        ) else {
+            XCTFail("Expected composition video track")
+            return
+        }
+
+        XCTAssertNoThrow(try compositionTrack.insertTimeRange(trackRange, of: videoTrack, at: .zero))
+    }
+
     private func makeFixtureImage() throws -> URL {
         let width = 1200
         let height = 800

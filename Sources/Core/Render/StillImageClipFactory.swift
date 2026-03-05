@@ -1,18 +1,94 @@
 import AVFoundation
+import CoreImage
+import CoreGraphics
 import CoreText
 import Foundation
 import ImageIO
+import VideoToolbox
 #if canImport(AppKit)
 import AppKit
 #endif
 
 public final class StillImageClipFactory {
+    private struct IntermediateColorConfiguration {
+        let avColorPrimaries: String
+        let avTransferFunction: String
+        let avYCbCrMatrix: String
+        let cvColorPrimaries: CFString
+        let cvTransferFunction: CFString
+        let cvYCbCrMatrix: CFString
+        let cgColorSpace: CGColorSpace
+        let pixelFormat: OSType
+        let requiresMain10Profile: Bool
+
+        static func bt709() -> IntermediateColorConfiguration {
+            IntermediateColorConfiguration(
+                avColorPrimaries: AVVideoColorPrimaries_ITU_R_709_2,
+                avTransferFunction: AVVideoTransferFunction_ITU_R_709_2,
+                avYCbCrMatrix: AVVideoYCbCrMatrix_ITU_R_709_2,
+                cvColorPrimaries: kCVImageBufferColorPrimaries_ITU_R_709_2,
+                cvTransferFunction: kCVImageBufferTransferFunction_ITU_R_709_2,
+                cvYCbCrMatrix: kCVImageBufferYCbCrMatrix_ITU_R_709_2,
+                cgColorSpace: CGColorSpace(name: CGColorSpace.itur_709) ?? CGColorSpaceCreateDeviceRGB(),
+                pixelFormat: kCVPixelFormatType_32BGRA,
+                requiresMain10Profile: false
+            )
+        }
+
+        static func displayP3() -> IntermediateColorConfiguration {
+            IntermediateColorConfiguration(
+                avColorPrimaries: AVVideoColorPrimaries_P3_D65,
+                avTransferFunction: AVVideoTransferFunction_ITU_R_709_2,
+                avYCbCrMatrix: AVVideoYCbCrMatrix_ITU_R_709_2,
+                cvColorPrimaries: kCVImageBufferColorPrimaries_P3_D65,
+                cvTransferFunction: kCVImageBufferTransferFunction_ITU_R_709_2,
+                cvYCbCrMatrix: kCVImageBufferYCbCrMatrix_ITU_R_709_2,
+                cgColorSpace: CGColorSpace(name: CGColorSpace.displayP3)
+                    ?? CGColorSpace(name: CGColorSpace.itur_709)
+                    ?? CGColorSpaceCreateDeviceRGB(),
+                pixelFormat: kCVPixelFormatType_32BGRA,
+                requiresMain10Profile: false
+            )
+        }
+
+        static func hlgBT2020() -> IntermediateColorConfiguration {
+            IntermediateColorConfiguration(
+                avColorPrimaries: AVVideoColorPrimaries_ITU_R_2020,
+                avTransferFunction: AVVideoTransferFunction_ITU_R_2100_HLG,
+                avYCbCrMatrix: AVVideoYCbCrMatrix_ITU_R_2020,
+                cvColorPrimaries: kCVImageBufferColorPrimaries_ITU_R_2020,
+                cvTransferFunction: kCVImageBufferTransferFunction_ITU_R_2100_HLG,
+                cvYCbCrMatrix: kCVImageBufferYCbCrMatrix_ITU_R_2020,
+                cgColorSpace: CGColorSpace(name: CGColorSpace.itur_2100_HLG)
+                    ?? CGColorSpace(name: CGColorSpace.itur_2020)
+                    ?? CGColorSpaceCreateDeviceRGB(),
+                pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
+                requiresMain10Profile: true
+            )
+        }
+    }
+
+    private struct RasterizedImagePayload {
+        let image: CIImage
+        let colorConfiguration: IntermediateColorConfiguration
+    }
+
     public init() {}
 
-    public func makeVideoClip(fromImageURL url: URL, duration: CMTime, renderSize: CGSize) async throws -> URL {
+    public func makeVideoClip(
+        fromImageURL url: URL,
+        duration: CMTime,
+        renderSize: CGSize,
+        dynamicRange: DynamicRange = .sdr
+    ) async throws -> URL {
         #if canImport(AppKit)
-        let rasterizedImage = try loadRasterizedImage(from: url, renderSize: renderSize)
-        return try await makeVideoClip(fromRasterizedImage: rasterizedImage, duration: duration, renderSize: renderSize)
+        let payload = try loadRasterizedImage(from: url, renderSize: renderSize, dynamicRange: dynamicRange)
+        return try await makeVideoClip(
+            fromRasterizedImage: payload.image,
+            duration: duration,
+            renderSize: renderSize,
+            colorConfiguration: payload.colorConfiguration
+        )
         #else
         throw RenderError.exportFailed("Image rendering requires AppKit support")
         #endif
@@ -28,36 +104,53 @@ public final class StillImageClipFactory {
         } catch {
             titleImage = try makeFallbackTitleCardImage(renderSize: renderSize, title: title)
         }
-        return try await makeVideoClip(fromRasterizedImage: titleImage, duration: duration, renderSize: renderSize)
+        return try await makeVideoClip(
+            fromRasterizedImage: CIImage(cgImage: titleImage),
+            duration: duration,
+            renderSize: renderSize,
+            colorConfiguration: .bt709()
+        )
         #else
         throw RenderError.exportFailed("Title card rendering requires AppKit support")
         #endif
     }
 
     #if canImport(AppKit)
-    private func makeVideoClip(fromRasterizedImage image: CGImage, duration: CMTime, renderSize: CGSize) async throws -> URL {
+    private func makeVideoClip(
+        fromRasterizedImage image: CIImage,
+        duration: CMTime,
+        renderSize: CGSize,
+        colorConfiguration: IntermediateColorConfiguration
+    ) async throws -> URL {
         let frameRate = 30
         let totalFrames = max(Int(ceil(duration.seconds * Double(frameRate))), 1)
         let frameDuration = CMTime(value: 1, timescale: CMTimeScale(frameRate))
         let outputURL = temporaryClipURL()
 
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
-        let codec = preferredIntermediateCodec(for: renderSize, writer: writer)
-        let settings: [String: Any] = [
-            AVVideoCodecKey: codec,
-            AVVideoWidthKey: Int(renderSize.width),
-            AVVideoHeightKey: Int(renderSize.height)
-        ]
+        let codec = preferredIntermediateCodec(
+            for: renderSize,
+            writer: writer,
+            colorConfiguration: colorConfiguration
+        )
+        let settings = writerVideoSettings(
+            codec: codec,
+            renderSize: renderSize,
+            colorConfiguration: colorConfiguration
+        )
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         input.expectsMediaDataInRealTime = false
 
-        let attributes: [String: Any] = [
-            kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA),
+        var attributes: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: Int(colorConfiguration.pixelFormat),
             kCVPixelBufferWidthKey as String: Int(renderSize.width),
             kCVPixelBufferHeightKey as String: Int(renderSize.height),
-            kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
-            kCVPixelBufferCGImageCompatibilityKey as String: true
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:]
         ]
+        if colorConfiguration.pixelFormat == kCVPixelFormatType_32BGRA {
+            attributes[kCVPixelBufferCGBitmapContextCompatibilityKey as String] = true
+            attributes[kCVPixelBufferCGImageCompatibilityKey as String] = true
+        }
 
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: attributes)
         guard writer.canAdd(input) else {
@@ -69,18 +162,31 @@ public final class StillImageClipFactory {
             throw RenderError.exportFailed(writer.error?.localizedDescription ?? "Unable to start writing")
         }
         writer.startSession(atSourceTime: .zero)
+        let ciContext = CIContext(options: [CIContextOption.cacheIntermediates: false])
 
         for frame in 0..<totalFrames {
             while !input.isReadyForMoreMediaData {
                 try await Task.sleep(nanoseconds: 5_000_000)
             }
 
-            guard let pixelBuffer = makePixelBuffer(fromRasterizedImage: image, renderSize: renderSize) else {
+            guard let pool = adaptor.pixelBufferPool else {
+                throw RenderError.exportFailed("Still image clip pixel buffer pool unavailable")
+            }
+            var destinationBuffer: CVPixelBuffer?
+            let creationStatus = CVPixelBufferPoolCreatePixelBuffer(nil, pool, &destinationBuffer)
+            guard creationStatus == kCVReturnSuccess, let destinationBuffer else {
                 throw RenderError.exportFailed("Failed to create pixel buffer")
             }
+            render(
+                image: image,
+                to: destinationBuffer,
+                renderSize: renderSize,
+                colorConfiguration: colorConfiguration,
+                context: ciContext
+            )
 
             let time = CMTimeMultiply(frameDuration, multiplier: Int32(frame))
-            guard adaptor.append(pixelBuffer, withPresentationTime: time) else {
+            guard adaptor.append(destinationBuffer, withPresentationTime: time) else {
                 throw RenderError.exportFailed(writer.error?.localizedDescription ?? "Failed to append image frame")
             }
         }
@@ -91,31 +197,81 @@ public final class StillImageClipFactory {
         return outputURL
     }
 
-    private func preferredIntermediateCodec(for renderSize: CGSize, writer: AVAssetWriter) -> AVVideoCodecType {
+    private func preferredIntermediateCodec(
+        for renderSize: CGSize,
+        writer: AVAssetWriter,
+        colorConfiguration: IntermediateColorConfiguration
+    ) -> AVVideoCodecType {
         let width = Int(renderSize.width.rounded())
         let height = Int(renderSize.height.rounded())
         let largeFrame = width > 4096 || height > 2304
-        let candidates: [AVVideoCodecType] = largeFrame
-            ? [.proRes422, .hevc, .h264]
-            : [.h264, .hevc, .proRes422]
+        let candidates: [AVVideoCodecType]
+        if colorConfiguration.requiresMain10Profile {
+            candidates = largeFrame ? [.proRes422, .hevc] : [.hevc, .proRes422]
+        } else {
+            candidates = largeFrame ? [.proRes422, .hevc, .h264] : [.h264, .hevc, .proRes422]
+        }
 
         for candidate in candidates {
-            let settings: [String: Any] = [
-                AVVideoCodecKey: candidate,
-                AVVideoWidthKey: width,
-                AVVideoHeightKey: height
-            ]
+            let settings = writerVideoSettings(
+                codec: candidate,
+                renderSize: CGSize(width: width, height: height),
+                colorConfiguration: colorConfiguration
+            )
             if writer.canApply(outputSettings: settings, forMediaType: .video) {
                 return candidate
             }
         }
 
+        if colorConfiguration.requiresMain10Profile {
+            return largeFrame ? .proRes422 : .hevc
+        }
         return largeFrame ? .proRes422 : .h264
     }
 
-    private func loadRasterizedImage(from url: URL, renderSize: CGSize) throws -> CGImage {
+    private func writerVideoSettings(
+        codec: AVVideoCodecType,
+        renderSize: CGSize,
+        colorConfiguration: IntermediateColorConfiguration
+    ) -> [String: Any] {
+        var settings: [String: Any] = [
+            AVVideoCodecKey: codec,
+            AVVideoWidthKey: Int(renderSize.width),
+            AVVideoHeightKey: Int(renderSize.height),
+            AVVideoColorPropertiesKey: [
+                AVVideoColorPrimariesKey: colorConfiguration.avColorPrimaries,
+                AVVideoTransferFunctionKey: colorConfiguration.avTransferFunction,
+                AVVideoYCbCrMatrixKey: colorConfiguration.avYCbCrMatrix
+            ]
+        ]
+        if colorConfiguration.requiresMain10Profile, codec == .hevc {
+            settings[AVVideoCompressionPropertiesKey] = [
+                AVVideoProfileLevelKey: kVTProfileLevel_HEVC_Main10_AutoLevel as String
+            ]
+        }
+        return settings
+    }
+
+    private func loadRasterizedImage(
+        from url: URL,
+        renderSize: CGSize,
+        dynamicRange: DynamicRange
+    ) throws -> RasterizedImagePayload {
         guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil) else {
             throw RenderError.exportFailed("Unable to load image source at \(url.path)")
+        }
+
+        let hasHDRGainMap = hasHDRGainMap(imageSource)
+        if dynamicRange == .hdr,
+           hasHDRGainMap,
+           #available(macOS 15.0, *),
+           let hdrImage = makeGainMappedHDRImageIfAvailable(from: imageSource) {
+            let outputColorConfiguration = IntermediateColorConfiguration.hlgBT2020()
+            let fittedImage = Self.aspectFitImage(
+                hdrImage,
+                renderSize: renderSize
+            )
+            return RasterizedImagePayload(image: fittedImage, colorConfiguration: outputColorConfiguration)
         }
 
         let maxDimension = max(1, Int(max(renderSize.width, renderSize.height).rounded()))
@@ -129,12 +285,21 @@ public final class StillImageClipFactory {
         let decodedImage = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, thumbnailOptions as CFDictionary)
             ?? CGImageSourceCreateImageAtIndex(imageSource, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
 
-        guard let decodedImage,
-              let rasterizedImage = Self.rasterizedImage(decodedImage, renderSize: renderSize) else {
+        guard let decodedImage else {
             throw RenderError.exportFailed("Unable to decode image at \(url.path)")
         }
 
-        return rasterizedImage
+        let colorConfiguration = intermediateColorConfiguration(
+            for: decodedImage.colorSpace,
+            dynamicRange: dynamicRange,
+            hasHDRGainMap: hasHDRGainMap
+        )
+        let sourceImage = CIImage(cgImage: decodedImage)
+        let fittedImage = Self.aspectFitImage(
+            sourceImage,
+            renderSize: renderSize
+        )
+        return RasterizedImagePayload(image: fittedImage, colorConfiguration: colorConfiguration)
     }
 
     @MainActor
@@ -164,7 +329,7 @@ public final class StillImageClipFactory {
 
         var proposedRect = CGRect(origin: .zero, size: size)
         guard let rawImage = image.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil),
-              let safeImage = Self.rasterizedImage(rawImage, renderSize: renderSize) else {
+              let safeImage = Self.rasterizedImage(rawImage, renderSize: renderSize, colorSpace: IntermediateColorConfiguration.bt709().cgColorSpace) else {
             throw RenderError.exportFailed("Unable to create title card image")
         }
 
@@ -181,7 +346,7 @@ public final class StillImageClipFactory {
             height: height,
             bitsPerComponent: 8,
             bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(),
+            space: IntermediateColorConfiguration.bt709().cgColorSpace,
             bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
         ) else {
             throw RenderError.exportFailed("Unable to create fallback title card image at \(width)x\(height)")
@@ -235,7 +400,7 @@ public final class StillImageClipFactory {
         context.restoreGState()
     }
 
-    private static func rasterizedImage(_ sourceImage: CGImage, renderSize: CGSize) -> CGImage? {
+    private static func rasterizedImage(_ sourceImage: CGImage, renderSize: CGSize, colorSpace: CGColorSpace) -> CGImage? {
         let width = max(1, Int(renderSize.width.rounded()))
         let height = max(1, Int(renderSize.height.rounded()))
 
@@ -245,7 +410,7 @@ public final class StillImageClipFactory {
             height: height,
             bitsPerComponent: 8,
             bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(),
+            space: colorSpace,
             bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
         ) else {
             return nil
@@ -264,45 +429,115 @@ public final class StillImageClipFactory {
         return context.makeImage()
     }
 
-    private func makePixelBuffer(fromRasterizedImage image: CGImage, renderSize: CGSize) -> CVPixelBuffer? {
-        var pixelBuffer: CVPixelBuffer?
-        let result = CVPixelBufferCreate(
-            kCFAllocatorDefault,
-            Int(renderSize.width),
-            Int(renderSize.height),
-            kCVPixelFormatType_32BGRA,
-            [
-                kCVPixelBufferCGImageCompatibilityKey as String: true,
-                kCVPixelBufferCGBitmapContextCompatibilityKey as String: true
-            ] as CFDictionary,
-            &pixelBuffer
+    private static func aspectFitImage(
+        _ sourceImage: CIImage,
+        renderSize: CGSize
+    ) -> CIImage {
+        let canvasRect = CGRect(origin: .zero, size: renderSize)
+        let normalized = sourceImage.transformed(
+            by: CGAffineTransform(
+                translationX: -sourceImage.extent.minX,
+                y: -sourceImage.extent.minY
+            )
         )
+        guard normalized.extent.width > 0, normalized.extent.height > 0 else {
+            return CIImage(color: .black).cropped(to: canvasRect)
+        }
 
-        guard result == kCVReturnSuccess, let buffer = pixelBuffer else {
+        let fittedRect = aspectFitRect(imageSize: normalized.extent.size, into: renderSize)
+        let scaleX = fittedRect.width / normalized.extent.width
+        let scaleY = fittedRect.height / normalized.extent.height
+        let transformed = normalized
+            .transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+            .transformed(by: CGAffineTransform(translationX: fittedRect.minX, y: fittedRect.minY))
+        let background = CIImage(color: .black).cropped(to: canvasRect)
+        let composed = transformed.composited(over: background).cropped(to: canvasRect)
+        return composed
+    }
+
+    private func render(
+        image: CIImage,
+        to destinationBuffer: CVPixelBuffer,
+        renderSize: CGSize,
+        colorConfiguration: IntermediateColorConfiguration,
+        context: CIContext
+    ) {
+        CVBufferSetAttachment(destinationBuffer, kCVImageBufferColorPrimariesKey, colorConfiguration.cvColorPrimaries, .shouldPropagate)
+        CVBufferSetAttachment(destinationBuffer, kCVImageBufferTransferFunctionKey, colorConfiguration.cvTransferFunction, .shouldPropagate)
+        CVBufferSetAttachment(destinationBuffer, kCVImageBufferYCbCrMatrixKey, colorConfiguration.cvYCbCrMatrix, .shouldPropagate)
+        CVBufferSetAttachment(destinationBuffer, kCVImageBufferCGColorSpaceKey, colorConfiguration.cgColorSpace, .shouldPropagate)
+        context.render(
+            image,
+            to: destinationBuffer,
+            bounds: CGRect(origin: .zero, size: renderSize),
+            colorSpace: colorConfiguration.cgColorSpace
+        )
+    }
+
+    private func intermediateColorConfiguration(
+        for colorSpace: CGColorSpace?,
+        dynamicRange: DynamicRange,
+        hasHDRGainMap: Bool
+    ) -> IntermediateColorConfiguration {
+        if dynamicRange == .hdr {
+            if hasHDRGainMap {
+                return .hlgBT2020()
+            }
+            if let colorSpaceName = colorSpace?.name,
+               colorSpaceName == CGColorSpace.itur_2100_HLG ||
+               colorSpaceName == CGColorSpace.itur_2100_PQ ||
+               colorSpaceName == CGColorSpace.itur_2020 {
+                return .hlgBT2020()
+            }
+        }
+
+        guard let name = colorSpace?.name else {
+            return .bt709()
+        }
+
+        if name == CGColorSpace.displayP3 ||
+            name == CGColorSpace.extendedDisplayP3 ||
+            name == CGColorSpace.extendedLinearDisplayP3 ||
+            name == CGColorSpace.dcip3 {
+            return .displayP3()
+        }
+        if let colorSpace, colorSpace.isWideGamutRGB {
+            return .displayP3()
+        }
+
+        return .bt709()
+    }
+
+    private func hasHDRGainMap(_ imageSource: CGImageSource) -> Bool {
+        if #available(macOS 15.0, *),
+           CGImageSourceCopyAuxiliaryDataInfoAtIndex(imageSource, 0, kCGImageAuxiliaryDataTypeISOGainMap) != nil {
+            return true
+        }
+
+        if CGImageSourceCopyAuxiliaryDataInfoAtIndex(imageSource, 0, kCGImageAuxiliaryDataTypeHDRGainMap) != nil {
+            return true
+        }
+
+        return false
+    }
+
+    @available(macOS 15.0, *)
+    private func makeGainMappedHDRImageIfAvailable(from imageSource: CGImageSource) -> CIImage? {
+        guard hasHDRGainMap(imageSource) else {
             return nil
         }
 
-        CVPixelBufferLockBaseAddress(buffer, [])
-        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
-
-        guard let context = CGContext(
-            data: CVPixelBufferGetBaseAddress(buffer),
-            width: Int(renderSize.width),
-            height: Int(renderSize.height),
-            bitsPerComponent: 8,
-            bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
-        ) else {
-            return nil
-        }
-
-        context.setFillColor(NSColor.black.cgColor)
-        context.fill(CGRect(origin: .zero, size: renderSize))
-        context.interpolationQuality = .high
-        context.draw(image, in: CGRect(origin: .zero, size: renderSize))
-
-        return buffer
+        let sourceImage = CIImage(
+            cgImageSource: imageSource,
+            index: 0,
+            options: [.applyOrientationProperty: true]
+        )
+        let gainMap = CIImage(
+            cgImageSource: imageSource,
+            index: 0,
+            options: [.auxiliaryHDRGainMap: true]
+        )
+        return sourceImage.applyingGainMap(gainMap)
     }
 
     private func finish(writer: AVAssetWriter) async throws {
