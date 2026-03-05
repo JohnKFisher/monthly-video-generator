@@ -89,6 +89,10 @@ Operational updates after first packaged run:
 - Hotfix: FFmpeg HDR watchdog escalation now attempts graceful shutdown first (`SIGINT`, then `SIGTERM`) before using `SIGKILL` as a last resort.
 - Hotfix: FFmpeg HDR progress now routes through stderr (`-progress pipe:2`) with explicit progress-line parsing, preventing stdout progress pipe backpressure from stalling long encodes.
 - Hotfix: FFmpeg HDR command now includes `-nostdin` and removes x265 `hdr-opt=1` for HLG output to avoid non-actionable HDR10-opt warnings during failure triage.
+- Hotfix: FFmpeg HDR command now adds `-ignore_unknown` and `-dn` to reduce failure risk from unsupported APAC/data side streams in iPhone QuickTime sources.
+- Hotfix: FFmpeg stdout/stderr consumption now uses byte-level CR/LF parsing instead of `bytes.lines`, improving pipe-drain reliability when FFmpeg emits carriage-return delimited output.
+- Hotfix: FFmpeg watchdog now uses an extended late-stage no-progress timeout once combined progress reaches >=95%, avoiding premature hard-kill near completion/finalization.
+- Hotfix: FFmpeg pipe readers now run on a dedicated utility queue using blocking `availableData` reads to keep stderr/stdout draining in real time during long HDR encodes.
 
 ## Decisions Log
 
@@ -177,6 +181,10 @@ Operational updates after first packaged run:
 - 2026-03-05: Updated FFmpeg filtergraph audio selectors to explicit first-stream syntax (`a:0`) for better compatibility with multi-audio iPhone source files.
 - 2026-03-05: Moved FFmpeg progress stream to stderr (`pipe:2`) and parse/suppress progress key lines in stderr consumption to keep progress live without pipe-fill stalls.
 - 2026-03-05: Added `-nostdin` to FFmpeg HDR commands and removed x265 `hdr-opt=1` from HLG path to reduce misleading HDR10-opt warnings.
+- 2026-03-05: Added FFmpeg `-ignore_unknown` and `-dn` flags for HDR renders so unsupported APAC/data side streams do not participate in stream selection/probing logic.
+- 2026-03-05: Replaced FFmpeg pipe `bytes.lines` readers with byte-level CR/LF parsing to keep stream draining robust under mixed carriage-return/newline output.
+- 2026-03-05: Changed stall watchdog to use a longer late-stage timeout (>=95% progress) before escalation, reducing false positives near encode finalization.
+- 2026-03-05: Moved FFmpeg stdout/stderr reads to a dedicated background queue (`availableData`) after diagnostics showed stream lines were still being delivered only at process teardown.
 
 ## Risks/Blockers
 
@@ -202,4 +210,4 @@ To return to the known-good baseline captured before the FFmpeg HDR pivot:
 
 ## Last Updated
 
-2026-03-05 11:35 America/New_York by Codex
+2026-03-05 13:22 America/New_York by Codex

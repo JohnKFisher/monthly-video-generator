@@ -119,6 +119,8 @@ final class FFmpegHDRRenderer {
     private let commandBuilder: FFmpegCommandBuilder
     private let fileManager: FileManager
     private let stallTimeoutSeconds: TimeInterval = 120
+    private let lateStageStallTimeoutSeconds: TimeInterval = 600
+    private let lateStageProgressThreshold: Double = 0.95
     private let outputSizePollIntervalSeconds: TimeInterval = 1
     private let interruptToTerminateDelaySeconds: TimeInterval = 20
     private let terminateToKillDelaySeconds: TimeInterval = 20
@@ -276,15 +278,11 @@ final class FFmpegHDRRenderer {
         handle: FileHandle,
         callbacks: CallbackRelay
     ) async {
-        do {
-            for try await line in handle.bytes.lines {
-                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty {
-                    callbacks.log("FFmpeg stdout: \(trimmed)")
-                }
+        await consumePipeText(handle: handle) { line in
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                callbacks.log("FFmpeg stdout: \(trimmed)")
             }
-        } catch {
-            callbacks.log("FFmpeg stdout stream ended with error: \(error.localizedDescription)")
         }
     }
 
@@ -298,33 +296,64 @@ final class FFmpegHDRRenderer {
     ) async -> [String] {
         var tail: [String] = []
         var progressParser = FFmpegProgressParser()
-        do {
-            for try await line in handle.bytes.lines {
-                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                if trimmed.isEmpty {
-                    continue
-                }
-                if consumeProgressLine(
-                    trimmed,
-                    parser: &progressParser,
-                    callbacks: callbacks,
-                    activityTracker: activityTracker,
-                    totalDurationMicroseconds: totalDurationMicroseconds,
-                    estimatedOutputBytes: estimatedOutputBytes,
-                    renderStartedAt: renderStartedAt
-                ) {
-                    continue
-                }
-                callbacks.log("FFmpeg stderr: \(trimmed)")
-                tail.append(trimmed)
-                if tail.count > 240 {
-                    tail.removeFirst(tail.count - 240)
-                }
+        await consumePipeText(handle: handle) { line in
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                return
             }
-        } catch {
-            callbacks.log("FFmpeg stderr stream ended with error: \(error.localizedDescription)")
+            if consumeProgressLine(
+                trimmed,
+                parser: &progressParser,
+                callbacks: callbacks,
+                activityTracker: activityTracker,
+                totalDurationMicroseconds: totalDurationMicroseconds,
+                estimatedOutputBytes: estimatedOutputBytes,
+                renderStartedAt: renderStartedAt
+            ) {
+                return
+            }
+            callbacks.log("FFmpeg stderr: \(trimmed)")
+            tail.append(trimmed)
+            if tail.count > 240 {
+                tail.removeFirst(tail.count - 240)
+            }
         }
         return tail
+    }
+
+    private static func consumePipeText(
+        handle: FileHandle,
+        onLine: @escaping (String) -> Void
+    ) async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                var lineBytes: [UInt8] = []
+                lineBytes.reserveCapacity(512)
+
+                while true {
+                    let chunk = handle.availableData
+                    if chunk.isEmpty {
+                        break
+                    }
+
+                    for byte in chunk {
+                        if byte == 0x0A || byte == 0x0D {
+                            if !lineBytes.isEmpty {
+                                onLine(String(decoding: lineBytes, as: UTF8.self))
+                                lineBytes.removeAll(keepingCapacity: true)
+                            }
+                            continue
+                        }
+                        lineBytes.append(byte)
+                    }
+                }
+
+                if !lineBytes.isEmpty {
+                    onLine(String(decoding: lineBytes, as: UTF8.self))
+                }
+                continuation.resume()
+            }
+        }
     }
 
     private static let ffmpegProgressKeys: Set<String> = [
@@ -465,7 +494,21 @@ final class FFmpegHDRRenderer {
 
             let snapshot = activityTracker.snapshot()
             let stalledFor = now.timeIntervalSince(snapshot.lastActivityAt)
-            if stalledFor >= stallTimeoutSeconds {
+            let timeoutTimelineProgress = Self.timelineProgress(
+                outTimeMicroseconds: snapshot.latestOutTimeMicroseconds,
+                totalDurationMicroseconds: totalDurationMicroseconds
+            )
+            let timeoutSizeProgress = Self.sizeProgress(
+                outputSizeBytes: snapshot.latestOutputSizeBytes,
+                estimatedOutputBytes: estimatedOutputBytes
+            )
+            let timeoutWarmupProgress = Self.warmupProgress(elapsed: now.timeIntervalSince(renderStartedAt))
+            let timeoutCombinedProgress = max(timeoutTimelineProgress, timeoutSizeProgress, timeoutWarmupProgress)
+            let activeStallTimeout = timeoutCombinedProgress >= lateStageProgressThreshold
+                ? lateStageStallTimeoutSeconds
+                : stallTimeoutSeconds
+
+            if stalledFor >= activeStallTimeout {
                 if stallContext == nil {
                     let context = StallContext(
                         stallDurationSeconds: stalledFor,
@@ -475,7 +518,8 @@ final class FFmpegHDRRenderer {
                     stallContext = context
                     callbacks.log(
                         "FFmpeg stall watchdog triggered after \(Int(stalledFor.rounded()))s without progress " +
-                        "(last_out_time_us=\(context.lastOutTimeMicroseconds), output=\(context.lastOutputSizeBytes))."
+                        "(last_out_time_us=\(context.lastOutTimeMicroseconds), output=\(context.lastOutputSizeBytes), " +
+                        "threshold=\(Int(activeStallTimeout.rounded()))s, progress=\(Int((timeoutCombinedProgress * 100).rounded()))%)."
                     )
                     callbacks.log("FFmpeg stall watchdog requested graceful shutdown via SIGINT.")
                     process.interrupt()

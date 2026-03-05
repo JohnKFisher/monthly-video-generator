@@ -31,7 +31,9 @@ struct FFmpegCommandBuilder {
             "-progress", "pipe:2",
             "-stats_period", "0.5",
             "-nostats",
-            "-nostdin"
+            "-nostdin",
+            "-ignore_unknown",
+            "-dn"
         ]
 
         var videoInputIndexForClip: [Int: Int] = [:]
