@@ -20,6 +20,13 @@ public final class ExportProfileManager {
 
         if profile.dynamicRange == .hdr {
             warnings.append(ExportCompatibilityWarning("HDR export may not play correctly on older SDR displays and players."))
+            if profile.resolution == .matchSourceMax {
+                warnings.append(
+                    ExportCompatibilityWarning(
+                        "HDR exports with Match Source Max are capped to 4K-equivalent dimensions for reliability."
+                    )
+                )
+            }
             switch profile.hdrFFmpegBinaryMode {
             case .autoSystemThenBundled:
                 warnings.append(ExportCompatibilityWarning("HDR engine auto mode uses system ffmpeg first, then bundled ffmpeg if required features are missing."))

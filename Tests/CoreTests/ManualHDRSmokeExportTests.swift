@@ -4,6 +4,10 @@ import XCTest
 
 final class ManualHDRSmokeExportTests: XCTestCase {
     func testHDRExportSmokeFromVideoTestFolder() async throws {
+        guard ProcessInfo.processInfo.environment["RUN_HDR_SMOKE"] == "1" else {
+            throw XCTSkip("Set RUN_HDR_SMOKE=1 to run manual HDR smoke export.")
+        }
+
         let sourceFolder = URL(fileURLWithPath: "/Users/jkfisher/Desktop/VideoTestFolder", isDirectory: true)
         guard FileManager.default.fileExists(atPath: sourceFolder.path) else {
             throw XCTSkip("VideoTestFolder not found at \(sourceFolder.path)")

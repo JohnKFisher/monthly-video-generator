@@ -84,6 +84,83 @@ final class RenderPipelineTests: XCTestCase {
         XCTAssertFalse(engine.shouldApplyHDRToneMapping(for: profile))
     }
 
+    func testHDRMatchSourceMaxRenderSizeIsCappedLandscape() {
+        let engine = AVFoundationRenderEngine()
+        let profile = ExportProfile(
+            container: .mov,
+            videoCodec: .hevc,
+            audioCodec: .aac,
+            resolution: .matchSourceMax,
+            dynamicRange: .hdr,
+            audioLayout: .stereo,
+            bitrateMode: .balanced
+        )
+
+        let capped = engine.constrainedRenderSizeForExport(
+            requestedSize: CGSize(width: 5712, height: 4284),
+            profile: profile
+        )
+
+        XCTAssertEqual(capped, CGSize(width: 2880, height: 2160))
+    }
+
+    func testHDRMatchSourceMaxRenderSizeIsCappedPortrait() {
+        let engine = AVFoundationRenderEngine()
+        let profile = ExportProfile(
+            container: .mov,
+            videoCodec: .hevc,
+            audioCodec: .aac,
+            resolution: .matchSourceMax,
+            dynamicRange: .hdr,
+            audioLayout: .stereo,
+            bitrateMode: .balanced
+        )
+
+        let capped = engine.constrainedRenderSizeForExport(
+            requestedSize: CGSize(width: 4284, height: 5712),
+            profile: profile
+        )
+
+        XCTAssertEqual(capped, CGSize(width: 2160, height: 2880))
+    }
+
+    func testSDRMatchSourceMaxRenderSizeIsNotCapped() {
+        let engine = AVFoundationRenderEngine()
+        let profile = ExportProfile(
+            container: .mov,
+            videoCodec: .hevc,
+            audioCodec: .aac,
+            resolution: .matchSourceMax,
+            dynamicRange: .sdr,
+            audioLayout: .stereo,
+            bitrateMode: .balanced
+        )
+
+        let capped = engine.constrainedRenderSizeForExport(
+            requestedSize: CGSize(width: 5712, height: 4284),
+            profile: profile
+        )
+
+        XCTAssertEqual(capped, CGSize(width: 5712, height: 4284))
+    }
+
+    func testHDRMatchSourceMaxCompatibilityWarningMentions4KCap() {
+        let manager = ExportProfileManager()
+        let profile = ExportProfile(
+            container: .mov,
+            videoCodec: .hevc,
+            audioCodec: .aac,
+            resolution: .matchSourceMax,
+            dynamicRange: .hdr,
+            audioLayout: .stereo,
+            bitrateMode: .balanced
+        )
+
+        let warnings = manager.compatibilityWarnings(for: profile).map(\.message)
+
+        XCTAssertTrue(warnings.contains { $0.contains("capped to 4K-equivalent dimensions") })
+    }
+
     func testHDRWriterSettingsUseMain10AndAutoMetadataInsertion() {
         let engine = AVFoundationRenderEngine()
         let config = engine.colorConfiguration(for: .hdr)

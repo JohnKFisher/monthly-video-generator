@@ -42,7 +42,16 @@ public final class AVFoundationRenderEngine {
             "audioLayout=\(exportProfile.audioLayout.rawValue), bitrate=\(exportProfile.bitrateMode.rawValue)"
         )
 
-        let renderSize = resolveRenderSize(from: timeline, policy: exportProfile.resolution)
+        let requestedRenderSize = resolveRenderSize(from: timeline, policy: exportProfile.resolution)
+        let requiresFFmpegHDR = shouldApplyHDRToneMapping(for: exportProfile)
+        let renderSize = constrainedRenderSizeForExport(requestedSize: requestedRenderSize, profile: exportProfile)
+        diagnostics.add("Render size requested: \(Int(requestedRenderSize.width))x\(Int(requestedRenderSize.height))")
+        if renderSize != requestedRenderSize {
+            diagnostics.add(
+                "HDR render size was capped for reliability: \(Int(requestedRenderSize.width))x\(Int(requestedRenderSize.height)) -> " +
+                "\(Int(renderSize.width))x\(Int(renderSize.height)) (max 4K-equivalent bounds)."
+            )
+        }
         diagnostics.add("Render size: \(Int(renderSize.width))x\(Int(renderSize.height))")
         var temporaryURLs: [URL] = []
         defer {
@@ -71,7 +80,6 @@ public final class AVFoundationRenderEngine {
             diagnostics.add("Transition duration resolved: \(format(transitionDuration))")
             let outputURL = try OutputPathResolver.resolveUniqueURL(target: outputTarget, container: exportProfile.container)
             diagnostics.add("Resolved output URL: \(outputURL.path)")
-            let requiresFFmpegHDR = shouldApplyHDRToneMapping(for: exportProfile)
             if requiresFFmpegHDR {
                 diagnostics.add("HDR export selected; routing to FFmpeg backend (mode=\(exportProfile.hdrFFmpegBinaryMode.rawValue)).")
                 let ffmpegPlan = FFmpegHDRRenderPlan(
@@ -527,6 +535,30 @@ public final class AVFoundationRenderEngine {
             let height = max(360, Int(maxHeight.rounded()))
             return CGSize(width: width.isMultiple(of: 2) ? width : width + 1, height: height.isMultiple(of: 2) ? height : height + 1)
         }
+    }
+
+    func constrainedRenderSizeForExport(requestedSize: CGSize, profile: ExportProfile) -> CGSize {
+        let normalizedRequested = normalizedRenderSize(requestedSize)
+        guard profile.dynamicRange == .hdr, profile.resolution == .matchSourceMax else {
+            return normalizedRequested
+        }
+
+        let isLandscape = normalizedRequested.width >= normalizedRequested.height
+        let maxBounds = isLandscape
+            ? CGSize(width: 3840, height: 2160)
+            : CGSize(width: 2160, height: 3840)
+
+        if normalizedRequested.width <= maxBounds.width, normalizedRequested.height <= maxBounds.height {
+            return normalizedRequested
+        }
+
+        let scale = min(
+            maxBounds.width / max(normalizedRequested.width, 1),
+            maxBounds.height / max(normalizedRequested.height, 1)
+        )
+        let scaledWidth = evenFloorDimension(normalizedRequested.width * scale, minimum: 2)
+        let scaledHeight = evenFloorDimension(normalizedRequested.height * scale, minimum: 2)
+        return CGSize(width: scaledWidth, height: scaledHeight)
     }
 
     private func bestPreset(for profile: ExportProfile, composition: AVAsset) -> String {
@@ -1077,6 +1109,20 @@ public final class AVFoundationRenderEngine {
 
     private func evenDimension(_ value: Int) -> Int {
         value.isMultiple(of: 2) ? value : value + 1
+    }
+
+    private func evenFloorDimension(_ value: Double, minimum: Int) -> Int {
+        let floored = max(Int(floor(value)), minimum)
+        if floored.isMultiple(of: 2) {
+            return floored
+        }
+        return max(floored - 1, minimum)
+    }
+
+    private func normalizedRenderSize(_ size: CGSize) -> CGSize {
+        let width = evenDimension(max(2, Int(size.width.rounded())))
+        let height = evenDimension(max(2, Int(size.height.rounded())))
+        return CGSize(width: width, height: height)
     }
 
     private func export(
