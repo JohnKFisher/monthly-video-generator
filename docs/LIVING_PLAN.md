@@ -80,6 +80,7 @@ Operational updates after first packaged run:
 - Hotfix: FFmpeg render completion wait now uses a race-free termination poll path so fast process exits cannot deadlock the export task at partial progress (for example, frozen around 31%).
 - Hotfix: FFmpeg command now sets `-stats_period 0.5` with `-progress pipe:1` so HDR progress updates continue during long encodes instead of appearing stuck at early percentages.
 - Hotfix: diagnostics log files are now preallocated at render start (when enabled) and finalized to the same path on success/failure so a log file is visible during long renders.
+- Hotfix: FFmpeg progress callbacks are now decoupled from diagnostics lock contention so verbose stderr logging cannot starve UI progress updates.
 
 ## Decisions Log
 
@@ -159,6 +160,7 @@ Operational updates after first packaged run:
 - 2026-03-04: Added FFmpeg HDR `matchSourceMax` safety cap to 4K-equivalent bounds and surfaced this as an export compatibility warning.
 - 2026-03-05: Replaced FFmpeg termination-handler wait with a race-free async poll and added parser coverage for both `out_time_ms` and `out_time_us` progress keys.
 - 2026-03-05: Enabled periodic FFmpeg progress emission (`-stats_period 0.5`) and preallocated diagnostics log file paths at render start for improved long-run observability.
+- 2026-03-05: Removed shared callback lock coupling between FFmpeg diagnostics and progress paths so progress updates remain responsive under heavy stderr logging.
 
 ## Risks/Blockers
 
@@ -184,4 +186,4 @@ To return to the known-good baseline captured before the FFmpeg HDR pivot:
 
 ## Last Updated
 
-2026-03-05 08:54 America/New_York by Codex
+2026-03-05 09:15 America/New_York by Codex

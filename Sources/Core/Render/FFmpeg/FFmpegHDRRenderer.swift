@@ -4,7 +4,7 @@ final class FFmpegHDRRenderer {
     private final class CallbackRelay: @unchecked Sendable {
         private let diagnostics: (String) -> Void
         private let progress: (Double) -> Void
-        private let lock = NSLock()
+        private let diagnosticsLock = NSLock()
 
         init(diagnostics: @escaping (String) -> Void, progress: @escaping (Double) -> Void) {
             self.diagnostics = diagnostics
@@ -12,15 +12,15 @@ final class FFmpegHDRRenderer {
         }
 
         func log(_ message: String) {
-            lock.lock()
+            diagnosticsLock.lock()
             diagnostics(message)
-            lock.unlock()
+            diagnosticsLock.unlock()
         }
 
         func report(_ value: Double) {
-            lock.lock()
+            // Keep progress reporting independent so verbose diagnostics logging
+            // cannot stall UI updates.
             progress(value)
-            lock.unlock()
         }
     }
 
