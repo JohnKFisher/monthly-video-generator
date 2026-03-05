@@ -93,6 +93,7 @@ Operational updates after first packaged run:
 - Hotfix: FFmpeg stdout/stderr consumption now uses byte-level CR/LF parsing instead of `bytes.lines`, improving pipe-drain reliability when FFmpeg emits carriage-return delimited output.
 - Hotfix: FFmpeg watchdog now uses an extended late-stage no-progress timeout once combined progress reaches >=95%, avoiding premature hard-kill near completion/finalization.
 - Hotfix: FFmpeg pipe readers now run on a dedicated utility queue using blocking `availableData` reads to keep stderr/stdout draining in real time during long HDR encodes.
+- Established new known-good rollback checkpoint (`Post-ffmpeg HDR`): `checkpoint/20260305-known-good-post-ffmpeg-hdr`.
 
 ## Decisions Log
 
@@ -125,6 +126,7 @@ Operational updates after first packaged run:
 - 2026-03-04: Approved quality-first HDR pivot to FFmpeg with capability gate (`zscale`, `xfade`, `acrossfade`, HEVC Main10), preferring system ffmpeg then bundled fallback.
 - 2026-03-04: Added bundled FFmpeg acquisition policy (arm64, GPL-capable binary permitted) with SHA256 verification and explicit provenance logging.
 - 2026-03-04: Established rollback anchor tag `checkpoint/20260304-known-good-pre-ffmpeg-pivot` before FFmpeg HDR backend implementation.
+- 2026-03-05: Promoted the latest stable HDR/FFmpeg fixes as the new known-good rollback checkpoint `checkpoint/20260305-known-good-post-ffmpeg-hdr` (`Post-ffmpeg HDR`).
 
 ## Changes Since Last Update
 
@@ -202,12 +204,16 @@ Operational updates after first packaged run:
 
 ## Rollback Procedure
 
-To return to the known-good baseline captured before the FFmpeg HDR pivot:
+To return to the current known-good rollback (`Post-ffmpeg HDR`):
 
 1. `git fetch --tags`
-2. `git checkout checkpoint/20260304-known-good-pre-ffmpeg-pivot`
+2. `git checkout checkpoint/20260305-known-good-post-ffmpeg-hdr`
 3. Optional working branch from checkpoint: `git checkout -b codex/recover-known-good`
+
+For the pre-FFmpeg-pivot baseline, use:
+
+- `git checkout checkpoint/20260304-known-good-pre-ffmpeg-pivot`
 
 ## Last Updated
 
-2026-03-05 13:22 America/New_York by Codex
+2026-03-05 14:02 America/New_York by Codex

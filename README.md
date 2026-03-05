@@ -64,15 +64,19 @@ See:
 
 ## Known-Good Rollback
 
-Known-good checkpoint tag before the FFmpeg HDR pivot:
+Current known-good rollback checkpoint (`Post-ffmpeg HDR`):
+
+- `checkpoint/20260305-known-good-post-ffmpeg-hdr`
+
+Pre-FFmpeg-pivot rollback checkpoint:
 
 - `checkpoint/20260304-known-good-pre-ffmpeg-pivot`
 
-Rollback commands:
+Rollback commands for current known-good:
 
 ```bash
 git fetch --tags
-git checkout checkpoint/20260304-known-good-pre-ffmpeg-pivot
+git checkout checkpoint/20260305-known-good-post-ffmpeg-hdr
 git checkout -b codex/recover-known-good
 ```
 
