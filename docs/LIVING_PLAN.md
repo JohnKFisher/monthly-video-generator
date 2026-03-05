@@ -38,6 +38,7 @@ Implemented now:
 - AVFoundation render engine for mixed images/videos with source video audio.
 - Safe output naming with auto-versioning in selected output directory.
 - PhotoKit discovery/materialization for month/year library rendering.
+- PhotoKit source selection now supports both month/year filtering and album-based filtering.
 - Export UI/model for container/codec/resolution/HDR/audio layout/bitrate mode.
 - Plex/Infuse-oriented default export preset for Apple TV 4K (`MP4 + HEVC + HDR + Stereo + Balanced + HDR Auto`), plus explicit UI reset action.
 
@@ -131,6 +132,7 @@ Operational updates after first packaged run:
 - 2026-03-04: Established rollback anchor tag `checkpoint/20260304-known-good-pre-ffmpeg-pivot` before FFmpeg HDR backend implementation.
 - 2026-03-05: Promoted the latest stable HDR/FFmpeg fixes as the new known-good rollback checkpoint `checkpoint/20260305-known-good-post-ffmpeg-hdr` (`Post-ffmpeg HDR`).
 - 2026-03-05: Approved defaults-first export policy for Plex + Infuse + Apple TV 4K with HDR as the default dynamic range and manual reset action for existing installations.
+- 2026-03-05: Expanded Photos input scope to support explicit album selection while preserving existing month/year filtering mode.
 
 ## Changes Since Last Update
 
@@ -194,6 +196,8 @@ Operational updates after first packaged run:
 - 2026-03-05: Added `ExportProfile.plexInfuseAppleTV4KDefault`, switched manager defaults to this profile, and introduced profile-resolution hooks that enforce effective HDR codec/audio behavior.
 - 2026-03-05: Updated Export UI/view-model defaults and added `Reset to Plex Defaults`; HDR mode now locks codec/audio selectors to effective renderer constraints with explanatory copy.
 - 2026-03-05: Added regression tests for new default profile values, manager default resolution, HDR profile normalization behavior, and codable round-trip of the new preset.
+- 2026-03-05: Added Photos filter-mode controls (`Month/Year` or `Album`) in the Input panel, plus album refresh/loading state handling in the view model.
+- 2026-03-05: Added PhotoKit album discovery/render support and new `PhotosScope.album` model path with run-report-friendly source description.
 
 ## Risks/Blockers
 
@@ -223,4 +227,4 @@ For the pre-FFmpeg-pivot baseline, use:
 
 ## Last Updated
 
-2026-03-05 15:10 America/New_York by Codex
+2026-03-05 15:37 America/New_York by Codex

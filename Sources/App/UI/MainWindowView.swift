@@ -37,16 +37,56 @@ struct MainWindowView: View {
 
                         Toggle("Scan subfolders recursively", isOn: $viewModel.recursiveScan)
                     } else {
-                        HStack {
-                            Picker("Month", selection: $viewModel.selectedMonth) {
-                                ForEach(viewModel.months, id: \.self) { month in
-                                    Text(String(month)).tag(month)
+                        Picker("Photos Filter", selection: $viewModel.selectedPhotosFilterMode) {
+                            ForEach(MainWindowViewModel.PhotosFilterMode.allCases) { mode in
+                                Text(mode.label).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+
+                        if viewModel.selectedPhotosFilterMode == .monthYear {
+                            HStack {
+                                Picker("Month", selection: $viewModel.selectedMonth) {
+                                    ForEach(viewModel.months, id: \.self) { month in
+                                        Text(String(month)).tag(month)
+                                    }
+                                }
+                                Picker("Year", selection: $viewModel.selectedYear) {
+                                    ForEach(viewModel.years, id: \.self) { year in
+                                        Text(String(year)).tag(year)
+                                    }
                                 }
                             }
-                            Picker("Year", selection: $viewModel.selectedYear) {
-                                ForEach(viewModel.years, id: \.self) { year in
-                                    Text(String(year)).tag(year)
+                        } else {
+                            HStack {
+                                Picker("Album", selection: $viewModel.selectedPhotoAlbumID) {
+                                    if viewModel.photoAlbums.isEmpty {
+                                        Text("No Albums Available").tag("")
+                                    } else {
+                                        ForEach(viewModel.photoAlbums) { album in
+                                            Text(album.displayLabel).tag(album.localIdentifier)
+                                        }
+                                    }
                                 }
+                                .disabled(viewModel.isLoadingPhotoAlbums || !viewModel.hasPhotoAlbums)
+
+                                Button("Refresh Albums") {
+                                    viewModel.refreshPhotoAlbums()
+                                }
+                                .disabled(viewModel.isLoadingPhotoAlbums)
+                            }
+
+                            if viewModel.isLoadingPhotoAlbums {
+                                HStack(spacing: 8) {
+                                    ProgressView()
+                                    Text("Loading albums...")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            } else if !viewModel.photoAlbumsStatusMessage.isEmpty {
+                                Text(viewModel.photoAlbumsStatusMessage)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
                         }
                     }

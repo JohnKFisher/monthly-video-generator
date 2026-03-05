@@ -1,7 +1,21 @@
 import Foundation
 
-public enum PhotosScope: Equatable, Codable, Sendable {
+public enum PhotosScope: Equatable, Codable, Sendable, CustomStringConvertible {
     case entireLibrary(monthYear: MonthYear)
+    case album(localIdentifier: String, title: String?)
+
+    public var description: String {
+        switch self {
+        case let .entireLibrary(monthYear):
+            return "Entire library (\(monthYear.displayLabel))"
+        case let .album(localIdentifier, title):
+            let resolvedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let resolvedTitle, !resolvedTitle.isEmpty {
+                return "Album: \(resolvedTitle)"
+            }
+            return "Album (id: \(localIdentifier))"
+        }
+    }
 }
 
 public enum MediaSource: Equatable, Sendable {

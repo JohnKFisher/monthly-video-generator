@@ -23,23 +23,56 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
 
+    enum PhotosFilterMode: String, CaseIterable, Identifiable, Codable {
+        case monthYear
+        case album
+
+        var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .monthYear:
+                return "Month/Year"
+            case .album:
+                return "Album"
+            }
+        }
+    }
+
     enum ViewModelError: LocalizedError {
         case missingFolder
+        case missingAlbumSelection
 
         var errorDescription: String? {
             switch self {
             case .missingFolder:
                 return "Choose an input folder before rendering."
+            case .missingAlbumSelection:
+                return "Choose a Photos album before rendering."
             }
         }
     }
 
-    @Published var sourceMode: SourceMode = .folder
+    @Published var sourceMode: SourceMode = .folder {
+        didSet { refreshPhotoAlbumsIfNeeded() }
+    }
     @Published var selectedFolderURL: URL?
     @Published var recursiveScan: Bool = true
 
     @Published var selectedMonth: Int
     @Published var selectedYear: Int
+    @Published var selectedPhotosFilterMode: PhotosFilterMode = .monthYear {
+        didSet {
+            handleRenderSettingChange()
+            refreshPhotoAlbumsIfNeeded()
+        }
+    }
+    @Published var selectedPhotoAlbumID: String = "" {
+        didSet { handleRenderSettingChange() }
+    }
+    @Published private(set) var photoAlbums: [PhotoAlbumSummary] = []
+    @Published private(set) var isLoadingPhotoAlbums: Bool = false
+    @Published private(set) var photoAlbumsStatusMessage: String = ""
 
     @Published var outputDirectoryURL: URL
     @Published var outputFilename: String = "Monthly Slideshow"
@@ -160,6 +193,16 @@ final class MainWindowViewModel: ObservableObject {
             outputDirectoryURL = url
         }
         #endif
+    }
+
+    var hasPhotoAlbums: Bool {
+        !photoAlbums.isEmpty
+    }
+
+    func refreshPhotoAlbums() {
+        Task {
+            await loadPhotoAlbums(requestAuthorizationIfNeeded: true)
+        }
     }
 
     var isHDRSelectionLocked: Bool {
@@ -283,17 +326,46 @@ final class MainWindowViewModel: ObservableObject {
                     }
                 }
 
-                request = RenderRequest(
-                    source: .photosLibrary(scope: .entireLibrary(monthYear: monthYear)),
-                    monthYear: monthYear,
-                    ordering: .captureDateAscendingStable,
-                    style: style,
-                    export: exportProfile,
-                    output: OutputTarget(directory: outputDirectoryURL, baseFilename: outputFilename)
-                )
+                switch selectedPhotosFilterMode {
+                case .monthYear:
+                    request = RenderRequest(
+                        source: .photosLibrary(scope: .entireLibrary(monthYear: monthYear)),
+                        monthYear: monthYear,
+                        ordering: .captureDateAscendingStable,
+                        style: style,
+                        export: exportProfile,
+                        output: OutputTarget(directory: outputDirectoryURL, baseFilename: outputFilename)
+                    )
+                    let discovered = try await photoDiscovery.discover(monthYear: monthYear)
+                    preparation = coordinator.prepareFromItems(discovered, request: request)
 
-                let discovered = try await photoDiscovery.discover(monthYear: monthYear)
-                preparation = coordinator.prepareFromItems(discovered, request: request)
+                case .album:
+                    var selectedAlbumID = selectedPhotoAlbumID.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if selectedAlbumID.isEmpty {
+                        let discoveredAlbums = try await photoDiscovery.discoverAlbums()
+                        photoAlbums = discoveredAlbums
+                        if let firstAlbum = discoveredAlbums.first {
+                            selectedPhotoAlbumID = firstAlbum.localIdentifier
+                            selectedAlbumID = firstAlbum.localIdentifier
+                            photoAlbumsStatusMessage = ""
+                        }
+                    }
+
+                    guard !selectedAlbumID.isEmpty else {
+                        throw ViewModelError.missingAlbumSelection
+                    }
+                    let selectedAlbumTitle = photoAlbums.first(where: { $0.localIdentifier == selectedAlbumID })?.title
+                    request = RenderRequest(
+                        source: .photosLibrary(scope: .album(localIdentifier: selectedAlbumID, title: selectedAlbumTitle)),
+                        monthYear: nil,
+                        ordering: .captureDateAscendingStable,
+                        style: style,
+                        export: exportProfile,
+                        output: OutputTarget(directory: outputDirectoryURL, baseFilename: outputFilename)
+                    )
+                    let discovered = try await photoDiscovery.discover(albumLocalIdentifier: selectedAlbumID)
+                    preparation = coordinator.prepareFromItems(discovered, request: request)
+                }
             }
 
             warnings = preparation.warnings + exportResolution.warnings.map(\.message)
@@ -422,6 +494,64 @@ final class MainWindowViewModel: ObservableObject {
         persistRenderSettings()
     }
 
+    private func refreshPhotoAlbumsIfNeeded() {
+        guard sourceMode == .photos, selectedPhotosFilterMode == .album else {
+            return
+        }
+        guard !isLoadingPhotoAlbums else {
+            return
+        }
+        guard photoAlbums.isEmpty else {
+            return
+        }
+
+        Task {
+            await loadPhotoAlbums(requestAuthorizationIfNeeded: false)
+        }
+    }
+
+    private func loadPhotoAlbums(requestAuthorizationIfNeeded: Bool) async {
+        guard !isLoadingPhotoAlbums else {
+            return
+        }
+
+        isLoadingPhotoAlbums = true
+        defer { isLoadingPhotoAlbums = false }
+
+        var status = photoDiscovery.authorizationStatus()
+        if status != .authorized && status != .limited {
+            if requestAuthorizationIfNeeded {
+                status = await photoDiscovery.requestAuthorization()
+            }
+        }
+
+        guard status == .authorized || status == .limited else {
+            photoAlbums = []
+            selectedPhotoAlbumID = ""
+            photoAlbumsStatusMessage = "Allow Photos access to load albums."
+            return
+        }
+
+        do {
+            let discoveredAlbums = try await photoDiscovery.discoverAlbums()
+            photoAlbums = discoveredAlbums
+            if discoveredAlbums.isEmpty {
+                selectedPhotoAlbumID = ""
+                photoAlbumsStatusMessage = "No photo/video albums were found."
+                return
+            }
+
+            if !discoveredAlbums.contains(where: { $0.localIdentifier == selectedPhotoAlbumID }) {
+                selectedPhotoAlbumID = discoveredAlbums[0].localIdentifier
+            }
+            photoAlbumsStatusMessage = ""
+        } catch {
+            photoAlbums = []
+            selectedPhotoAlbumID = ""
+            photoAlbumsStatusMessage = error.localizedDescription
+        }
+    }
+
     private func enforceHDRSelectionConstraints() {
         guard selectedDynamicRange == .hdr else {
             return
@@ -451,6 +581,8 @@ final class MainWindowViewModel: ObservableObject {
         openingTitleText = settings.openingTitleText
         crossfadeDurationSeconds = min(max(settings.crossfadeDurationSeconds, 0), 2)
         stillImageDurationSeconds = min(max(settings.stillImageDurationSeconds, 1), 10)
+        selectedPhotosFilterMode = settings.selectedPhotosFilterMode ?? .monthYear
+        selectedPhotoAlbumID = settings.selectedPhotoAlbumID ?? ""
         selectedContainer = settings.selectedContainer
         selectedVideoCodec = settings.selectedVideoCodec
         selectedResolutionPolicy = settings.selectedResolutionPolicy
@@ -462,6 +594,7 @@ final class MainWindowViewModel: ObservableObject {
         isRestoringPersistedSettings = false
         enforceHDRSelectionConstraints()
         persistRenderSettings()
+        refreshPhotoAlbumsIfNeeded()
     }
 
     private func loadPersistedRenderSettings() -> PersistedRenderSettings? {
@@ -477,6 +610,8 @@ final class MainWindowViewModel: ObservableObject {
             openingTitleText: openingTitleText,
             crossfadeDurationSeconds: crossfadeDurationSeconds,
             stillImageDurationSeconds: stillImageDurationSeconds,
+            selectedPhotosFilterMode: selectedPhotosFilterMode,
+            selectedPhotoAlbumID: selectedPhotoAlbumID,
             selectedContainer: selectedContainer,
             selectedVideoCodec: selectedVideoCodec,
             selectedResolutionPolicy: selectedResolutionPolicy,
@@ -498,6 +633,8 @@ final class MainWindowViewModel: ObservableObject {
         let openingTitleText: String
         let crossfadeDurationSeconds: Double
         let stillImageDurationSeconds: Double
+        let selectedPhotosFilterMode: PhotosFilterMode?
+        let selectedPhotoAlbumID: String?
         let selectedContainer: ContainerFormat
         let selectedVideoCodec: VideoCodec
         let selectedResolutionPolicy: ResolutionPolicy

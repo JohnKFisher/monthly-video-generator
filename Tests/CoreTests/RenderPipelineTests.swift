@@ -6,6 +6,23 @@ import VideoToolbox
 import XCTest
 
 final class RenderPipelineTests: XCTestCase {
+    func testPhotosScopeAlbumDescriptionUsesTitleWhenAvailable() {
+        let scope = PhotosScope.album(localIdentifier: "abc123", title: "Family")
+        XCTAssertEqual(scope.description, "Album: Family")
+    }
+
+    func testPhotosScopeAlbumDescriptionFallsBackToIdentifier() {
+        let scope = PhotosScope.album(localIdentifier: "abc123", title: nil)
+        XCTAssertEqual(scope.description, "Album (id: abc123)")
+    }
+
+    func testPhotosScopeAlbumCodableRoundTrip() throws {
+        let scope = PhotosScope.album(localIdentifier: "album-id-1", title: "Trips")
+        let data = try JSONEncoder().encode(scope)
+        let decoded = try JSONDecoder().decode(PhotosScope.self, from: data)
+        XCTAssertEqual(decoded, scope)
+    }
+
     func testPlexInfuseAppleTV4KDefaultProfileMatchesLockedDefaults() {
         let profile = ExportProfile.plexInfuseAppleTV4KDefault
 
