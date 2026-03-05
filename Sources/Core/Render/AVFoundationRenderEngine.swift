@@ -32,7 +32,16 @@ public final class AVFoundationRenderEngine {
         }
 
         let diagnostics = RenderDiagnostics()
+        let liveDiagnosticsLogURL: URL?
+        if writeDiagnosticsLog {
+            liveDiagnosticsLogURL = reserveDiagnosticsFileURL(outputTarget: outputTarget)
+        } else {
+            liveDiagnosticsLogURL = nil
+        }
         diagnostics.add("Render started")
+        if let liveDiagnosticsLogURL {
+            diagnostics.add("Diagnostics log path: \(liveDiagnosticsLogURL.path)")
+        }
         diagnostics.add("Timeline segments: \(timeline.segments.count)")
         diagnostics.add("Style: title=\(style.openingTitle ?? "none"), titleDuration=\(style.titleDurationSeconds), crossfade=\(style.crossfadeDurationSeconds), stillDuration=\(style.stillImageDurationSeconds)")
         diagnostics.add(
@@ -53,6 +62,12 @@ public final class AVFoundationRenderEngine {
             )
         }
         diagnostics.add("Render size: \(Int(renderSize.width))x\(Int(renderSize.height))")
+        if let liveDiagnosticsLogURL {
+            _ = writeDiagnosticsReport(
+                diagnostics.renderReport(outcome: "in_progress", error: nil),
+                to: liveDiagnosticsLogURL
+            )
+        }
         var temporaryURLs: [URL] = []
         defer {
             for url in temporaryURLs {
@@ -116,9 +131,10 @@ public final class AVFoundationRenderEngine {
                 diagnostics.add("Render completed successfully")
                 let diagnosticsLogURL: URL?
                 if writeDiagnosticsLog {
-                    diagnosticsLogURL = writeDiagnosticsFile(
+                    diagnosticsLogURL = persistDiagnosticsReport(
                         diagnostics.renderReport(outcome: "success", error: nil),
-                        outputTarget: outputTarget
+                        outputTarget: outputTarget,
+                        preferredURL: liveDiagnosticsLogURL
                     )
                 } else {
                     diagnosticsLogURL = nil
@@ -231,9 +247,10 @@ public final class AVFoundationRenderEngine {
             diagnostics.add("Render completed successfully")
             let diagnosticsLogURL: URL?
             if writeDiagnosticsLog {
-                diagnosticsLogURL = writeDiagnosticsFile(
+                diagnosticsLogURL = persistDiagnosticsReport(
                     diagnostics.renderReport(outcome: "success", error: nil),
-                    outputTarget: outputTarget
+                    outputTarget: outputTarget,
+                    preferredURL: liveDiagnosticsLogURL
                 )
             } else {
                 diagnosticsLogURL = nil
@@ -248,9 +265,10 @@ public final class AVFoundationRenderEngine {
             diagnostics.add("Render failed with error: \(describe(error))")
             let diagnosticURL: URL?
             if writeDiagnosticsLog {
-                diagnosticURL = writeDiagnosticsFile(
+                diagnosticURL = persistDiagnosticsReport(
                     diagnostics.renderReport(outcome: "failure", error: error),
-                    outputTarget: outputTarget
+                    outputTarget: outputTarget,
+                    preferredURL: liveDiagnosticsLogURL
                 )
             } else {
                 diagnosticURL = nil
@@ -1303,13 +1321,9 @@ public final class AVFoundationRenderEngine {
         return describe(error)
     }
 
-    private func writeDiagnosticsFile(_ report: String, outputTarget: OutputTarget) -> URL? {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyyMMdd-HHmmss"
-        formatter.timeZone = .current
-        let filename = "export-diagnostics-\(formatter.string(from: Date())).log"
-
+    private func reserveDiagnosticsFileURL(outputTarget: OutputTarget) -> URL? {
         let fileManager = FileManager.default
+        let filename = diagnosticsFilename()
         let preferredDirectory = outputTarget.directory
         let fallbackDirectory = fileManager.temporaryDirectory.appendingPathComponent("MonthlyVideoGenerator/Diagnostics", isDirectory: true)
 
@@ -1317,16 +1331,61 @@ public final class AVFoundationRenderEngine {
             do {
                 try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
                 let fileURL = directory.appendingPathComponent(filename)
-                guard let data = report.data(using: .utf8) else {
-                    continue
+                if !fileManager.fileExists(atPath: fileURL.path) {
+                    try Data().write(to: fileURL, options: .atomic)
+                    return fileURL
                 }
-                try data.write(to: fileURL)
-                return fileURL
             } catch {
                 continue
             }
         }
         return nil
+    }
+
+    private func persistDiagnosticsReport(_ report: String, outputTarget: OutputTarget, preferredURL: URL?) -> URL? {
+        if let preferredURL, writeDiagnosticsReport(report, to: preferredURL) {
+            return preferredURL
+        }
+        return writeDiagnosticsFile(report, outputTarget: outputTarget)
+    }
+
+    private func writeDiagnosticsFile(_ report: String, outputTarget: OutputTarget) -> URL? {
+        let fileManager = FileManager.default
+        let filename = diagnosticsFilename()
+        let preferredDirectory = outputTarget.directory
+        let fallbackDirectory = fileManager.temporaryDirectory.appendingPathComponent("MonthlyVideoGenerator/Diagnostics", isDirectory: true)
+
+        for directory in [preferredDirectory, fallbackDirectory] {
+            do {
+                try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+                let fileURL = directory.appendingPathComponent(filename)
+                if writeDiagnosticsReport(report, to: fileURL) {
+                    return fileURL
+                }
+            } catch {
+                continue
+            }
+        }
+        return nil
+    }
+
+    private func diagnosticsFilename() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss-SSS"
+        formatter.timeZone = .current
+        return "export-diagnostics-\(formatter.string(from: Date())).log"
+    }
+
+    private func writeDiagnosticsReport(_ report: String, to fileURL: URL) -> Bool {
+        guard let data = report.data(using: .utf8) else {
+            return false
+        }
+        do {
+            try data.write(to: fileURL, options: .atomic)
+            return true
+        } catch {
+            return false
+        }
     }
 
     private final class RenderDiagnostics {

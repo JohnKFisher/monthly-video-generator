@@ -27,6 +27,7 @@ struct FFmpegCommandBuilder {
             "-hide_banner",
             "-y",
             "-progress", "pipe:1",
+            "-stats_period", "0.5",
             "-nostats"
         ]
 
