@@ -101,6 +101,7 @@ final class MainWindowViewModel: ObservableObject {
     private let exportProfileManager = ExportProfileManager()
     private let runReportService = RunReportService()
     private let preferencesStore = UserDefaults.standard
+    private var renderStatusDetail: String?
 
     private static let renderSettingsDefaultsKey = "MainWindowViewModel.renderSettings.v1"
 
@@ -189,6 +190,7 @@ final class MainWindowViewModel: ObservableObject {
             isRendering = true
             progress = 0.01
             warnings = []
+            renderStatusDetail = nil
             statusMessage = "Preparing media..."
             lastOutputPath = ""
             lastDiagnosticsPath = ""
@@ -260,7 +262,8 @@ final class MainWindowViewModel: ObservableObject {
             warnings = preparation.warnings + exportProfileManager.compatibilityWarnings(for: exportProfile).map(\.message)
             progress = max(progress, 0.08)
 
-            statusMessage = "Rendering... 8%"
+            renderStatusDetail = nil
+            updateRenderingStatusMessage()
             let renderResult = try await coordinator.render(
                 preparation: preparation,
                 request: request,
@@ -268,6 +271,9 @@ final class MainWindowViewModel: ObservableObject {
                 writeDiagnosticsLog: writeDiagnosticsLog,
                 progressHandler: { [weak self] reportedProgress in
                     self?.applyReportedRenderProgress(reportedProgress)
+                },
+                statusHandler: { [weak self] status in
+                    self?.applyReportedRenderStatus(status)
                 }
             )
             let outputURL = renderResult.outputURL
@@ -296,6 +302,7 @@ final class MainWindowViewModel: ObservableObject {
             }
             showRenderCompleteAlert = true
         } catch {
+            renderStatusDetail = nil
             progress = 0
             statusMessage = formatErrorForDisplay(error)
             showRenderCompleteAlert = false
@@ -347,8 +354,25 @@ final class MainWindowViewModel: ObservableObject {
     private func applyReportedRenderProgress(_ reportedProgress: Double) {
         let clamped = min(max(reportedProgress, 0), 1)
         progress = max(progress, clamped)
+        updateRenderingStatusMessage()
+    }
+
+    private func applyReportedRenderStatus(_ status: String) {
+        let trimmed = status.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return
+        }
+        renderStatusDetail = trimmed
+        updateRenderingStatusMessage()
+    }
+
+    private func updateRenderingStatusMessage() {
         let percent = Int((progress * 100).rounded())
-        statusMessage = "Rendering... \(percent)%"
+        if let renderStatusDetail, !renderStatusDetail.isEmpty {
+            statusMessage = "\(renderStatusDetail)\nOverall progress: \(percent)%"
+        } else {
+            statusMessage = "Rendering... \(percent)%"
+        }
     }
 
     private func applyPersistedRenderSettings() {

@@ -74,7 +74,7 @@ struct FFmpegCommandBuilder {
                 throw RenderError.exportFailed("FFmpeg command build failed: no audio input available for clip index \(index).")
             }
             filterParts.append(
-                "[\(audioInputIndex):a]atrim=duration=\(formatSeconds(clipDuration)),asetpts=PTS-STARTPTS," +
+                "[\(audioInputIndex):a:0]atrim=duration=\(formatSeconds(clipDuration)),asetpts=PTS-STARTPTS," +
                 "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[a\(index)]"
             )
         }

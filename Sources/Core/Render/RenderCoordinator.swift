@@ -66,7 +66,8 @@ public final class RenderCoordinator: @unchecked Sendable {
         request: RenderRequest,
         photoMaterializer: PhotoAssetMaterializing?,
         writeDiagnosticsLog: Bool,
-        progressHandler: (@MainActor @Sendable (Double) -> Void)?
+        progressHandler: (@MainActor @Sendable (Double) -> Void)?,
+        statusHandler: (@MainActor @Sendable (String) -> Void)? = nil
     ) async throws -> RenderResult {
         try await renderEngine.render(
             timeline: preparation.timeline,
@@ -75,7 +76,8 @@ public final class RenderCoordinator: @unchecked Sendable {
             outputTarget: request.output,
             photoMaterializer: photoMaterializer,
             writeDiagnosticsLog: writeDiagnosticsLog,
-            progressHandler: progressHandler
+            progressHandler: progressHandler,
+            statusHandler: statusHandler
         )
     }
 

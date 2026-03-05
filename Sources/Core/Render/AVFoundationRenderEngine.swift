@@ -25,7 +25,8 @@ public final class AVFoundationRenderEngine {
         outputTarget: OutputTarget,
         photoMaterializer: PhotoAssetMaterializing?,
         writeDiagnosticsLog: Bool,
-        progressHandler: (@MainActor @Sendable (Double) -> Void)? = nil
+        progressHandler: (@MainActor @Sendable (Double) -> Void)? = nil,
+        statusHandler: (@MainActor @Sendable (String) -> Void)? = nil
     ) async throws -> RenderResult {
         guard !timeline.segments.isEmpty else {
             throw RenderError.noRenderableMedia
@@ -76,6 +77,7 @@ public final class AVFoundationRenderEngine {
         }
 
         do {
+            reportStatus("Preparing media clips...", handler: statusHandler)
             reportProgress(0.02, handler: progressHandler)
             let clips = try await materializeInputClips(
                 segments: timeline.segments,
@@ -84,7 +86,8 @@ public final class AVFoundationRenderEngine {
                 photoMaterializer: photoMaterializer,
                 temporaryURLs: &temporaryURLs,
                 diagnostics: diagnostics,
-                progressHandler: progressHandler
+                progressHandler: progressHandler,
+                statusHandler: statusHandler
             )
 
             guard !clips.isEmpty else {
@@ -96,6 +99,7 @@ public final class AVFoundationRenderEngine {
             let outputURL = try OutputPathResolver.resolveUniqueURL(target: outputTarget, container: exportProfile.container)
             diagnostics.add("Resolved output URL: \(outputURL.path)")
             if requiresFFmpegHDR {
+                reportStatus("Configuring HDR encode...", handler: statusHandler)
                 diagnostics.add("HDR export selected; routing to FFmpeg backend (mode=\(exportProfile.hdrFFmpegBinaryMode.rawValue)).")
                 let ffmpegPlan = FFmpegHDRRenderPlan(
                     clips: clips.map { clip in
@@ -123,9 +127,13 @@ public final class AVFoundationRenderEngine {
                     progressHandler: { ffmpegProgress in
                         let mapped = 0.30 + min(max(ffmpegProgress, 0), 1) * 0.68
                         self.reportProgress(mapped, handler: progressHandler)
+                    },
+                    statusHandler: { ffmpegStatus in
+                        self.reportStatus(ffmpegStatus, handler: statusHandler)
                     }
                 )
                 reportProgress(1.0, handler: progressHandler)
+                reportStatus("Finalizing output...", handler: statusHandler)
                 currentSession = nil
 
                 diagnostics.add("Render completed successfully")
@@ -161,6 +169,8 @@ public final class AVFoundationRenderEngine {
 
             var clipStartTimes: [CMTime] = []
             var cursor = CMTime.zero
+
+            reportStatus("Compositing timeline clips...", handler: statusHandler)
 
             for (index, clip) in clips.enumerated() {
                 clipStartTimes.append(cursor)
@@ -235,6 +245,7 @@ public final class AVFoundationRenderEngine {
             session.shouldOptimizeForNetworkUse = false
             session.videoComposition = videoComposition
 
+            reportStatus("Encoding SDR output...", handler: statusHandler)
             try await export(
                 session: session,
                 progressStart: exportStartProgress,
@@ -242,6 +253,7 @@ public final class AVFoundationRenderEngine {
                 progressHandler: progressHandler
             )
             reportProgress(1.0, handler: progressHandler)
+            reportStatus("Finalizing output...", handler: statusHandler)
             currentSession = nil
 
             diagnostics.add("Render completed successfully")
@@ -355,12 +367,14 @@ public final class AVFoundationRenderEngine {
         photoMaterializer: PhotoAssetMaterializing?,
         temporaryURLs: inout [URL],
         diagnostics: RenderDiagnostics,
-        progressHandler: (@MainActor @Sendable (Double) -> Void)?
+        progressHandler: (@MainActor @Sendable (Double) -> Void)?,
+        statusHandler: (@MainActor @Sendable (String) -> Void)?
     ) async throws -> [InputClip] {
         var clips: [InputClip] = []
         let totalSegments = max(segments.count, 1)
 
         for (index, segment) in segments.enumerated() {
+            reportStatus("Preparing clip \(index + 1) of \(segments.count)...", handler: statusHandler)
             let segmentProgress = 0.05 + (Double(index) / Double(totalSegments)) * 0.18
             reportProgress(segmentProgress, handler: progressHandler)
             switch segment.asset {
@@ -1179,6 +1193,14 @@ public final class AVFoundationRenderEngine {
         guard let handler else { return }
         Task { @MainActor in
             handler(clamped)
+        }
+    }
+
+    private func reportStatus(_ value: String, handler: (@MainActor @Sendable (String) -> Void)?) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let handler else { return }
+        Task { @MainActor in
+            handler(trimmed)
         }
     }
 

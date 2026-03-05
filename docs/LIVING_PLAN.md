@@ -82,6 +82,11 @@ Operational updates after first packaged run:
 - Hotfix: diagnostics log files are now preallocated at render start (when enabled) and finalized to the same path on success/failure so a log file is visible during long renders.
 - Hotfix: FFmpeg progress callbacks are now decoupled from diagnostics lock contention so verbose stderr logging cannot starve UI progress updates.
 - Hotfix: FFmpeg stdout/stderr pipes are explicitly closed after process termination so async line readers cannot block render completion after a successful encode.
+- Hotfix: FFmpeg HDR renderer now includes a no-progress stall watchdog (timeline + output-file-growth) that terminates hung encodes with explicit diagnostics instead of hanging indefinitely.
+- Improved render-status UX by adding live FFmpeg HDR status details (elapsed time, output size, encode speed) and surfacing phase-specific status text through coordinator/engine/UI callbacks.
+- Hotfix: FFmpeg HDR progress now includes fallback advancement from output-file growth and periodic heartbeat status updates so long encodes no longer appear frozen when `out_time` lags.
+- Hotfix: FFmpeg HDR stall detection now treats rising child-process CPU time as activity, avoiding false kills when encoders are still busy but not emitting `out_time` updates.
+- Hotfix: FFmpeg HDR watchdog escalation now attempts graceful shutdown first (`SIGINT`, then `SIGTERM`) before using `SIGKILL` as a last resort.
 
 ## Decisions Log
 
@@ -163,6 +168,11 @@ Operational updates after first packaged run:
 - 2026-03-05: Enabled periodic FFmpeg progress emission (`-stats_period 0.5`) and preallocated diagnostics log file paths at render start for improved long-run observability.
 - 2026-03-05: Removed shared callback lock coupling between FFmpeg diagnostics and progress paths so progress updates remain responsive under heavy stderr logging.
 - 2026-03-05: Force-closed FFmpeg output/error pipes after process termination to prevent post-encode completion hangs while awaiting stream readers.
+- 2026-03-05: Added an FFmpeg HDR stall watchdog that monitors both `out_time` advancement and output-file byte growth, terminating stuck processes with explicit stall context.
+- 2026-03-05: Added phase/status callback plumbing from renderer to UI and upgraded on-screen render status with HDR encode elapsed/output-size/speed details.
+- 2026-03-05: Added FFmpeg HDR progress fallback based on estimated output-size growth plus periodic status heartbeats to keep UI progress moving during long startup/encode phases.
+- 2026-03-05: Updated FFmpeg stall detection to include child-process CPU-time activity and changed watchdog shutdown to graceful interrupt/terminate before hard kill.
+- 2026-03-05: Updated FFmpeg filtergraph audio selectors to explicit first-stream syntax (`a:0`) for better compatibility with multi-audio iPhone source files.
 
 ## Risks/Blockers
 
@@ -188,4 +198,4 @@ To return to the known-good baseline captured before the FFmpeg HDR pivot:
 
 ## Last Updated
 
-2026-03-05 09:34 America/New_York by Codex
+2026-03-05 11:14 America/New_York by Codex
