@@ -18,6 +18,8 @@ struct FFmpegCommand {
 }
 
 struct FFmpegCommandBuilder {
+    static let hlgSDRNominalPeak = 1400
+
     func buildCommand(plan: FFmpegRenderPlan, resolution: FFmpegBinaryResolution) throws -> FFmpegCommand {
         guard !plan.clips.isEmpty else {
             throw RenderError.exportFailed("FFmpeg command build failed: no clips were provided.")
@@ -223,7 +225,7 @@ struct FFmpegCommandBuilder {
         case .hlg:
             // iPhone HLG clips need an explicit nominal peak and gamut reduction
             // before tone mapping or the resulting SDR image stays visibly blown out.
-            return "zscale=transferin=arib-std-b67:primariesin=bt2020:matrixin=bt2020nc:transfer=linear:npl=400," +
+            return "zscale=transferin=arib-std-b67:primariesin=bt2020:matrixin=bt2020nc:transfer=linear:npl=\(Self.hlgSDRNominalPeak)," +
                 "format=gbrpf32le," +
                 "zscale=primaries=bt709," +
                 "tonemap=mobius:desat=2," +

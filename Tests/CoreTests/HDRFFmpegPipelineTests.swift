@@ -253,7 +253,11 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("-color_trc bt709"))
         XCTAssertTrue(joined.contains("-color_primaries bt709"))
         XCTAssertTrue(joined.contains("-colorspace bt709"))
-        XCTAssertTrue(joined.contains("transferin=arib-std-b67:primariesin=bt2020:matrixin=bt2020nc:transfer=linear:npl=400"))
+        XCTAssertTrue(
+            joined.contains(
+                "transferin=arib-std-b67:primariesin=bt2020:matrixin=bt2020nc:transfer=linear:npl=\(FFmpegCommandBuilder.hlgSDRNominalPeak)"
+            )
+        )
         XCTAssertTrue(joined.contains("format=gbrpf32le"))
         XCTAssertTrue(joined.contains("zscale=primaries=bt709"))
         XCTAssertTrue(joined.contains("tonemap=mobius:desat=2"))
@@ -472,7 +476,11 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         let command = try builder.buildCommand(plan: plan, resolution: resolution)
         let joined = command.arguments.joined(separator: " ")
 
-        XCTAssertTrue(joined.contains("transferin=arib-std-b67:primariesin=bt2020:matrixin=bt2020nc:transfer=linear:npl=400"))
+        XCTAssertTrue(
+            joined.contains(
+                "transferin=arib-std-b67:primariesin=bt2020:matrixin=bt2020nc:transfer=linear:npl=\(FFmpegCommandBuilder.hlgSDRNominalPeak)"
+            )
+        )
         XCTAssertTrue(joined.contains("format=gbrpf32le"))
         XCTAssertTrue(joined.contains("zscale=primaries=bt709"))
         XCTAssertTrue(joined.contains("tonemap=mobius:desat=2"))
