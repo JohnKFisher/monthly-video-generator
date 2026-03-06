@@ -9,6 +9,17 @@ VERSION_FILE="$ROOT_DIR/VERSION"
 DIST_DIR="$ROOT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/${APP_NAME}.app"
 THIRD_PARTY_FFMPEG_BIN_DIR="$ROOT_DIR/third_party/ffmpeg/bin"
+ICON_NAME="AppIcon"
+ICON_GENERATOR_SCRIPT="$ROOT_DIR/scripts/generate_app_icon.swift"
+ICON_TEMP_DIR=""
+
+cleanup() {
+  if [[ -n "$ICON_TEMP_DIR" && -d "$ICON_TEMP_DIR" ]]; then
+    rm -rf "$ICON_TEMP_DIR"
+  fi
+}
+
+trap cleanup EXIT
 
 if [[ -f "$VERSION_FILE" ]]; then
   APP_VERSION="$(tr -d '[:space:]' < "$VERSION_FILE")"
@@ -40,6 +51,23 @@ mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
 cp "$EXECUTABLE_PATH" "$APP_BUNDLE/Contents/MacOS/$EXECUTABLE_NAME"
 chmod +x "$APP_BUNDLE/Contents/MacOS/$EXECUTABLE_NAME"
 
+if [[ ! -f "$ICON_GENERATOR_SCRIPT" ]]; then
+  echo "Error: missing icon generator script at $ICON_GENERATOR_SCRIPT." >&2
+  exit 1
+fi
+
+ICON_TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/monthly-video-generator-icon.XXXXXX")"
+ICONSET_DIR="$ICON_TEMP_DIR/${ICON_NAME}.iconset"
+MASTER_ICON_PNG="$ICON_TEMP_DIR/${ICON_NAME}-1024.png"
+ICON_OUTPUT="$ICON_TEMP_DIR/${ICON_NAME}.icns"
+
+swift "$ICON_GENERATOR_SCRIPT" \
+  --iconset-dir "$ICONSET_DIR" \
+  --master-png "$MASTER_ICON_PNG"
+
+iconutil --convert icns "$ICONSET_DIR" --output "$ICON_OUTPUT"
+cp "$ICON_OUTPUT" "$APP_BUNDLE/Contents/Resources/${ICON_NAME}.icns"
+
 if [[ -x "$THIRD_PARTY_FFMPEG_BIN_DIR/ffmpeg" && -x "$THIRD_PARTY_FFMPEG_BIN_DIR/ffprobe" ]]; then
   mkdir -p "$APP_BUNDLE/Contents/Resources/FFmpeg"
   cp "$THIRD_PARTY_FFMPEG_BIN_DIR/ffmpeg" "$APP_BUNDLE/Contents/Resources/FFmpeg/ffmpeg"
@@ -63,6 +91,8 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
   <string>$BUNDLE_ID</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
+  <key>CFBundleIconFile</key>
+  <string>$ICON_NAME</string>
   <key>CFBundleName</key>
   <string>$APP_NAME</string>
   <key>CFBundlePackageType</key>

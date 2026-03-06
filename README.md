@@ -27,6 +27,9 @@ This creates:
 
 - `dist/MonthlyVideoGenerator.app`
 
+The build also generates a custom macOS `AppIcon.icns` from the repo-local Swift
+icon renderer in `scripts/generate_app_icon.swift` and embeds it into the app bundle.
+
 Optional override:
 
 ```bash

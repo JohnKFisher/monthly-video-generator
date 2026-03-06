@@ -225,6 +225,7 @@ Operational updates after first packaged run:
 - 2026-03-06: Updated Export UI/copy and compatibility warnings so bitrate and engine messaging reflect unified FFmpeg final export behavior instead of HDR-only wording.
 - 2026-03-06: Added SDR FFmpeg command coverage in unit tests and removed active use of deprecated `AVAssetExportSession` APIs from the SDR final export path.
 - 2026-03-06: Reorganized the main window into responsive two-column and one-column layouts, compacted the densest control rows, and wrapped the content in a scroll view so no options are lost on shorter windows.
+- 2026-03-06: Added a script-generated macOS app icon pipeline (`scripts/generate_app_icon.swift` -> `.iconset` -> `AppIcon.icns` via `iconutil`), embedded the custom icon in built app bundles, and bumped the shipped app version to `0.4.0`.
 
 ## Risks/Blockers
 
