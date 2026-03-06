@@ -41,6 +41,7 @@ Implemented now:
 - PhotoKit source selection now supports both month/year filtering and album-based filtering.
 - Export UI/model for container/codec/frame rate/resolution/HDR/audio layout/bitrate mode.
 - Plex/Infuse-oriented default export preset for Apple TV 4K (`MP4 + HEVC + HDR + Stereo + Balanced + HDR Auto`), plus explicit UI reset action.
+- Temporary test-only output naming and mega-test batch UI for exercising Resolution/FPS/Range combinations.
 
 Open for S4 completion:
 - Migrate renderer to newer non-deprecated AVFoundation export APIs.
@@ -100,6 +101,8 @@ Operational updates after first packaged run:
 - Updated Export profile manager to resolve effective HDR settings (`HEVC` + `Stereo`) with explicit compatibility messaging so UI/behavior stay aligned.
 - Replaced fixed `30 fps` export with `30 fps` / `60 fps` / `Smart` controls, made Smart the default, and resolved Smart to `60 fps` only when any selected video is `>= 50 fps`.
 - Added Apple Photos Smart-fps inspection before render prep, including progress/status messaging, cached AVAsset reuse during later materialization, and cancellation-aware PhotoKit request handling.
+- Added a temporary auto-generated testing output name (`Testing - S2026E<epoch> - <Resolution> - <FPS>fps - <Range>`) that stays synced until manually edited.
+- Added a temporary `Mega Test` batch mode that expands checked Resolution/FPS/Range axes into sequential renders while reusing one preparation pass and prompting after per-combination failures.
 
 ## Decisions Log
 
@@ -136,6 +139,7 @@ Operational updates after first packaged run:
 - 2026-03-05: Approved defaults-first export policy for Plex + Infuse + Apple TV 4K with HDR as the default dynamic range and manual reset action for existing installations.
 - 2026-03-05: Expanded Photos input scope to support explicit album selection while preserving existing month/year filtering mode.
 - 2026-03-05: Approved Smart fps export policy with `30 fps` / `60 fps` / `Smart`, defaulting to `Smart` and promoting to `60 fps` only when any selected video is `>= 50 fps`.
+- 2026-03-05: Approved temporary testing-only output naming plus a removable mega-test batch UI for Resolution/FPS/Range matrix exports.
 
 ## Changes Since Last Update
 
@@ -207,6 +211,9 @@ Operational updates after first packaged run:
 - 2026-03-05: Added Smart-fps Photos inspection with AVAsset URL/fps caching so Smart decisions can inspect/download selected iCloud-backed videos once and later reuse the same materialized asset during render.
 - 2026-03-05: Upgraded render cancellation so the top-level render task cancellation also stops Smart-fps Photos inspection and cancels outstanding PhotoKit requests.
 - 2026-03-05: Added regression tests for Smart-fps resolution logic, 60 fps still/title intermediate generation, folder-discovered source frame rates, and Photos Smart-fps cache reuse/cancellation behavior.
+- 2026-03-05: Added temporary app-layer testing helpers for generated output names and mega-test matrix expansion, keeping the test-only logic isolated from the render engine.
+- 2026-03-05: Added Output name auto-sync/unlock behavior plus a `Mega Test` UI section that can batch sequential Resolution/FPS/Range renders and prompt to continue or stop after failures.
+- 2026-03-05: Added app-level tests for temporary output naming behavior, mega-test preparation reuse, manual-name bypass during batches, and stop/continue failure handling.
 
 ## Risks/Blockers
 
@@ -236,4 +243,4 @@ For the pre-FFmpeg-pivot baseline, use:
 
 ## Last Updated
 
-2026-03-05 17:39 America/New_York by Codex
+2026-03-05 20:26 America/New_York by Codex

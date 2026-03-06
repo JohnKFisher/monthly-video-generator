@@ -28,7 +28,7 @@ let package = Package(
         ),
         .testTarget(
             name: "CoreTests",
-            dependencies: ["Core", "PhotosIntegration"],
+            dependencies: ["Core", "PhotosIntegration", "MonthlyVideoGeneratorApp"],
             path: "Tests/CoreTests"
         )
     ]

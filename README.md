@@ -82,6 +82,16 @@ Notes:
 - Title cards are rendered at the resolved output size for both fixed-tier and Smart exports.
 - Use the app's `Reset to Plex Defaults` action to apply this profile to an existing installation.
 
+## Temporary Testing Controls
+
+Current temporary test-only app behavior:
+
+- The Output name field auto-generates a testing filename from the selected `Resolution`, `FPS`, and `Range`:
+  `Testing - S2026E<unix epoch> - <Resolution> - <FPS>fps - <Range>`
+- The field stays auto-managed until edited manually. `Use Auto Name` / `Regenerate` restores the temporary generated format.
+- The `Mega Test` section can batch sequential renders across checked `Resolution`, `FPS`, and `Range` axes while reusing one preparation pass.
+- Mega test filenames always use the generated testing format for each combination and ignore the single-render Output name field.
+
 ## Known-Good Rollback
 
 Current known-good rollback checkpoint (`Post-ffmpeg HDR`):
