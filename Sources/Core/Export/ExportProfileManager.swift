@@ -26,8 +26,26 @@ public final class ExportProfileManager {
     }
 
     public func resolveProfile(for profile: ExportProfile) -> ExportProfileResolution {
+        resolveProfile(for: profile, items: nil)
+    }
+
+    public func resolveProfile(for profile: ExportProfile, items: [MediaItem]) -> ExportProfileResolution {
+        resolveProfile(for: profile, items: Optional(items))
+    }
+
+    public func compatibilityWarnings(for profile: ExportProfile) -> [ExportCompatibilityWarning] {
+        resolveProfile(for: profile).warnings
+    }
+
+    public func compatibilityWarnings(for profile: ExportProfile, items: [MediaItem]) -> [ExportCompatibilityWarning] {
+        resolveProfile(for: profile, items: items).warnings
+    }
+
+    private func resolveProfile(for profile: ExportProfile, items: [MediaItem]?) -> ExportProfileResolution {
         var warnings: [ExportCompatibilityWarning] = []
         var effectiveProfile = withResolution(profile.resolution.normalized, in: profile)
+        let requestedAudioLayout = effectiveProfile.audioLayout
+        var smartAudioResolution: SmartAudioResolution?
 
         if effectiveProfile.dynamicRange == .hdr {
             if effectiveProfile.videoCodec != .hevc {
@@ -38,32 +56,44 @@ public final class ExportProfileManager {
                     )
                 )
             }
+        }
 
-            if effectiveProfile.audioLayout != .stereo {
-                effectiveProfile = withAudioLayout(.stereo, in: effectiveProfile)
+        if requestedAudioLayout == .smart, let items {
+            smartAudioResolution = resolveSmartAudioLayout(for: items)
+            effectiveProfile = withAudioLayout(smartAudioResolution?.resolvedLayout ?? .surround51, in: effectiveProfile)
+            warnings.append(
+                ExportCompatibilityWarning(
+                    "Smart audio resolved to \(effectiveProfile.audioLayout.displayLabel) from the selected source videos."
+                )
+            )
+            if smartAudioResolution?.usedUnknownFallback == true {
                 warnings.append(
                     ExportCompatibilityWarning(
-                        "HDR currently exports AAC stereo for Plex + Infuse playback. Selected audio layout was adjusted to Stereo."
+                        "Some videos could not be inspected for Smart audio, so output was raised to 5.1 to avoid dropping channels."
                     )
                 )
             }
         }
 
-        warnings.append(contentsOf: compatibilityWarnings(forEffectiveProfile: effectiveProfile))
+        warnings.append(
+            contentsOf: compatibilityWarnings(
+                forEffectiveProfile: effectiveProfile,
+                requestedAudioLayout: requestedAudioLayout
+            )
+        )
         return ExportProfileResolution(effectiveProfile: effectiveProfile, warnings: warnings)
     }
 
-    public func compatibilityWarnings(for profile: ExportProfile) -> [ExportCompatibilityWarning] {
-        resolveProfile(for: profile).warnings
-    }
-
-    private func compatibilityWarnings(forEffectiveProfile profile: ExportProfile) -> [ExportCompatibilityWarning] {
+    private func compatibilityWarnings(
+        forEffectiveProfile profile: ExportProfile,
+        requestedAudioLayout: AudioLayout
+    ) -> [ExportCompatibilityWarning] {
         var warnings: [ExportCompatibilityWarning] = []
 
         if profile.dynamicRange == .hdr {
             warnings.append(
                 ExportCompatibilityWarning(
-                    "HDR output is tuned for Plex + Infuse on Apple TV 4K (HEVC Main10 + AAC stereo)."
+                    "HDR output is tuned for Plex + Infuse on Apple TV 4K (HEVC Main10 video + AAC audio)."
                 )
             )
             warnings.append(
@@ -87,6 +117,14 @@ public final class ExportProfileManager {
             warnings.append(
                 ExportCompatibilityWarning(
                     "Smart resolution chooses the smallest 16:9 output tier that fits all selected media, up to 4K."
+                )
+            )
+        }
+
+        if requestedAudioLayout == .smart {
+            warnings.append(
+                ExportCompatibilityWarning(
+                    "Smart audio chooses Mono unless any selected video needs Stereo or 5.1; any uninspectable video falls back to 5.1."
                 )
             )
         }
@@ -164,4 +202,32 @@ public final class ExportProfileManager {
             bitrateMode: profile.bitrateMode
         )
     }
+
+    private func resolveSmartAudioLayout(for items: [MediaItem]) -> SmartAudioResolution {
+        let videoItems = items.filter { $0.type == .video }
+        guard !videoItems.isEmpty else {
+            return SmartAudioResolution(resolvedLayout: .mono, usedUnknownFallback: false)
+        }
+
+        var highestKnownChannelCount = 0
+        for item in videoItems {
+            guard let sourceAudioChannelCount = item.sourceAudioChannelCount else {
+                return SmartAudioResolution(resolvedLayout: .surround51, usedUnknownFallback: true)
+            }
+            highestKnownChannelCount = max(highestKnownChannelCount, sourceAudioChannelCount)
+        }
+
+        if highestKnownChannelCount > 2 {
+            return SmartAudioResolution(resolvedLayout: .surround51, usedUnknownFallback: false)
+        }
+        if highestKnownChannelCount == 2 {
+            return SmartAudioResolution(resolvedLayout: .stereo, usedUnknownFallback: false)
+        }
+        return SmartAudioResolution(resolvedLayout: .mono, usedUnknownFallback: false)
+    }
+}
+
+private struct SmartAudioResolution {
+    let resolvedLayout: AudioLayout
+    let usedUnknownFallback: Bool
 }

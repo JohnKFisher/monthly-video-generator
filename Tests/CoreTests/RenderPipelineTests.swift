@@ -33,7 +33,7 @@ final class RenderPipelineTests: XCTestCase {
         XCTAssertEqual(profile.resolution, .smart)
         XCTAssertEqual(profile.dynamicRange, .hdr)
         XCTAssertEqual(profile.hdrFFmpegBinaryMode, .autoSystemThenBundled)
-        XCTAssertEqual(profile.audioLayout, .stereo)
+        XCTAssertEqual(profile.audioLayout, .smart)
         XCTAssertEqual(profile.bitrateMode, .balanced)
     }
 
@@ -42,7 +42,7 @@ final class RenderPipelineTests: XCTestCase {
         XCTAssertEqual(manager.defaultProfile(), .plexInfuseAppleTV4KDefault)
     }
 
-    func testResolveProfileForHDRForcesHEVCAndStereo() {
+    func testResolveProfileForHDRForcesHEVCButKeepsSelectedAudioLayout() {
         let manager = ExportProfileManager()
         let selected = ExportProfile(
             container: .mp4,
@@ -60,9 +60,9 @@ final class RenderPipelineTests: XCTestCase {
 
         XCTAssertEqual(resolved.effectiveProfile.resolution, .smart)
         XCTAssertEqual(resolved.effectiveProfile.videoCodec, .hevc)
-        XCTAssertEqual(resolved.effectiveProfile.audioLayout, .stereo)
+        XCTAssertEqual(resolved.effectiveProfile.audioLayout, .surround51)
         XCTAssertTrue(resolved.warnings.contains { $0.message.contains("adjusted to HEVC") })
-        XCTAssertTrue(resolved.warnings.contains { $0.message.contains("adjusted to Stereo") })
+        XCTAssertFalse(resolved.warnings.contains { $0.message.contains("adjusted to Stereo") })
     }
 
     func testResolveProfileForSDRKeepsSelectedCodecAndAudioLayout() {
@@ -83,6 +83,104 @@ final class RenderPipelineTests: XCTestCase {
 
         XCTAssertEqual(resolved.effectiveProfile.videoCodec, .h264)
         XCTAssertEqual(resolved.effectiveProfile.audioLayout, .surround51)
+    }
+
+    func testResolveProfileForSmartAudioChoosesMonoWhenAllVideosAreMonoOrSilent() {
+        let manager = ExportProfileManager()
+        let selected = ExportProfile(
+            container: .mov,
+            videoCodec: .h264,
+            audioCodec: .aac,
+            frameRate: .fps30,
+            resolution: .fixed1080p,
+            dynamicRange: .sdr,
+            hdrFFmpegBinaryMode: .autoSystemThenBundled,
+            audioLayout: .smart,
+            bitrateMode: .balanced
+        )
+
+        let resolved = manager.resolveProfile(
+            for: selected,
+            items: [
+                makeVideoMediaItem(frameRate: 30, audioChannelCount: 1),
+                makeVideoMediaItem(frameRate: 30, audioChannelCount: 0)
+            ]
+        )
+
+        XCTAssertEqual(resolved.effectiveProfile.audioLayout, .mono)
+    }
+
+    func testResolveProfileForSmartAudioChoosesStereoWhenAnyVideoIsStereo() {
+        let manager = ExportProfileManager()
+        let selected = ExportProfile(
+            container: .mov,
+            videoCodec: .h264,
+            audioCodec: .aac,
+            frameRate: .fps30,
+            resolution: .fixed1080p,
+            dynamicRange: .sdr,
+            hdrFFmpegBinaryMode: .autoSystemThenBundled,
+            audioLayout: .smart,
+            bitrateMode: .balanced
+        )
+
+        let resolved = manager.resolveProfile(
+            for: selected,
+            items: [
+                makeVideoMediaItem(frameRate: 30, audioChannelCount: 1),
+                makeVideoMediaItem(frameRate: 30, audioChannelCount: 2)
+            ]
+        )
+
+        XCTAssertEqual(resolved.effectiveProfile.audioLayout, .stereo)
+    }
+
+    func testResolveProfileForSmartAudioChooses51WhenAnyVideoExceedsStereo() {
+        let manager = ExportProfileManager()
+        let selected = ExportProfile(
+            container: .mov,
+            videoCodec: .h264,
+            audioCodec: .aac,
+            frameRate: .fps30,
+            resolution: .fixed1080p,
+            dynamicRange: .sdr,
+            hdrFFmpegBinaryMode: .autoSystemThenBundled,
+            audioLayout: .smart,
+            bitrateMode: .balanced
+        )
+
+        let resolved = manager.resolveProfile(
+            for: selected,
+            items: [
+                makeVideoMediaItem(frameRate: 30, audioChannelCount: 2),
+                makeVideoMediaItem(frameRate: 30, audioChannelCount: 6)
+            ]
+        )
+
+        XCTAssertEqual(resolved.effectiveProfile.audioLayout, .surround51)
+    }
+
+    func testResolveProfileForSmartAudioFallsBackTo51WhenVideoAudioIsUnknown() {
+        let manager = ExportProfileManager()
+        let selected = ExportProfile(
+            container: .mov,
+            videoCodec: .h264,
+            audioCodec: .aac,
+            frameRate: .fps30,
+            resolution: .fixed1080p,
+            dynamicRange: .sdr,
+            hdrFFmpegBinaryMode: .autoSystemThenBundled,
+            audioLayout: .smart,
+            bitrateMode: .balanced
+        )
+
+        let resolved = manager.resolveProfile(
+            for: selected,
+            items: [makeVideoMediaItem(frameRate: 30, audioChannelCount: nil)]
+        )
+
+        XCTAssertEqual(resolved.effectiveProfile.audioLayout, .surround51)
+        XCTAssertTrue(resolved.warnings.contains { $0.message.contains("raised to 5.1") })
     }
 
     func testResolutionPolicyDecodesLegacyMatchSourceMaxAsSmart() throws {
@@ -290,7 +388,7 @@ final class RenderPipelineTests: XCTestCase {
             frameRate: .smart,
             resolution: .smart,
             dynamicRange: .hdr,
-            audioLayout: .stereo,
+            audioLayout: .smart,
             bitrateMode: .balanced
         )
 
@@ -298,6 +396,7 @@ final class RenderPipelineTests: XCTestCase {
 
         XCTAssertTrue(warnings.contains { $0.contains("smallest 16:9 output tier") })
         XCTAssertTrue(warnings.contains { $0.contains("Smart frame rate exports at 30 fps") })
+        XCTAssertTrue(warnings.contains { $0.contains("Smart audio chooses Mono") })
     }
 
     func testFixed60FPSCompatibilityWarningMentionsCost() {
@@ -446,13 +545,14 @@ final class RenderPipelineTests: XCTestCase {
         )
     }
 
-    private func makeVideoMediaItem(frameRate: Double?) -> MediaItem {
+    private func makeVideoMediaItem(frameRate: Double?, audioChannelCount: Int? = 2) -> MediaItem {
         MediaItem(
             id: UUID().uuidString,
             type: .video,
             captureDate: Date(),
             duration: CMTime(seconds: 2, preferredTimescale: 600),
             sourceFrameRate: frameRate,
+            sourceAudioChannelCount: audioChannelCount,
             pixelSize: CGSize(width: 1920, height: 1080),
             colorInfo: .unknown,
             locator: .file(URL(fileURLWithPath: "/tmp/\(UUID().uuidString).mov")),

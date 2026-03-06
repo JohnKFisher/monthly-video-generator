@@ -112,6 +112,7 @@ public final class AVFoundationRenderEngine {
                 outputURL: outputURL,
                 renderSize: renderSize,
                 frameRate: resolvedFrameRate,
+                audioLayout: exportProfile.audioLayout,
                 bitrateMode: exportProfile.bitrateMode,
                 container: exportProfile.container,
                 videoCodec: exportProfile.videoCodec,

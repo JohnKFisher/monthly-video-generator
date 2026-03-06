@@ -4,7 +4,7 @@ import Foundation
 import XCTest
 
 final class PhotoKitAssetMaterializerTests: XCTestCase {
-    func testPrepareItemsForSmartFrameRateCachesLoadedVideoAssetForMaterialization() async throws {
+    func testPrepareItemsForSmartMediaCachesLoadedVideoAssetForMaterialization() async throws {
         let expectedURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("PhotoKitAssetMaterializerTests-\(UUID().uuidString)")
             .appendingPathExtension("mov")
@@ -18,23 +18,32 @@ final class PhotoKitAssetMaterializerTests: XCTestCase {
         let materializer = PhotoKitAssetMaterializer(videoAssetLoader: { localIdentifier in
             XCTAssertEqual(localIdentifier, "video-1")
             loadCounter.increment()
-            return PhotoKitAssetMaterializer.LoadedVideoAsset(url: expectedURL, sourceFrameRate: 59.94)
+            return PhotoKitAssetMaterializer.LoadedVideoAsset(
+                url: expectedURL,
+                sourceFrameRate: 59.94,
+                sourceAudioChannelCount: 6
+            )
         })
 
-        let result = try await materializer.prepareItemsForSmartFrameRate(
+        let result = try await materializer.prepareItemsForSmartMedia(
             [makePhotoVideoItem(localIdentifier: "video-1")],
+            inspectFrameRate: true,
+            inspectAudioChannels: true,
             progressHandler: { callbackRecorder.recordProgress($0) },
             statusHandler: { callbackRecorder.recordStatus($0) }
         )
 
-        let updatedItem = try XCTUnwrap(result.items.first)
+        guard let updatedItem = result.items.first else {
+            return XCTFail("Expected inspected item")
+        }
         XCTAssertEqual(updatedItem.sourceFrameRate ?? 0, 59.94, accuracy: 0.001)
+        XCTAssertEqual(updatedItem.sourceAudioChannelCount, 6)
         XCTAssertTrue(result.warnings.isEmpty)
 
         let callbacks = callbackRecorder.snapshot()
         XCTAssertEqual(callbacks.progress.first ?? -1, 0, accuracy: 0.001)
         XCTAssertEqual(callbacks.progress.last ?? -1, 1, accuracy: 0.001)
-        XCTAssertEqual(callbacks.status, ["Inspecting video frame rates 1 of 1..."])
+        XCTAssertEqual(callbacks.status, ["Inspecting video frame rates and audio 1 of 1..."])
 
         let materializedURL = try await materializer.materializePhotoAsset(
             localIdentifier: "video-1",
@@ -52,14 +61,17 @@ final class PhotoKitAssetMaterializerTests: XCTestCase {
             try await Task.sleep(for: .seconds(30))
             return PhotoKitAssetMaterializer.LoadedVideoAsset(
                 url: URL(fileURLWithPath: "/tmp/unused.mov"),
-                sourceFrameRate: 60
+                sourceFrameRate: 60,
+                sourceAudioChannelCount: 2
             )
         })
         let item = makePhotoVideoItem(localIdentifier: "video-1")
 
-        let task = Task {
-            try await materializer.prepareItemsForSmartFrameRate(
-                [item]
+        let task = Task<SmartMediaInspectionResult, Error> {
+            try await materializer.prepareItemsForSmartMedia(
+                [item],
+                inspectFrameRate: true,
+                inspectAudioChannels: true
             )
         }
 

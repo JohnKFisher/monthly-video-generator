@@ -95,6 +95,7 @@ public final class FolderMediaDiscoveryService {
             let asset = AVURLAsset(url: url)
             let duration = try? await asset.load(.duration)
             let tracks = try? await asset.loadTracks(withMediaType: .video)
+            let sourceAudioChannelCount = await primaryAudioChannelCount(for: asset)
 
             var finalSize = CGSize(width: 1920, height: 1080)
             var sourceFrameRate: Double?
@@ -115,6 +116,7 @@ public final class FolderMediaDiscoveryService {
                 captureDate: captureDate,
                 duration: duration,
                 sourceFrameRate: sourceFrameRate,
+                sourceAudioChannelCount: sourceAudioChannelCount,
                 pixelSize: finalSize,
                 colorInfo: .unknown,
                 locator: .file(url),
@@ -133,5 +135,38 @@ public final class FolderMediaDiscoveryService {
         }
         #endif
         return CGSize(width: 1920, height: 1080)
+    }
+
+    private func primaryAudioChannelCount(for asset: AVURLAsset) async -> Int? {
+        let audioTracks: [AVAssetTrack]
+        do {
+            audioTracks = try await asset.loadTracks(withMediaType: .audio)
+        } catch {
+            return nil
+        }
+
+        guard let audioTrack = audioTracks.first else {
+            return 0
+        }
+
+        return await audioChannelCount(for: audioTrack)
+    }
+
+    private func audioChannelCount(for track: AVAssetTrack) async -> Int? {
+        guard let formatDescriptions = try? await track.load(.formatDescriptions) else {
+            return nil
+        }
+
+        for formatDescription in formatDescriptions {
+            let cmFormatDescription = formatDescription as CMFormatDescription
+            if let basicDescription = CMAudioFormatDescriptionGetStreamBasicDescription(cmFormatDescription) {
+                let channels = Int(basicDescription.pointee.mChannelsPerFrame)
+                if channels > 0 {
+                    return channels
+                }
+            }
+        }
+
+        return nil
     }
 }

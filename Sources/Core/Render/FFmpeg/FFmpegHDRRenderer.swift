@@ -728,7 +728,7 @@ final class FFmpegHDRRenderer {
             dynamicRange: plan.dynamicRange
         )
         let videoBits = pixelsPerFrame * Double(max(plan.frameRate, 24)) * durationSeconds * bitsPerPixel
-        let audioBits = 192_000 * durationSeconds
+        let audioBits = Double(plan.audioLayout.aacBitrate ?? 192_000) * durationSeconds
         let totalBytes = max((videoBits + audioBits) / 8.0, 1)
         return UInt64(totalBytes.rounded())
     }

@@ -210,10 +210,9 @@ struct MainWindowView: View {
                     GridRow {
                         Picker("Audio", selection: $viewModel.selectedAudioLayout) {
                             ForEach(AudioLayout.allCases, id: \.self) { layout in
-                                Text(layout == .stereo ? "Stereo" : "5.1").tag(layout)
+                                Text(layout.displayLabel).tag(layout)
                             }
                         }
-                        .disabled(viewModel.isHDRSelectionLocked)
 
                         Picker("Bitrate", selection: $viewModel.selectedBitrateMode) {
                             ForEach(BitrateMode.allCases, id: \.self) { mode in
@@ -263,6 +262,9 @@ struct MainWindowView: View {
                     if let photosSmartFrameRateDescription = viewModel.photosSmartFrameRateDescription {
                         caption(photosSmartFrameRateDescription)
                     }
+                    if let photosSmartAudioDescription = viewModel.photosSmartAudioDescription {
+                        caption(photosSmartAudioDescription)
+                    }
                 }
 
                 ViewThatFits(in: .horizontal) {
@@ -294,7 +296,7 @@ struct MainWindowView: View {
 
                 caption(
                     viewModel.isOutputNameAutoManaged
-                    ? "Temporary testing name stays in sync with Resolution, FPS, and Range until you edit it."
+                    ? "Temporary testing name stays in sync with Resolution, FPS, Range, and Audio until you edit it."
                     : "Manual output name override is active. Use “Use Auto Name” to restore the temporary testing name."
                 )
 
@@ -327,6 +329,7 @@ struct MainWindowView: View {
                         Toggle("Resolution", isOn: $viewModel.megaTestVaryResolution)
                         Toggle("FPS", isOn: $viewModel.megaTestVaryFrameRate)
                         Toggle("Range", isOn: $viewModel.megaTestVaryRange)
+                        Toggle("Audio", isOn: $viewModel.megaTestVaryAudio)
                         Spacer()
                         Button("Run Mega Test") {
                             viewModel.startMegaTest()
@@ -339,6 +342,7 @@ struct MainWindowView: View {
                             Toggle("Resolution", isOn: $viewModel.megaTestVaryResolution)
                             Toggle("FPS", isOn: $viewModel.megaTestVaryFrameRate)
                             Toggle("Range", isOn: $viewModel.megaTestVaryRange)
+                            Toggle("Audio", isOn: $viewModel.megaTestVaryAudio)
                         }
                         Button("Run Mega Test") {
                             viewModel.startMegaTest()
@@ -349,6 +353,9 @@ struct MainWindowView: View {
 
                 caption("\(viewModel.megaTestCombinationCountDescription) will be rendered sequentially.")
                 caption("Mega test always uses the temporary generated testing filename for each combination and ignores the single-render Output name field.")
+                if let megaTestPhotosSmartAudioDescription = viewModel.megaTestPhotosSmartAudioDescription {
+                    caption(megaTestPhotosSmartAudioDescription)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

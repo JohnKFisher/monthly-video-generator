@@ -40,8 +40,8 @@ Implemented now:
 - PhotoKit discovery/materialization for month/year library rendering.
 - PhotoKit source selection now supports both month/year filtering and album-based filtering.
 - Export UI/model for container/codec/frame rate/resolution/HDR/audio layout/bitrate mode.
-- Plex/Infuse-oriented default export preset for Apple TV 4K (`MP4 + HEVC + HDR + Stereo + Balanced + HDR Auto`), plus explicit UI reset action.
-- Temporary test-only output naming and mega-test batch UI for exercising Resolution/FPS/Range combinations.
+- Plex/Infuse-oriented default export preset for Apple TV 4K (`MP4 + HEVC + HDR + Smart Audio + Balanced + HDR Auto`), plus explicit UI reset action.
+- Temporary test-only output naming and mega-test batch UI for exercising Resolution/FPS/Range/Audio combinations.
 
 Open for S4 completion:
 - Migrate renderer to newer non-deprecated AVFoundation export APIs.
@@ -99,11 +99,11 @@ Operational updates after first packaged run:
 - Hotfix: FFmpeg pipe readers now run on a dedicated utility queue using blocking `availableData` reads to keep stderr/stdout draining in real time during long HDR encodes.
 - Established new known-good rollback checkpoint (`Post-ffmpeg HDR`): `checkpoint/20260305-known-good-post-ffmpeg-hdr`.
 - Updated defaults workflow for Plex + Infuse + Apple TV 4K: fresh installs now default to HDR MP4/HEVC profile, existing saved preferences remain untouched, and Export UI includes `Reset to Plex Defaults`.
-- Updated Export profile manager to resolve effective HDR settings (`HEVC` + `Stereo`) with explicit compatibility messaging so UI/behavior stay aligned.
+- Updated Export profile manager to resolve effective HDR settings (`HEVC`) with explicit compatibility messaging so UI/behavior stay aligned.
 - Replaced fixed `30 fps` export with `30 fps` / `60 fps` / `Smart` controls, made Smart the default, and resolved Smart to `60 fps` only when any selected video is `>= 50 fps`.
 - Added Apple Photos Smart-fps inspection before render prep, including progress/status messaging, cached AVAsset reuse during later materialization, and cancellation-aware PhotoKit request handling.
-- Added a temporary auto-generated testing output name (`Testing - S2026E<epoch> - <Resolution> - <FPS>fps - <Range>`) that stays synced until manually edited.
-- Added a temporary `Mega Test` batch mode that expands checked Resolution/FPS/Range axes into sequential renders while reusing one preparation pass and prompting after per-combination failures.
+- Added a temporary auto-generated testing output name (`Testing - S2026E<epoch> - <Resolution> - <FPS>fps - <Range> - <Audio>`) that stays synced until manually edited.
+- Added a temporary `Mega Test` batch mode that expands checked Resolution/FPS/Range/Audio axes into sequential renders while reusing one preparation pass and prompting after per-combination failures.
 - Switched SDR final export from `AVAssetExportSession` to the shared FFmpeg backend, added SDR H.264/HEVC encoder capability probing, and normalized SDR outputs to BT.709 with real bitrate control.
 - Reworked the main window into a denser two-column layout with a vertical scroll fallback so all controls remain reachable on smaller window heights.
 
@@ -142,7 +142,7 @@ Operational updates after first packaged run:
 - 2026-03-05: Approved defaults-first export policy for Plex + Infuse + Apple TV 4K with HDR as the default dynamic range and manual reset action for existing installations.
 - 2026-03-05: Expanded Photos input scope to support explicit album selection while preserving existing month/year filtering mode.
 - 2026-03-05: Approved Smart fps export policy with `30 fps` / `60 fps` / `Smart`, defaulting to `Smart` and promoting to `60 fps` only when any selected video is `>= 50 fps`.
-- 2026-03-05: Approved temporary testing-only output naming plus a removable mega-test batch UI for Resolution/FPS/Range matrix exports.
+- 2026-03-05: Approved temporary testing-only output naming plus a removable mega-test batch UI for Resolution/FPS/Range/Audio matrix exports.
 - 2026-03-06: Approved moving SDR final export onto the shared FFmpeg backend while keeping AVFoundation for discovery and still/title intermediate generation.
 - 2026-03-06: Approved a space-efficiency UI pass so the full control set remains visible without vertically clipping the window.
 
@@ -205,8 +205,8 @@ Operational updates after first packaged run:
 - 2026-03-05: Replaced FFmpeg pipe `bytes.lines` readers with byte-level CR/LF parsing to keep stream draining robust under mixed carriage-return/newline output.
 - 2026-03-05: Changed stall watchdog to use a longer late-stage timeout (>=95% progress) before escalation, reducing false positives near encode finalization.
 - 2026-03-05: Moved FFmpeg stdout/stderr reads to a dedicated background queue (`availableData`) after diagnostics showed stream lines were still being delivered only at process teardown.
-- 2026-03-05: Added `ExportProfile.plexInfuseAppleTV4KDefault`, switched manager defaults to this profile, and introduced profile-resolution hooks that enforce effective HDR codec/audio behavior.
-- 2026-03-05: Updated Export UI/view-model defaults and added `Reset to Plex Defaults`; HDR mode now locks codec/audio selectors to effective renderer constraints with explanatory copy.
+- 2026-03-05: Added `ExportProfile.plexInfuseAppleTV4KDefault`, switched manager defaults to this profile, and introduced profile-resolution hooks that enforce effective HDR codec behavior.
+- 2026-03-05: Updated Export UI/view-model defaults and added `Reset to Plex Defaults`; HDR mode now locks codec selection to effective renderer constraints with explanatory copy.
 - 2026-03-05: Added regression tests for new default profile values, manager default resolution, HDR profile normalization behavior, and codable round-trip of the new preset.
 - 2026-03-05: Replaced `Match Source Max` with `Smart`/`720p`/`1080p`/`4K` resolution choices, normalized legacy saved `matchSourceMax` settings to `smart`, and made Smart the new default export resolution.
 - 2026-03-05: Added shared 16:9 Smart resolution sizing, applied aspect-fit video transforms with black background bars on the SDR AVFoundation path, and locked title cards to the final resolved output size.
@@ -217,7 +217,7 @@ Operational updates after first packaged run:
 - 2026-03-05: Upgraded render cancellation so the top-level render task cancellation also stops Smart-fps Photos inspection and cancels outstanding PhotoKit requests.
 - 2026-03-05: Added regression tests for Smart-fps resolution logic, 60 fps still/title intermediate generation, folder-discovered source frame rates, and Photos Smart-fps cache reuse/cancellation behavior.
 - 2026-03-05: Added temporary app-layer testing helpers for generated output names and mega-test matrix expansion, keeping the test-only logic isolated from the render engine.
-- 2026-03-05: Added Output name auto-sync/unlock behavior plus a `Mega Test` UI section that can batch sequential Resolution/FPS/Range renders and prompt to continue or stop after failures.
+- 2026-03-05: Added Output name auto-sync/unlock behavior plus a `Mega Test` UI section that can batch sequential Resolution/FPS/Range/Audio renders and prompt to continue or stop after failures.
 - 2026-03-05: Added app-level tests for temporary output naming behavior, mega-test preparation reuse, manual-name bypass during batches, and stop/continue failure handling.
 - 2026-03-06: Added SDR FFmpeg HDR-source tone mapping with capability-gated `tonemap` filter requirements, bundled-binary fallback when system FFmpeg lacks tone-map support, and regression tests for PQ/HLG SDR conversion paths.
 - 2026-03-06: Retuned the SDR HLG source-video conversion path to `HLG -> linear:npl=1400 -> BT.709 primaries -> mobius tonemap -> BT.709/range=tv` after sample-frame comparisons showed the earlier `npl=400` recipe still left iPhone faces and highlights too hot in SDR exports.
@@ -226,6 +226,9 @@ Operational updates after first packaged run:
 - 2026-03-06: Added SDR FFmpeg command coverage in unit tests and removed active use of deprecated `AVAssetExportSession` APIs from the SDR final export path.
 - 2026-03-06: Reorganized the main window into responsive two-column and one-column layouts, compacted the densest control rows, and wrapped the content in a scroll view so no options are lost on shorter windows.
 - 2026-03-06: Added a script-generated macOS app icon pipeline (`scripts/generate_app_icon.swift` -> `.iconset` -> `AppIcon.icns` via `iconutil`), embedded the custom icon in built app bundles, and bumped the shipped app version to `0.4.0`.
+- 2026-03-06: Expanded audio layout controls to `Mono` / `Stereo` / `5.1` / `Smart`, made Smart the new default, and resolved Smart audio from inspected source-video channel counts with a conservative `5.1` fallback for uninspectable videos.
+- 2026-03-06: Added an `Audio` Mega Test axis plus `- <Audio>` testing filename tokens, keeping generated names synced with the selected audio policy while Mega Test varies audio combinations deterministically.
+- 2026-03-06: Updated the FFmpeg render plan/command builder to emit real mono/stereo/5.1 AAC outputs instead of hard-coded stereo, including layout-matched silent fillers, final `-ac`, and bitrate-aware output size estimates.
 
 ## Risks/Blockers
 

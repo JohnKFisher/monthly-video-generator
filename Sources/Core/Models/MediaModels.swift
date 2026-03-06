@@ -31,6 +31,7 @@ public struct MediaItem: Equatable, Identifiable, @unchecked Sendable {
     public let captureDate: Date?
     public let duration: CMTime?
     public let sourceFrameRate: Double?
+    public let sourceAudioChannelCount: Int?
     public let pixelSize: CGSize
     public let colorInfo: ColorInfo
     public let locator: MediaLocator
@@ -43,6 +44,7 @@ public struct MediaItem: Equatable, Identifiable, @unchecked Sendable {
         captureDate: Date?,
         duration: CMTime?,
         sourceFrameRate: Double? = nil,
+        sourceAudioChannelCount: Int? = nil,
         pixelSize: CGSize,
         colorInfo: ColorInfo,
         locator: MediaLocator,
@@ -54,6 +56,7 @@ public struct MediaItem: Equatable, Identifiable, @unchecked Sendable {
         self.captureDate = captureDate
         self.duration = duration
         self.sourceFrameRate = sourceFrameRate
+        self.sourceAudioChannelCount = sourceAudioChannelCount
         self.pixelSize = pixelSize
         self.colorInfo = colorInfo
         self.locator = locator
@@ -67,12 +70,24 @@ public struct MediaItem: Equatable, Identifiable, @unchecked Sendable {
     }
 
     public func withSourceFrameRate(_ sourceFrameRate: Double?) -> MediaItem {
+        withSourceInspection(sourceFrameRate: sourceFrameRate, sourceAudioChannelCount: sourceAudioChannelCount)
+    }
+
+    public func withSourceAudioChannelCount(_ sourceAudioChannelCount: Int?) -> MediaItem {
+        withSourceInspection(sourceFrameRate: sourceFrameRate, sourceAudioChannelCount: sourceAudioChannelCount)
+    }
+
+    public func withSourceInspection(
+        sourceFrameRate: Double?,
+        sourceAudioChannelCount: Int?
+    ) -> MediaItem {
         MediaItem(
             id: id,
             type: type,
             captureDate: captureDate,
             duration: duration,
             sourceFrameRate: sourceFrameRate,
+            sourceAudioChannelCount: sourceAudioChannelCount,
             pixelSize: pixelSize,
             colorInfo: colorInfo,
             locator: locator,

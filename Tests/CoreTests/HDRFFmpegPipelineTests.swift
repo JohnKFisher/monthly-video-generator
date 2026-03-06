@@ -174,6 +174,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
             outputURL: URL(fileURLWithPath: "/tmp/out.mov"),
             renderSize: CGSize(width: 1920, height: 1080),
             frameRate: 60,
+            audioLayout: .stereo,
             bitrateMode: .qualityFirst,
             container: .mov,
             videoCodec: .hevc,
@@ -240,6 +241,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
             outputURL: URL(fileURLWithPath: "/tmp/out.mp4"),
             renderSize: CGSize(width: 3840, height: 2160),
             frameRate: 60,
+            audioLayout: .stereo,
             bitrateMode: .balanced,
             container: .mp4,
             videoCodec: .h264,
@@ -263,6 +265,73 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("tonemap=mobius:desat=2"))
         XCTAssertTrue(joined.contains("zscale=transfer=bt709:matrix=bt709:range=tv"))
         XCTAssertTrue(joined.contains("format=yuv420p"))
+    }
+
+    func testCommandBuilderUsesMonoAudioLayoutWhenRequested() throws {
+        let builder = FFmpegCommandBuilder()
+        let resolution = makeCapableResolution()
+        let plan = FFmpegRenderPlan(
+            clips: [
+                FFmpegRenderClip(
+                    url: URL(fileURLWithPath: "/tmp/a.mov"),
+                    durationSeconds: 2,
+                    includeAudio: false,
+                    hasAudioTrack: false,
+                    colorInfo: .unknown,
+                    sourceDescription: "clip-a"
+                )
+            ],
+            transitionDurationSeconds: 0,
+            outputURL: URL(fileURLWithPath: "/tmp/out.mp4"),
+            renderSize: CGSize(width: 1920, height: 1080),
+            frameRate: 30,
+            audioLayout: .mono,
+            bitrateMode: .balanced,
+            container: .mp4,
+            videoCodec: .h264,
+            dynamicRange: .sdr
+        )
+
+        let command = try builder.buildCommand(plan: plan, resolution: resolution)
+        let joined = command.arguments.joined(separator: " ")
+
+        XCTAssertTrue(joined.contains("anullsrc=r=48000:cl=mono"))
+        XCTAssertTrue(joined.contains("channel_layouts=mono"))
+        XCTAssertTrue(joined.contains("-ac 1"))
+        XCTAssertTrue(joined.contains("-b:a 96k"))
+    }
+
+    func testCommandBuilderUses51AudioLayoutWhenRequested() throws {
+        let builder = FFmpegCommandBuilder()
+        let resolution = makeCapableResolution()
+        let plan = FFmpegRenderPlan(
+            clips: [
+                FFmpegRenderClip(
+                    url: URL(fileURLWithPath: "/tmp/a.mov"),
+                    durationSeconds: 2,
+                    includeAudio: true,
+                    hasAudioTrack: true,
+                    colorInfo: .unknown,
+                    sourceDescription: "clip-a"
+                )
+            ],
+            transitionDurationSeconds: 0,
+            outputURL: URL(fileURLWithPath: "/tmp/out.mp4"),
+            renderSize: CGSize(width: 1920, height: 1080),
+            frameRate: 30,
+            audioLayout: .surround51,
+            bitrateMode: .balanced,
+            container: .mp4,
+            videoCodec: .h264,
+            dynamicRange: .sdr
+        )
+
+        let command = try builder.buildCommand(plan: plan, resolution: resolution)
+        let joined = command.arguments.joined(separator: " ")
+
+        XCTAssertTrue(joined.contains("channel_layouts=5.1"))
+        XCTAssertTrue(joined.contains("-ac 6"))
+        XCTAssertTrue(joined.contains("-b:a 384k"))
     }
 
     func testBinaryResolverAutoFallsBackToBundledWhenSystemIsMissingTonemapForSDRHDRSources() throws {
@@ -323,6 +392,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
             outputURL: URL(fileURLWithPath: "/tmp/out.mp4"),
             renderSize: CGSize(width: 1920, height: 1080),
             frameRate: 30,
+            audioLayout: .stereo,
             bitrateMode: .balanced,
             container: .mp4,
             videoCodec: .h264,
@@ -413,6 +483,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
             outputURL: URL(fileURLWithPath: "/tmp/out.mp4"),
             renderSize: CGSize(width: 3840, height: 2160),
             frameRate: 30,
+            audioLayout: .stereo,
             bitrateMode: .balanced,
             container: .mp4,
             videoCodec: .h264,
@@ -467,6 +538,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
             outputURL: URL(fileURLWithPath: "/tmp/out.mp4"),
             renderSize: CGSize(width: 3840, height: 2160),
             frameRate: 30,
+            audioLayout: .stereo,
             bitrateMode: .balanced,
             container: .mp4,
             videoCodec: .h264,
@@ -526,6 +598,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
             outputURL: URL(fileURLWithPath: "/tmp/out.mp4"),
             renderSize: CGSize(width: 1920, height: 1080),
             frameRate: 30,
+            audioLayout: .stereo,
             bitrateMode: .balanced,
             container: .mp4,
             videoCodec: .h264,
@@ -613,5 +686,29 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         let decoded = try JSONDecoder().decode(ExportProfile.self, from: data)
 
         XCTAssertEqual(decoded, profile)
+    }
+
+    private func makeCapableResolution() -> FFmpegBinaryResolution {
+        FFmpegBinaryResolution(
+            selectedBinary: FFmpegBinary(
+                ffmpegURL: URL(fileURLWithPath: "/tmp/ffmpeg"),
+                ffprobeURL: URL(fileURLWithPath: "/tmp/ffprobe"),
+                source: .system
+            ),
+            selectedCapabilities: FFmpegCapabilities(
+                versionDescription: "system",
+                hasZscale: true,
+                hasTonemap: true,
+                hasXfade: true,
+                hasAcrossfade: true,
+                hasLibx264: true,
+                hasH264VideoToolbox: true,
+                hasLibx265: true,
+                hasHEVCVideoToolbox: true
+            ),
+            systemCapabilities: nil,
+            bundledCapabilities: nil,
+            fallbackReason: nil
+        )
     }
 }

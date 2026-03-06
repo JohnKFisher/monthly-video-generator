@@ -82,8 +82,74 @@ public enum HDRFFmpegBinaryMode: String, CaseIterable, Codable, Sendable {
 }
 
 public enum AudioLayout: String, CaseIterable, Codable, Sendable {
+    case mono
     case stereo
     case surround51
+    case smart
+
+    public static var allCases: [AudioLayout] {
+        [.mono, .stereo, .surround51, .smart]
+    }
+
+    public var displayLabel: String {
+        switch self {
+        case .mono:
+            return "Mono"
+        case .stereo:
+            return "Stereo"
+        case .surround51:
+            return "5.1"
+        case .smart:
+            return "Smart"
+        }
+    }
+
+    public var testingToken: String {
+        displayLabel
+    }
+
+    public var outputChannelCount: Int? {
+        switch self {
+        case .mono:
+            return 1
+        case .stereo:
+            return 2
+        case .surround51:
+            return 6
+        case .smart:
+            return nil
+        }
+    }
+
+    public var ffmpegChannelLayout: String? {
+        switch self {
+        case .mono:
+            return "mono"
+        case .stereo:
+            return "stereo"
+        case .surround51:
+            return "5.1"
+        case .smart:
+            return nil
+        }
+    }
+
+    public var aacBitrate: Int? {
+        switch self {
+        case .mono:
+            return 96_000
+        case .stereo:
+            return 192_000
+        case .surround51:
+            return 384_000
+        case .smart:
+            return nil
+        }
+    }
+
+    public var isResolved: Bool {
+        self != .smart
+    }
 }
 
 public enum BitrateMode: String, CaseIterable, Codable, Sendable {
@@ -133,7 +199,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         resolution: .smart,
         dynamicRange: .sdr,
         hdrFFmpegBinaryMode: .autoSystemThenBundled,
-        audioLayout: .stereo,
+        audioLayout: .smart,
         bitrateMode: .balanced
     )
 
@@ -145,7 +211,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         resolution: .smart,
         dynamicRange: .hdr,
         hdrFFmpegBinaryMode: .autoSystemThenBundled,
-        audioLayout: .stereo,
+        audioLayout: .smart,
         bitrateMode: .balanced
     )
 

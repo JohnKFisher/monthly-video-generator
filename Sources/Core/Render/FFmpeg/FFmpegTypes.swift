@@ -183,6 +183,7 @@ struct FFmpegRenderPlan: Equatable, Sendable {
     let outputURL: URL
     let renderSize: CGSize
     let frameRate: Int
+    let audioLayout: AudioLayout
     let bitrateMode: BitrateMode
     let container: ContainerFormat
     let videoCodec: VideoCodec

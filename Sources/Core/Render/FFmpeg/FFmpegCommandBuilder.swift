@@ -24,6 +24,11 @@ struct FFmpegCommandBuilder {
         guard !plan.clips.isEmpty else {
             throw RenderError.exportFailed("FFmpeg command build failed: no clips were provided.")
         }
+        guard let outputChannelLayout = plan.audioLayout.ffmpegChannelLayout,
+              let outputChannelCount = plan.audioLayout.outputChannelCount,
+              let audioBitrate = plan.audioLayout.aacBitrate else {
+            throw RenderError.exportFailed("FFmpeg command build failed: audio layout must be resolved before command generation.")
+        }
         if plan.requiresHDRToSDRToneMapping && !resolution.selectedCapabilities.hasTonemap {
             throw RenderError.exportFailed(
                 "FFmpeg command build failed: selected binary does not support the tonemap filter required for SDR export with HDR source clips."
@@ -68,7 +73,7 @@ struct FFmpegCommandBuilder {
                 arguments.append(contentsOf: [
                     "-f", "lavfi",
                     "-t", formatSeconds(clip.durationSeconds),
-                    "-i", "anullsrc=r=48000:cl=stereo"
+                    "-i", "anullsrc=r=48000:cl=\(outputChannelLayout)"
                 ])
                 nextInputIndex += 1
                 audioInputIndexForClip[clipIndex] = silentInputIndex
@@ -94,7 +99,7 @@ struct FFmpegCommandBuilder {
             }
             filterParts.append(
                 "[\(audioInputIndex):a:0]atrim=duration=\(formatSeconds(clipDuration)),asetpts=PTS-STARTPTS," +
-                "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[a\(index)]"
+                "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=\(outputChannelLayout)[a\(index)]"
             )
         }
 
@@ -132,7 +137,7 @@ struct FFmpegCommandBuilder {
         }
 
         filterParts.append("[\(finalVideoLabel)]format=\(finalPixelFormat(for: plan.dynamicRange, encoder: selectedEncoder))[vfinal]")
-        filterParts.append("[\(finalAudioLabel)]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[afinal]")
+        filterParts.append("[\(finalAudioLabel)]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=\(outputChannelLayout)[afinal]")
 
         arguments.append(contentsOf: [
             "-filter_complex", filterParts.joined(separator: ";"),
@@ -149,8 +154,8 @@ struct FFmpegCommandBuilder {
             "-color_trc", outputColorTransfer(for: plan.dynamicRange),
             "-c:a", "aac",
             "-ar", "48000",
-            "-ac", "2",
-            "-b:a", "192k",
+            "-ac", String(outputChannelCount),
+            "-b:a", audioBitrateArgument(audioBitrate),
             plan.outputURL.path
         ])
 
@@ -235,6 +240,10 @@ struct FFmpegCommandBuilder {
 
     private func formatSeconds(_ value: Double) -> String {
         String(format: "%.6f", value)
+    }
+
+    private func audioBitrateArgument(_ bitrate: Int) -> String {
+        "\(bitrate / 1_000)k"
     }
 
     private func x265Preset(for mode: BitrateMode) -> String {

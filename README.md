@@ -74,16 +74,17 @@ New default export profile for fresh installs (existing saved preferences are pr
 - Frame rate: `Smart` (`30 fps` unless any selected video is `>= 50 fps`, then `60 fps`)
 - Resolution: `Smart` (smallest `16:9` tier that fits all selected media, maximum `4K`)
 - Dynamic range: `HDR` (HLG)
-- Audio: `AAC stereo`
+- Audio: `AAC Smart` (`Mono` unless any selected video needs `Stereo` or `5.1`)
 - Bitrate mode: `Balanced`
 - FFmpeg engine: `Auto (System then Bundled)`
 
 Notes:
 
-- In HDR mode, codec/audio selections are constrained to effective renderer behavior (`HEVC` + `Stereo`).
+- In HDR mode, codec selection is constrained to effective renderer behavior (`HEVC`), but audio remains selectable (`Mono`, `Stereo`, `5.1`, `Smart`).
 - SDR and HDR final exports both use the FFmpeg backend; still/title intermediate clips are still generated locally with AVFoundation.
 - SDR exports that include HDR source videos now apply FFmpeg HDR-to-SDR tone mapping per affected video clip; HLG source videos use a retuned high-nominal-peak SDR conversion path before `BT.709` output so bright iPhone highlights land closer to the source look instead of clipping or washing out.
 - In Apple Photos mode, Smart fps may inspect/download selected videos during render prep to decide between `30 fps` and `60 fps`, then reuse that materialized asset during export.
+- In Apple Photos mode, Smart audio may inspect/download selected videos during render prep to choose `Mono`, `Stereo`, or `5.1`, and uninspectable videos fall back toward `5.1` to avoid dropping channels.
 - Title cards are rendered at the resolved output size for both fixed-tier and Smart exports.
 - Use the app's `Reset to Plex Defaults` action to apply this profile to an existing installation.
 
@@ -91,10 +92,10 @@ Notes:
 
 Current temporary test-only app behavior:
 
-- The Output name field auto-generates a testing filename from the selected `Resolution`, `FPS`, and `Range`:
-  `Testing - S2026E<unix epoch> - <Resolution> - <FPS>fps - <Range>`
+- The Output name field auto-generates a testing filename from the selected `Resolution`, `FPS`, `Range`, and `Audio`:
+  `Testing - S2026E<unix epoch> - <Resolution> - <FPS>fps - <Range> - <Audio>`
 - The field stays auto-managed until edited manually. `Use Auto Name` / `Regenerate` restores the temporary generated format.
-- The `Mega Test` section can batch sequential renders across checked `Resolution`, `FPS`, and `Range` axes while reusing one preparation pass.
+- The `Mega Test` section can batch sequential renders across checked `Resolution`, `FPS`, `Range`, and `Audio` axes while reusing one preparation pass.
 - Mega test filenames always use the generated testing format for each combination and ignore the single-render Output name field.
 
 ## Known-Good Rollback

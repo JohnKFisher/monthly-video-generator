@@ -3,7 +3,7 @@ import Core
 import Foundation
 import Photos
 
-public struct SmartFrameRateInspectionResult: Sendable {
+public struct SmartMediaInspectionResult: Sendable {
     public let items: [MediaItem]
     public let warnings: [String]
 
@@ -36,6 +36,7 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
     struct LoadedVideoAsset: Equatable, Sendable {
         let url: URL
         let sourceFrameRate: Double?
+        let sourceAudioChannelCount: Int?
     }
 
     private actor VideoAssetCache {
@@ -197,11 +198,17 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
         }
     }
 
-    public func prepareItemsForSmartFrameRate(
+    public func prepareItemsForSmartMedia(
         _ items: [MediaItem],
+        inspectFrameRate: Bool,
+        inspectAudioChannels: Bool,
         progressHandler: (@Sendable (Double) -> Void)? = nil,
         statusHandler: (@Sendable (String) -> Void)? = nil
-    ) async throws -> SmartFrameRateInspectionResult {
+    ) async throws -> SmartMediaInspectionResult {
+        guard inspectFrameRate || inspectAudioChannels else {
+            return SmartMediaInspectionResult(items: items, warnings: [])
+        }
+
         let inspectionTargets = items.enumerated().compactMap { index, item -> (Int, MediaItem, String)? in
             guard item.type == .video,
                   case let .photoAsset(localIdentifier) = item.locator else {
@@ -211,7 +218,7 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
         }
 
         guard !inspectionTargets.isEmpty else {
-            return SmartFrameRateInspectionResult(items: items, warnings: [])
+            return SmartMediaInspectionResult(items: items, warnings: [])
         }
 
         var updatedItems = items
@@ -223,16 +230,29 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
 
             let progress = Double(position) / Double(inspectionTargets.count)
             progressHandler?(progress)
-            statusHandler?("Inspecting video frame rates \(position + 1) of \(inspectionTargets.count)...")
+            statusHandler?(inspectionStatusMessage(
+                position: position + 1,
+                total: inspectionTargets.count,
+                inspectFrameRate: inspectFrameRate,
+                inspectAudioChannels: inspectAudioChannels
+            ))
 
             do {
                 let loadedVideoAsset = try await loadVideoAsset(localIdentifier: inspectionTarget.2)
-                updatedItems[inspectionTarget.0] = inspectionTarget.1.withSourceFrameRate(loadedVideoAsset.sourceFrameRate)
+                updatedItems[inspectionTarget.0] = inspectionTarget.1.withSourceInspection(
+                    sourceFrameRate: inspectFrameRate ? loadedVideoAsset.sourceFrameRate : inspectionTarget.1.sourceFrameRate,
+                    sourceAudioChannelCount: inspectAudioChannels ? loadedVideoAsset.sourceAudioChannelCount : inspectionTarget.1.sourceAudioChannelCount
+                )
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
                 if !emittedInspectionWarning {
-                    warnings.append("Some Apple Photos videos could not be inspected for Smart fps and will fall back toward 30 fps.")
+                    warnings.append(
+                        inspectionFailureWarning(
+                            inspectFrameRate: inspectFrameRate,
+                            inspectAudioChannels: inspectAudioChannels
+                        )
+                    )
                     emittedInspectionWarning = true
                 }
             }
@@ -241,7 +261,21 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
             progressHandler?(completedProgress)
         }
 
-        return SmartFrameRateInspectionResult(items: updatedItems, warnings: warnings)
+        return SmartMediaInspectionResult(items: updatedItems, warnings: warnings)
+    }
+
+    public func prepareItemsForSmartFrameRate(
+        _ items: [MediaItem],
+        progressHandler: (@Sendable (Double) -> Void)? = nil,
+        statusHandler: (@Sendable (String) -> Void)? = nil
+    ) async throws -> SmartMediaInspectionResult {
+        try await prepareItemsForSmartMedia(
+            items,
+            inspectFrameRate: true,
+            inspectAudioChannels: false,
+            progressHandler: progressHandler,
+            statusHandler: statusHandler
+        )
     }
 
     private func materializeImage(asset: PHAsset, preferredFilename: String) async throws -> URL {
@@ -326,9 +360,12 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
             resolvedFrameRate = nil
         }
 
+        let sourceAudioChannelCount = await primaryAudioChannelCount(for: urlAsset)
+
         return LoadedVideoAsset(
             url: urlAsset.url,
-            sourceFrameRate: resolvedFrameRate
+            sourceFrameRate: resolvedFrameRate,
+            sourceAudioChannelCount: sourceAudioChannelCount
         )
     }
 
@@ -373,5 +410,68 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
         let directory = fileManager.temporaryDirectory.appendingPathComponent("MonthlyVideoGenerator/Photos", isDirectory: true)
         try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory.appendingPathComponent("\(sanitizedID)-\(UUID().uuidString)").appendingPathExtension(preferredExtension)
+    }
+
+    private func inspectionStatusMessage(
+        position: Int,
+        total: Int,
+        inspectFrameRate: Bool,
+        inspectAudioChannels: Bool
+    ) -> String {
+        switch (inspectFrameRate, inspectAudioChannels) {
+        case (true, true):
+            return "Inspecting video frame rates and audio \(position) of \(total)..."
+        case (true, false):
+            return "Inspecting video frame rates \(position) of \(total)..."
+        case (false, true):
+            return "Inspecting video audio \(position) of \(total)..."
+        case (false, false):
+            return "Inspecting video metadata \(position) of \(total)..."
+        }
+    }
+
+    private func inspectionFailureWarning(
+        inspectFrameRate: Bool,
+        inspectAudioChannels: Bool
+    ) -> String {
+        switch (inspectFrameRate, inspectAudioChannels) {
+        case (true, true):
+            return "Some Apple Photos videos could not be inspected for Smart fps/audio and will fall back toward 30 fps or 5.1."
+        case (true, false):
+            return "Some Apple Photos videos could not be inspected for Smart fps and will fall back toward 30 fps."
+        case (false, true):
+            return "Some Apple Photos videos could not be inspected for Smart audio and may fall back to 5.1."
+        case (false, false):
+            return "Some Apple Photos videos could not be inspected."
+        }
+    }
+
+    private static func primaryAudioChannelCount(for asset: AVURLAsset) async -> Int? {
+        let audioTracks: [AVAssetTrack]
+        do {
+            audioTracks = try await asset.loadTracks(withMediaType: .audio)
+        } catch {
+            return nil
+        }
+
+        guard let audioTrack = audioTracks.first else {
+            return 0
+        }
+
+        guard let formatDescriptions = try? await audioTrack.load(.formatDescriptions) else {
+            return nil
+        }
+
+        for formatDescription in formatDescriptions {
+            let cmFormatDescription = formatDescription as CMFormatDescription
+            if let basicDescription = CMAudioFormatDescriptionGetStreamBasicDescription(cmFormatDescription) {
+                let channels = Int(basicDescription.pointee.mChannelsPerFrame)
+                if channels > 0 {
+                    return channels
+                }
+            }
+        }
+
+        return nil
     }
 }
