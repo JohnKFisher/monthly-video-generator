@@ -214,17 +214,21 @@ struct FFmpegCommandBuilder {
     // SDR output needs explicit HDR-to-SDR tone mapping for video clips with HDR
     // source transfers; a colorspace remap alone clips highlights badly.
     private func hdrToSDRToneMapFilter(for transferFlavor: FFmpegHDRTransferFlavor) -> String {
-        let inputTransfer: String
         switch transferFlavor {
         case .pq:
-            inputTransfer = "smpte2084"
+            return "zscale=transferin=smpte2084:primariesin=bt2020:matrixin=bt2020nc:transfer=linear," +
+                "format=gbrpf32le," +
+                "tonemap=mobius:desat=2," +
+                "zscale=transfer=bt709:primaries=bt709:matrix=bt709"
         case .hlg:
-            inputTransfer = "arib-std-b67"
+            // iPhone HLG clips need an explicit nominal peak and gamut reduction
+            // before tone mapping or the resulting SDR image stays visibly blown out.
+            return "zscale=transferin=arib-std-b67:primariesin=bt2020:matrixin=bt2020nc:transfer=linear:npl=400," +
+                "format=gbrpf32le," +
+                "zscale=primaries=bt709," +
+                "tonemap=mobius:desat=2," +
+                "zscale=transfer=bt709:matrix=bt709:range=tv"
         }
-        return "zscale=transferin=\(inputTransfer):primariesin=bt2020:matrixin=bt2020nc:transfer=linear," +
-            "format=gbrpf32le," +
-            "tonemap=mobius:desat=2," +
-            "zscale=transfer=bt709:primaries=bt709:matrix=bt709"
     }
 
     private func formatSeconds(_ value: Double) -> String {

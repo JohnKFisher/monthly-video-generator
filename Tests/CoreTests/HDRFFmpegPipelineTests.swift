@@ -253,10 +253,11 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("-color_trc bt709"))
         XCTAssertTrue(joined.contains("-color_primaries bt709"))
         XCTAssertTrue(joined.contains("-colorspace bt709"))
-        XCTAssertTrue(joined.contains("transferin=arib-std-b67:primariesin=bt2020:matrixin=bt2020nc:transfer=linear"))
+        XCTAssertTrue(joined.contains("transferin=arib-std-b67:primariesin=bt2020:matrixin=bt2020nc:transfer=linear:npl=400"))
         XCTAssertTrue(joined.contains("format=gbrpf32le"))
+        XCTAssertTrue(joined.contains("zscale=primaries=bt709"))
         XCTAssertTrue(joined.contains("tonemap=mobius:desat=2"))
-        XCTAssertTrue(joined.contains("zscale=transfer=bt709:primaries=bt709:matrix=bt709"))
+        XCTAssertTrue(joined.contains("zscale=transfer=bt709:matrix=bt709:range=tv"))
         XCTAssertTrue(joined.contains("format=yuv420p"))
     }
 
@@ -421,6 +422,61 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("format=gbrpf32le"))
         XCTAssertTrue(joined.contains("tonemap=mobius:desat=2"))
         XCTAssertTrue(joined.contains("zscale=transfer=bt709:primaries=bt709:matrix=bt709"))
+    }
+
+    func testCommandBuilderUsesTunedHLGChainForSDROutput() throws {
+        let builder = FFmpegCommandBuilder()
+        let resolution = FFmpegBinaryResolution(
+            selectedBinary: FFmpegBinary(
+                ffmpegURL: URL(fileURLWithPath: "/tmp/ffmpeg"),
+                ffprobeURL: URL(fileURLWithPath: "/tmp/ffprobe"),
+                source: .system
+            ),
+            selectedCapabilities: FFmpegCapabilities(
+                versionDescription: "system",
+                hasZscale: true,
+                hasTonemap: true,
+                hasXfade: true,
+                hasAcrossfade: true,
+                hasLibx264: true,
+                hasH264VideoToolbox: true,
+                hasLibx265: true,
+                hasHEVCVideoToolbox: true
+            ),
+            systemCapabilities: nil,
+            bundledCapabilities: nil,
+            fallbackReason: nil
+        )
+
+        let plan = FFmpegRenderPlan(
+            clips: [
+                FFmpegRenderClip(
+                    url: URL(fileURLWithPath: "/tmp/hlg.mov"),
+                    durationSeconds: 2.5,
+                    includeAudio: false,
+                    hasAudioTrack: false,
+                    colorInfo: ColorInfo(isHDR: true, colorPrimaries: "ITU_R_2020", transferFunction: "ITU_R_2100_HLG"),
+                    sourceDescription: "hlg-source"
+                )
+            ],
+            transitionDurationSeconds: 0,
+            outputURL: URL(fileURLWithPath: "/tmp/out.mp4"),
+            renderSize: CGSize(width: 3840, height: 2160),
+            frameRate: 30,
+            bitrateMode: .balanced,
+            container: .mp4,
+            videoCodec: .h264,
+            dynamicRange: .sdr
+        )
+
+        let command = try builder.buildCommand(plan: plan, resolution: resolution)
+        let joined = command.arguments.joined(separator: " ")
+
+        XCTAssertTrue(joined.contains("transferin=arib-std-b67:primariesin=bt2020:matrixin=bt2020nc:transfer=linear:npl=400"))
+        XCTAssertTrue(joined.contains("format=gbrpf32le"))
+        XCTAssertTrue(joined.contains("zscale=primaries=bt709"))
+        XCTAssertTrue(joined.contains("tonemap=mobius:desat=2"))
+        XCTAssertTrue(joined.contains("zscale=transfer=bt709:matrix=bt709:range=tv"))
     }
 
     func testCommandBuilderLeavesSDRSourceOnFastSDRPath() throws {

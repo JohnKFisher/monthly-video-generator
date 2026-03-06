@@ -75,7 +75,7 @@ Operational updates after first packaged run:
 - Hotfix: HDR photo stills now use gain-map-aware decoding (when present) and are emitted as 10-bit BT.2020 HLG intermediates; non-HDR stills retain source-aware SDR tagging (P3/BT.709).
 - Added export option `Write diagnostics log (.log)` so diagnostics generation is explicitly user-controlled; when enabled, successful renders now produce a `.log` and run-report JSON includes the diagnostics path.
 - Pivoted final export backend to capability-gated FFmpeg rendering (zscale + xfade + acrossfade + codec-aware encoder selection), with HDR on Main10 HEVC and SDR now also using FFmpeg instead of `AVAssetExportSession`.
-- Hotfix: SDR FFmpeg exports that include HDR source videos now apply targeted HDR-to-SDR tone mapping (`tonemap=mobius:desat=2`) before BT.709 conversion so highlights are preserved instead of blowing out.
+- Hotfix: SDR FFmpeg exports that include HDR source videos now apply targeted HDR-to-SDR tone mapping before BT.709 conversion, and HLG source videos use an HLG-tuned nominal-peak/gamut-reduction path to avoid still-blown-out iPhone highlights.
 - Added FFmpeg engine selection UI (`Auto/System/Bundled`) and persisted this preference with existing style/export settings.
 - Added FFmpeg binary acquisition + bundling workflow (`scripts/fetch_ffmpeg_bundle.sh`, `scripts/build_app.sh`) with checksum verification and provenance file.
 - Added a known-good pre-pivot checkpoint tag for deterministic rollback: `checkpoint/20260304-known-good-pre-ffmpeg-pivot`.
@@ -220,6 +220,7 @@ Operational updates after first packaged run:
 - 2026-03-05: Added Output name auto-sync/unlock behavior plus a `Mega Test` UI section that can batch sequential Resolution/FPS/Range renders and prompt to continue or stop after failures.
 - 2026-03-05: Added app-level tests for temporary output naming behavior, mega-test preparation reuse, manual-name bypass during batches, and stop/continue failure handling.
 - 2026-03-06: Added SDR FFmpeg HDR-source tone mapping with capability-gated `tonemap` filter requirements, bundled-binary fallback when system FFmpeg lacks tone-map support, and regression tests for PQ/HLG SDR conversion paths.
+- 2026-03-06: Tuned the SDR HLG source-video conversion path (`HLG -> linear:npl=400 -> BT.709 primaries -> mobius tonemap -> BT.709/range=tv`) after diagnostics showed the first HLG SDR recipe still rendered iPhone highlights too hot.
 - 2026-03-06: Replaced SDR `AVAssetExportSession` final export with the shared FFmpeg backend, generalized FFmpeg capability probing for SDR H.264/HEVC encoders, and updated command generation to emit BT.709-tagged SDR or BT.2020 HLG HDR outputs from the same pipeline.
 - 2026-03-06: Updated Export UI/copy and compatibility warnings so bitrate and engine messaging reflect unified FFmpeg final export behavior instead of HDR-only wording.
 - 2026-03-06: Added SDR FFmpeg command coverage in unit tests and removed active use of deprecated `AVAssetExportSession` APIs from the SDR final export path.

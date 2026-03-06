@@ -187,7 +187,7 @@ final class FFmpegHDRRenderer {
         }
         if plan.requiresHDRToSDRToneMapping {
             callbacks.log(
-                "HDR-to-SDR tone mapping enabled: true (operator=mobius:desat=2, clips=\(plan.hdrToSDRToneMapClips.count))"
+                "HDR-to-SDR tone mapping enabled: true (operator=mobius:desat=2, hlg_npl=400, clips=\(plan.hdrToSDRToneMapClips.count))"
             )
             for clip in plan.hdrToSDRToneMapClips {
                 callbacks.log("HDR-to-SDR tone-map clip: \(clip.sourceDescription) [transfer=\(clip.transferFlavor.rawValue)]")
