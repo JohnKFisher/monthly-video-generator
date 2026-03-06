@@ -1,6 +1,8 @@
 import Darwin
 import Foundation
 
+// Despite the legacy type name, this renderer now handles both SDR and HDR
+// final export paths so the app can share one FFmpeg backend.
 final class FFmpegHDRRenderer {
     private final class CallbackRelay: @unchecked Sendable {
         private let diagnostics: (String) -> Void
@@ -147,7 +149,7 @@ final class FFmpegHDRRenderer {
     }
 
     func render(
-        plan: FFmpegHDRRenderPlan,
+        plan: FFmpegRenderPlan,
         binaryMode: HDRFFmpegBinaryMode,
         diagnostics: @escaping (String) -> Void,
         progressHandler: @escaping (Double) -> Void,
@@ -162,19 +164,26 @@ final class FFmpegHDRRenderer {
             try fileManager.removeItem(at: plan.outputURL)
         }
 
-        let resolution = try resolver.resolve(mode: binaryMode, diagnostics: diagnostics)
+        let resolution = try resolver.resolve(
+            mode: binaryMode,
+            codec: plan.videoCodec,
+            dynamicRange: plan.dynamicRange,
+            diagnostics: diagnostics
+        )
         let command = try commandBuilder.buildCommand(plan: plan, resolution: resolution)
         callbacks.log("FFmpeg version: \(resolution.selectedCapabilities.versionDescription)")
         if let systemCaps = resolution.systemCapabilities {
             callbacks.log(
                 "FFmpeg system capabilities: zscale=\(systemCaps.hasZscale), xfade=\(systemCaps.hasXfade), " +
-                "acrossfade=\(systemCaps.hasAcrossfade), libx265=\(systemCaps.hasLibx265), hevc_videotoolbox=\(systemCaps.hasHEVCVideoToolbox)"
+                "acrossfade=\(systemCaps.hasAcrossfade), libx264=\(systemCaps.hasLibx264), h264_videotoolbox=\(systemCaps.hasH264VideoToolbox), " +
+                "libx265=\(systemCaps.hasLibx265), hevc_videotoolbox=\(systemCaps.hasHEVCVideoToolbox)"
             )
         }
         if let bundledCaps = resolution.bundledCapabilities {
             callbacks.log(
                 "FFmpeg bundled capabilities: zscale=\(bundledCaps.hasZscale), xfade=\(bundledCaps.hasXfade), " +
-                "acrossfade=\(bundledCaps.hasAcrossfade), libx265=\(bundledCaps.hasLibx265), hevc_videotoolbox=\(bundledCaps.hasHEVCVideoToolbox)"
+                "acrossfade=\(bundledCaps.hasAcrossfade), libx264=\(bundledCaps.hasLibx264), h264_videotoolbox=\(bundledCaps.hasH264VideoToolbox), " +
+                "libx265=\(bundledCaps.hasLibx265), hevc_videotoolbox=\(bundledCaps.hasHEVCVideoToolbox)"
             )
         }
         callbacks.log("FFmpeg selected binary: \(resolution.selectedBinary.ffmpegURL.path) [\(resolution.selectedBinary.source.rawValue)]")
@@ -195,7 +204,7 @@ final class FFmpegHDRRenderer {
         try process.run()
         setCurrentProcess(process)
         callbacks.report(0.01)
-        callbacks.updateStatus("HDR encode: starting...")
+        callbacks.updateStatus("\(plan.dynamicRange == .hdr ? "HDR" : "SDR") encode: starting...")
 
         defer {
             clearCurrentProcess(process)
@@ -251,13 +260,13 @@ final class FFmpegHDRRenderer {
             let detailSuffix = details.isEmpty ? "No additional stderr details." : details
             if let stallContext = termination.stallContext {
                 throw RenderError.exportFailed(
-                    "FFmpeg HDR render stalled for \(Int(stallContext.stallDurationSeconds.rounded()))s " +
+                    "FFmpeg \(plan.dynamicRange == .hdr ? "HDR" : "SDR") render stalled for \(Int(stallContext.stallDurationSeconds.rounded()))s " +
                     "(last_out_time_us=\(stallContext.lastOutTimeMicroseconds), output=\(Self.formatByteCount(stallContext.lastOutputSizeBytes))). " +
                     "Terminated with \(terminationSummary). \(detailSuffix)"
                 )
             }
             throw RenderError.exportFailed(
-                "FFmpeg HDR render failed (\(terminationSummary)). \(detailSuffix)"
+                "FFmpeg \(plan.dynamicRange == .hdr ? "HDR" : "SDR") render failed (\(terminationSummary)). \(detailSuffix)"
             )
         }
 
@@ -701,24 +710,40 @@ final class FFmpegHDRRenderer {
         return min(elapsed / 240.0 * 0.05, 0.05)
     }
 
-    private func estimatedFinalOutputBytes(for plan: FFmpegHDRRenderPlan) -> UInt64 {
+    private func estimatedFinalOutputBytes(for plan: FFmpegRenderPlan) -> UInt64 {
         let durationSeconds = max(commandBuilder.expectedDurationSeconds(for: plan), 0.01)
         let pixelsPerFrame = max(plan.renderSize.width * plan.renderSize.height, 1)
-        let bitsPerPixel = estimatedBitsPerPixel(for: plan.bitrateMode)
+        let bitsPerPixel = estimatedBitsPerPixel(
+            for: plan.bitrateMode,
+            codec: plan.videoCodec,
+            dynamicRange: plan.dynamicRange
+        )
         let videoBits = pixelsPerFrame * Double(max(plan.frameRate, 24)) * durationSeconds * bitsPerPixel
         let audioBits = 192_000 * durationSeconds
         let totalBytes = max((videoBits + audioBits) / 8.0, 1)
         return UInt64(totalBytes.rounded())
     }
 
-    private func estimatedBitsPerPixel(for mode: BitrateMode) -> Double {
-        switch mode {
-        case .qualityFirst:
+    private func estimatedBitsPerPixel(for mode: BitrateMode, codec: VideoCodec, dynamicRange: DynamicRange) -> Double {
+        switch (dynamicRange, codec, mode) {
+        case (.hdr, _, .qualityFirst):
             return 0.08
-        case .balanced:
+        case (.hdr, _, .balanced):
             return 0.06
-        case .sizeFirst:
+        case (.hdr, _, .sizeFirst):
             return 0.04
+        case (.sdr, .hevc, .qualityFirst):
+            return 0.07
+        case (.sdr, .hevc, .balanced):
+            return 0.05
+        case (.sdr, .hevc, .sizeFirst):
+            return 0.035
+        case (.sdr, .h264, .qualityFirst):
+            return 0.10
+        case (.sdr, .h264, .balanced):
+            return 0.07
+        case (.sdr, .h264, .sizeFirst):
+            return 0.05
         }
     }
 

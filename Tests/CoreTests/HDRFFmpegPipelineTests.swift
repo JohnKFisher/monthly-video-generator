@@ -12,6 +12,8 @@ final class HDRFFmpegPipelineTests: XCTestCase {
          ... acrossfade        AA->A      Cross fade two input audio streams.
         """
         let encoders = """
+         V....D libx264              libx264 H.264 / AVC
+         V....D h264_videotoolbox    VideoToolbox H.264
          V....D libx265              libx265 H.265 / HEVC
          V....D hevc_videotoolbox    VideoToolbox HEVC
         """
@@ -25,9 +27,11 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(capabilities.hasZscale)
         XCTAssertTrue(capabilities.hasXfade)
         XCTAssertTrue(capabilities.hasAcrossfade)
+        XCTAssertTrue(capabilities.hasLibx264)
         XCTAssertTrue(capabilities.hasLibx265)
-        XCTAssertTrue(capabilities.supportsQualityHDRPipeline)
-        XCTAssertEqual(capabilities.preferredEncoder, .libx265)
+        XCTAssertTrue(capabilities.supportsRenderPipeline(codec: .hevc, dynamicRange: .hdr))
+        XCTAssertEqual(capabilities.preferredEncoder(for: .hevc, dynamicRange: .hdr), .libx265)
+        XCTAssertEqual(capabilities.preferredEncoder(for: .h264, dynamicRange: .sdr), .h264VideoToolbox)
     }
 
     func testBinaryResolverAutoFallsBackToBundledWhenSystemIsMissingZscale() throws {
@@ -52,6 +56,8 @@ final class HDRFFmpegPipelineTests: XCTestCase {
                         hasZscale: false,
                         hasXfade: true,
                         hasAcrossfade: true,
+                        hasLibx264: true,
+                        hasH264VideoToolbox: true,
                         hasLibx265: true,
                         hasHEVCVideoToolbox: true
                     )
@@ -61,13 +67,20 @@ final class HDRFFmpegPipelineTests: XCTestCase {
                     hasZscale: true,
                     hasXfade: true,
                     hasAcrossfade: true,
+                    hasLibx264: true,
+                    hasH264VideoToolbox: true,
                     hasLibx265: true,
                     hasHEVCVideoToolbox: false
                 )
             }
         )
 
-        let resolution = try resolver.resolve(mode: .autoSystemThenBundled, diagnostics: { _ in })
+        let resolution = try resolver.resolve(
+            mode: .autoSystemThenBundled,
+            codec: .hevc,
+            dynamicRange: .hdr,
+            diagnostics: { _ in }
+        )
 
         XCTAssertEqual(resolution.selectedBinary.source, .bundled)
         XCTAssertNotNil(resolution.fallbackReason)
@@ -90,13 +103,20 @@ final class HDRFFmpegPipelineTests: XCTestCase {
                     hasZscale: true,
                     hasXfade: true,
                     hasAcrossfade: true,
+                    hasLibx264: true,
+                    hasH264VideoToolbox: true,
                     hasLibx265: true,
                     hasHEVCVideoToolbox: true
                 )
             }
         )
 
-        let resolution = try resolver.resolve(mode: .autoSystemThenBundled, diagnostics: { _ in })
+        let resolution = try resolver.resolve(
+            mode: .autoSystemThenBundled,
+            codec: .hevc,
+            dynamicRange: .hdr,
+            diagnostics: { _ in }
+        )
 
         XCTAssertEqual(resolution.selectedBinary.source, .system)
         XCTAssertNil(resolution.fallbackReason)
@@ -115,6 +135,8 @@ final class HDRFFmpegPipelineTests: XCTestCase {
                 hasZscale: true,
                 hasXfade: true,
                 hasAcrossfade: true,
+                hasLibx264: true,
+                hasH264VideoToolbox: true,
                 hasLibx265: true,
                 hasHEVCVideoToolbox: false
             ),
@@ -123,9 +145,9 @@ final class HDRFFmpegPipelineTests: XCTestCase {
             fallbackReason: nil
         )
 
-        let plan = FFmpegHDRRenderPlan(
+        let plan = FFmpegRenderPlan(
             clips: [
-                FFmpegHDRClip(
+                FFmpegRenderClip(
                     url: URL(fileURLWithPath: "/tmp/a.mov"),
                     durationSeconds: 3.0,
                     includeAudio: true,
@@ -133,7 +155,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
                     colorInfo: ColorInfo(isHDR: false, colorPrimaries: "ITU_R_709_2", transferFunction: "ITU_R_709_2"),
                     sourceDescription: "clip-a"
                 ),
-                FFmpegHDRClip(
+                FFmpegRenderClip(
                     url: URL(fileURLWithPath: "/tmp/b.mov"),
                     durationSeconds: 4.0,
                     includeAudio: true,
@@ -147,7 +169,9 @@ final class HDRFFmpegPipelineTests: XCTestCase {
             renderSize: CGSize(width: 1920, height: 1080),
             frameRate: 60,
             bitrateMode: .qualityFirst,
-            container: .mov
+            container: .mov,
+            videoCodec: .hevc,
+            dynamicRange: .hdr
         )
 
         let command = try builder.buildCommand(plan: plan, resolution: resolution)
@@ -169,6 +193,61 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("-colorspace bt2020nc"))
         XCTAssertTrue(joined.contains("libx265"))
         XCTAssertFalse(joined.contains("hdr-opt=1"))
+    }
+
+    func testCommandBuilderIncludesBT709MetadataForSDRH264() throws {
+        let builder = FFmpegCommandBuilder()
+        let resolution = FFmpegBinaryResolution(
+            selectedBinary: FFmpegBinary(
+                ffmpegURL: URL(fileURLWithPath: "/tmp/ffmpeg"),
+                ffprobeURL: URL(fileURLWithPath: "/tmp/ffprobe"),
+                source: .system
+            ),
+            selectedCapabilities: FFmpegCapabilities(
+                versionDescription: "system",
+                hasZscale: true,
+                hasXfade: true,
+                hasAcrossfade: true,
+                hasLibx264: true,
+                hasH264VideoToolbox: true,
+                hasLibx265: true,
+                hasHEVCVideoToolbox: true
+            ),
+            systemCapabilities: nil,
+            bundledCapabilities: nil,
+            fallbackReason: nil
+        )
+
+        let plan = FFmpegRenderPlan(
+            clips: [
+                FFmpegRenderClip(
+                    url: URL(fileURLWithPath: "/tmp/a.mov"),
+                    durationSeconds: 2.5,
+                    includeAudio: false,
+                    hasAudioTrack: false,
+                    colorInfo: ColorInfo(isHDR: true, colorPrimaries: "ITU_R_2020", transferFunction: "ITU_R_2100_HLG"),
+                    sourceDescription: "clip-a"
+                )
+            ],
+            transitionDurationSeconds: 0,
+            outputURL: URL(fileURLWithPath: "/tmp/out.mp4"),
+            renderSize: CGSize(width: 3840, height: 2160),
+            frameRate: 60,
+            bitrateMode: .balanced,
+            container: .mp4,
+            videoCodec: .h264,
+            dynamicRange: .sdr
+        )
+
+        let command = try builder.buildCommand(plan: plan, resolution: resolution)
+        let joined = command.arguments.joined(separator: " ")
+
+        XCTAssertTrue(joined.contains("h264_videotoolbox"))
+        XCTAssertTrue(joined.contains("-color_trc bt709"))
+        XCTAssertTrue(joined.contains("-color_primaries bt709"))
+        XCTAssertTrue(joined.contains("-colorspace bt709"))
+        XCTAssertTrue(joined.contains("transfer=bt709:primaries=bt709:matrix=bt709"))
+        XCTAssertTrue(joined.contains("format=yuv420p"))
     }
 
     func testProgressParserReadsOutTimeUS() {

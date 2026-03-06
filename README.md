@@ -33,7 +33,7 @@ Optional override:
 BUILD_NUMBER=42 ./scripts/build_app.sh
 ```
 
-## Optional: Bundle FFmpeg For HDR
+## Optional: Bundle FFmpeg For Final Export
 
 To install pinned FFmpeg/ffprobe binaries into `third_party/ffmpeg/bin`:
 
@@ -73,11 +73,12 @@ New default export profile for fresh installs (existing saved preferences are pr
 - Dynamic range: `HDR` (HLG)
 - Audio: `AAC stereo`
 - Bitrate mode: `Balanced`
-- HDR engine: `Auto (System then Bundled)`
+- FFmpeg engine: `Auto (System then Bundled)`
 
 Notes:
 
 - In HDR mode, codec/audio selections are constrained to effective renderer behavior (`HEVC` + `Stereo`).
+- SDR and HDR final exports both use the FFmpeg backend; still/title intermediate clips are still generated locally with AVFoundation.
 - In Apple Photos mode, Smart fps may inspect/download selected videos during render prep to decide between `30 fps` and `60 fps`, then reuse that materialized asset during export.
 - Title cards are rendered at the resolved output size for both fixed-tier and Smart exports.
 - Use the app's `Reset to Plex Defaults` action to apply this profile to an existing installation.

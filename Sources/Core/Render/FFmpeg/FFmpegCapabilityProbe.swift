@@ -23,6 +23,8 @@ struct FFmpegCapabilityProbe {
         let hasZscale = containsWord("zscale", in: normalizedFilters)
         let hasXfade = containsWord("xfade", in: normalizedFilters)
         let hasAcrossfade = containsWord("acrossfade", in: normalizedFilters)
+        let hasLibx264 = containsWord("libx264", in: normalizedEncoders)
+        let hasH264VideoToolbox = containsWord("h264_videotoolbox", in: normalizedEncoders)
         let hasLibx265 = containsWord("libx265", in: normalizedEncoders)
         let hasHEVCVideoToolbox = containsWord("hevc_videotoolbox", in: normalizedEncoders)
 
@@ -31,6 +33,8 @@ struct FFmpegCapabilityProbe {
             hasZscale: hasZscale,
             hasXfade: hasXfade,
             hasAcrossfade: hasAcrossfade,
+            hasLibx264: hasLibx264,
+            hasH264VideoToolbox: hasH264VideoToolbox,
             hasLibx265: hasLibx265,
             hasHEVCVideoToolbox: hasHEVCVideoToolbox
         )

@@ -304,10 +304,7 @@ final class MainWindowViewModel: ObservableObject {
     }
 
     var bitrateModeDescription: String {
-        if selectedDynamicRange == .hdr {
-            return "Bitrate mode controls HDR FFmpeg encode quality, size, and speed tradeoffs."
-        }
-        return "Bitrate mode has limited effect on SDR exports that use AVFoundation presets."
+        "Bitrate mode controls FFmpeg encode quality, size, and speed tradeoffs for both SDR and HDR exports."
     }
 
     var frameRateDescription: String {

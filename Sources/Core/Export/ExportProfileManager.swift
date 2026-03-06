@@ -72,14 +72,15 @@ public final class ExportProfileManager {
                 )
             )
 
-            switch profile.hdrFFmpegBinaryMode {
-            case .autoSystemThenBundled:
-                warnings.append(ExportCompatibilityWarning("HDR engine Auto mode uses system ffmpeg first, then bundled ffmpeg if required features are missing."))
-            case .systemOnly:
-                warnings.append(ExportCompatibilityWarning("HDR engine System Only mode can fail if local ffmpeg lacks zscale/xfade/acrossfade/Main10 support."))
-            case .bundledOnly:
-                warnings.append(ExportCompatibilityWarning("HDR engine Bundled Only mode requires bundled ffmpeg binaries in app resources or third_party/ffmpeg."))
-            }
+        }
+
+        switch profile.hdrFFmpegBinaryMode {
+        case .autoSystemThenBundled:
+            warnings.append(ExportCompatibilityWarning("FFmpeg engine Auto mode uses system ffmpeg first, then bundled ffmpeg if required filters or encoders are missing."))
+        case .systemOnly:
+            warnings.append(ExportCompatibilityWarning("FFmpeg engine System Only mode can fail if local ffmpeg lacks the required zscale/xfade/acrossfade filters or the selected output encoder."))
+        case .bundledOnly:
+            warnings.append(ExportCompatibilityWarning("FFmpeg engine Bundled Only mode requires bundled ffmpeg binaries in app resources or third_party/ffmpeg."))
         }
 
         if profile.resolution == .smart {

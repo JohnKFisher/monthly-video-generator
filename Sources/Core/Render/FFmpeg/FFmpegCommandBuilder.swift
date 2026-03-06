@@ -18,9 +18,17 @@ struct FFmpegCommand {
 }
 
 struct FFmpegCommandBuilder {
-    func buildCommand(plan: FFmpegHDRRenderPlan, resolution: FFmpegBinaryResolution) throws -> FFmpegCommand {
+    func buildCommand(plan: FFmpegRenderPlan, resolution: FFmpegBinaryResolution) throws -> FFmpegCommand {
         guard !plan.clips.isEmpty else {
             throw RenderError.exportFailed("FFmpeg command build failed: no clips were provided.")
+        }
+        guard let selectedEncoder = resolution.selectedCapabilities.preferredEncoder(
+            for: plan.videoCodec,
+            dynamicRange: plan.dynamicRange
+        ) else {
+            throw RenderError.exportFailed(
+                "FFmpeg command build failed: no compatible encoder is available for \(plan.dynamicRange.rawValue.uppercased()) \(plan.videoCodec.rawValue.uppercased())."
+            )
         }
 
         var arguments: [String] = [
@@ -63,16 +71,15 @@ struct FFmpegCommandBuilder {
         var filterParts: [String] = []
         for (index, clip) in plan.clips.enumerated() {
             let clipDuration = max(clip.durationSeconds, 0.01)
-            let normalizeFilter = colorNormalizeFilter(for: clip.colorInfo)
+            let normalizeFilter = colorNormalizeFilter(for: clip.colorInfo, outputDynamicRange: plan.dynamicRange)
             guard let videoInputIndex = videoInputIndexForClip[index] else {
                 throw RenderError.exportFailed("FFmpeg command build failed: missing video input index for clip index \(index).")
             }
-            // Keep conversion in a 10-bit path to avoid large float RGB intermediates at high resolutions.
             filterParts.append(
                 "[\(videoInputIndex):v]trim=duration=\(formatSeconds(clipDuration)),setpts=PTS-STARTPTS,fps=\(plan.frameRate)," +
                 "scale=w=\(Int(plan.renderSize.width)):h=\(Int(plan.renderSize.height)):force_original_aspect_ratio=decrease:flags=lanczos," +
                 "pad=\(Int(plan.renderSize.width)):\(Int(plan.renderSize.height)):(ow-iw)/2:(oh-ih)/2:color=black," +
-                "\(normalizeFilter),format=yuv420p10le[v\(index)]"
+                "\(normalizeFilter),format=\(intermediatePixelFormat(for: plan.dynamicRange))[v\(index)]"
             )
 
             guard let audioInputIndex = audioInputIndexForClip[index] else {
@@ -117,7 +124,7 @@ struct FFmpegCommandBuilder {
             finalAudioLabel = currentAudioLabel
         }
 
-        filterParts.append("[\(finalVideoLabel)]format=yuv420p10le[vfinal]")
+        filterParts.append("[\(finalVideoLabel)]format=\(finalPixelFormat(for: plan.dynamicRange, encoder: selectedEncoder))[vfinal]")
         filterParts.append("[\(finalAudioLabel)]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[afinal]")
 
         arguments.append(contentsOf: [
@@ -126,35 +133,13 @@ struct FFmpegCommandBuilder {
             "-map", "[afinal]"
         ])
 
-        switch resolution.selectedCapabilities.preferredEncoder {
-        case .libx265:
-            arguments.append(contentsOf: [
-                "-c:v", "libx265",
-                "-preset", x265Preset(for: plan.bitrateMode),
-                "-crf", x265CRF(for: plan.bitrateMode),
-                "-pix_fmt", "yuv420p10le",
-                "-tag:v", "hvc1",
-                "-x265-params", "colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc:repeat-headers=1"
-            ])
-
-        case .hevcVideoToolbox:
-            arguments.append(contentsOf: [
-                "-c:v", "hevc_videotoolbox",
-                "-profile:v", "main10",
-                "-pix_fmt", "p010le",
-                "-tag:v", "hvc1",
-                "-b:v", estimatedBitrate(for: plan.renderSize, frameRate: plan.frameRate, bitrateMode: plan.bitrateMode)
-            ])
-
-        case .none:
-            throw RenderError.exportFailed("FFmpeg command build failed: no compatible HEVC encoder is available.")
-        }
+        appendEncoderArguments(for: selectedEncoder, plan: plan, arguments: &arguments)
 
         arguments.append(contentsOf: [
             "-movflags", "+write_colr",
-            "-colorspace", "bt2020nc",
-            "-color_primaries", "bt2020",
-            "-color_trc", "arib-std-b67",
+            "-colorspace", outputColorspace(for: plan.dynamicRange),
+            "-color_primaries", outputColorPrimaries(for: plan.dynamicRange),
+            "-color_trc", outputColorTransfer(for: plan.dynamicRange),
             "-c:a", "aac",
             "-ar", "48000",
             "-ac", "2",
@@ -165,13 +150,22 @@ struct FFmpegCommandBuilder {
         return FFmpegCommand(executableURL: resolution.selectedBinary.ffmpegURL, arguments: arguments)
     }
 
-    func expectedDurationSeconds(for plan: FFmpegHDRRenderPlan) -> Double {
+    func expectedDurationSeconds(for plan: FFmpegRenderPlan) -> Double {
         let total = plan.clips.reduce(0) { $0 + max($1.durationSeconds, 0.01) }
         let transitions = max(plan.transitionDurationSeconds, 0) * Double(max(plan.clips.count - 1, 0))
         return max(total - transitions, 0.01)
     }
 
-    private func colorNormalizeFilter(for colorInfo: ColorInfo) -> String {
+    private func colorNormalizeFilter(for colorInfo: ColorInfo, outputDynamicRange: DynamicRange) -> String {
+        switch outputDynamicRange {
+        case .hdr:
+            return hdrColorNormalizeFilter(for: colorInfo)
+        case .sdr:
+            return sdrColorNormalizeFilter(for: colorInfo)
+        }
+    }
+
+    private func hdrColorNormalizeFilter(for colorInfo: ColorInfo) -> String {
         if colorInfo.isHDR {
             let transfer = (colorInfo.transferFunction ?? "").lowercased()
             if transfer.contains("2084") || transfer.contains("pq") {
@@ -186,6 +180,23 @@ struct FFmpegCommandBuilder {
         }
 
         return "zscale=transferin=bt709:primariesin=bt709:matrixin=bt709:transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc"
+    }
+
+    private func sdrColorNormalizeFilter(for colorInfo: ColorInfo) -> String {
+        if colorInfo.isHDR {
+            let transfer = (colorInfo.transferFunction ?? "").lowercased()
+            if transfer.contains("2084") || transfer.contains("pq") {
+                return "zscale=transferin=smpte2084:primariesin=bt2020:matrixin=bt2020nc:transfer=bt709:primaries=bt709:matrix=bt709"
+            }
+            return "zscale=transferin=arib-std-b67:primariesin=bt2020:matrixin=bt2020nc:transfer=bt709:primaries=bt709:matrix=bt709"
+        }
+
+        let primaries = (colorInfo.colorPrimaries ?? "").lowercased()
+        if primaries.contains("p3") || primaries.contains("smpte432") || primaries.contains("dci") {
+            return "zscale=transferin=bt709:primariesin=smpte432:matrixin=bt709:transfer=bt709:primaries=bt709:matrix=bt709"
+        }
+
+        return "zscale=transferin=bt709:primariesin=bt709:matrixin=bt709:transfer=bt709:primaries=bt709:matrix=bt709"
     }
 
     private func formatSeconds(_ value: Double) -> String {
@@ -203,29 +214,185 @@ struct FFmpegCommandBuilder {
         }
     }
 
-    private func x265CRF(for mode: BitrateMode) -> String {
+    private func x264Preset(for mode: BitrateMode) -> String {
+        switch mode {
+        case .qualityFirst:
+            return "slow"
+        case .balanced:
+            return "medium"
+        case .sizeFirst:
+            return "faster"
+        }
+    }
+
+    private func x264CRF(for mode: BitrateMode) -> String {
         switch mode {
         case .qualityFirst:
             return "14"
         case .balanced:
-            return "17"
+            return "18"
         case .sizeFirst:
-            return "21"
+            return "22"
         }
     }
 
-    private func estimatedBitrate(for renderSize: CGSize, frameRate: Int, bitrateMode: BitrateMode) -> String {
+    private func x265CRF(for mode: BitrateMode, dynamicRange: DynamicRange) -> String {
+        switch (dynamicRange, mode) {
+        case (.hdr, .qualityFirst):
+            return "14"
+        case (.hdr, .balanced):
+            return "17"
+        case (.hdr, .sizeFirst):
+            return "21"
+        case (.sdr, .qualityFirst):
+            return "16"
+        case (.sdr, .balanced):
+            return "19"
+        case (.sdr, .sizeFirst):
+            return "23"
+        }
+    }
+
+    private func estimatedBitrate(
+        for renderSize: CGSize,
+        frameRate: Int,
+        bitrateMode: BitrateMode,
+        encoder: FFmpegVideoEncoder,
+        dynamicRange: DynamicRange
+    ) -> String {
         let bitsPerPixel: Double
-        switch bitrateMode {
-        case .qualityFirst:
+        switch (dynamicRange, encoder.codec, bitrateMode) {
+        case (.hdr, _, .qualityFirst):
             bitsPerPixel = 0.19
-        case .balanced:
+        case (.hdr, _, .balanced):
             bitsPerPixel = 0.14
-        case .sizeFirst:
+        case (.hdr, _, .sizeFirst):
             bitsPerPixel = 0.10
+        case (.sdr, .hevc, .qualityFirst):
+            bitsPerPixel = 0.16
+        case (.sdr, .hevc, .balanced):
+            bitsPerPixel = 0.11
+        case (.sdr, .hevc, .sizeFirst):
+            bitsPerPixel = 0.08
+        case (.sdr, .h264, .qualityFirst):
+            bitsPerPixel = 0.22
+        case (.sdr, .h264, .balanced):
+            bitsPerPixel = 0.16
+        case (.sdr, .h264, .sizeFirst):
+            bitsPerPixel = 0.12
         }
 
         let estimate = max(renderSize.width * renderSize.height, 1) * Double(max(frameRate, 24)) * bitsPerPixel
         return String(Int(max(estimate.rounded(), 10_000_000)))
+    }
+
+    private func appendEncoderArguments(for encoder: FFmpegVideoEncoder, plan: FFmpegRenderPlan, arguments: inout [String]) {
+        switch encoder {
+        case .libx264:
+            arguments.append(contentsOf: [
+                "-c:v", "libx264",
+                "-preset", x264Preset(for: plan.bitrateMode),
+                "-crf", x264CRF(for: plan.bitrateMode),
+                "-pix_fmt", "yuv420p",
+                "-profile:v", "high",
+                "-tag:v", "avc1"
+            ])
+
+        case .h264VideoToolbox:
+            arguments.append(contentsOf: [
+                "-c:v", "h264_videotoolbox",
+                "-pix_fmt", "yuv420p",
+                "-profile:v", "high",
+                "-tag:v", "avc1",
+                "-b:v", estimatedBitrate(
+                    for: plan.renderSize,
+                    frameRate: plan.frameRate,
+                    bitrateMode: plan.bitrateMode,
+                    encoder: encoder,
+                    dynamicRange: plan.dynamicRange
+                )
+            ])
+
+        case .libx265:
+            var values = [
+                "-c:v", "libx265",
+                "-preset", x265Preset(for: plan.bitrateMode),
+                "-crf", x265CRF(for: plan.bitrateMode, dynamicRange: plan.dynamicRange),
+                "-pix_fmt", plan.dynamicRange == .hdr ? "yuv420p10le" : "yuv420p",
+                "-tag:v", "hvc1"
+            ]
+            if plan.dynamicRange == .hdr {
+                values.append(contentsOf: [
+                    "-x265-params", "colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc:repeat-headers=1"
+                ])
+            } else {
+                values.append(contentsOf: [
+                    "-x265-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709:repeat-headers=1"
+                ])
+            }
+            arguments.append(contentsOf: values)
+
+        case .hevcVideoToolbox:
+            arguments.append(contentsOf: [
+                "-c:v", "hevc_videotoolbox",
+                "-profile:v", plan.dynamicRange == .hdr ? "main10" : "main",
+                "-pix_fmt", plan.dynamicRange == .hdr ? "p010le" : "yuv420p",
+                "-tag:v", "hvc1",
+                "-b:v", estimatedBitrate(
+                    for: plan.renderSize,
+                    frameRate: plan.frameRate,
+                    bitrateMode: plan.bitrateMode,
+                    encoder: encoder,
+                    dynamicRange: plan.dynamicRange
+                )
+            ])
+        }
+    }
+
+    private func intermediatePixelFormat(for dynamicRange: DynamicRange) -> String {
+        switch dynamicRange {
+        case .hdr:
+            return "yuv420p10le"
+        case .sdr:
+            return "yuv420p"
+        }
+    }
+
+    private func finalPixelFormat(for dynamicRange: DynamicRange, encoder: FFmpegVideoEncoder) -> String {
+        switch (dynamicRange, encoder) {
+        case (.hdr, .hevcVideoToolbox):
+            return "p010le"
+        case (.hdr, _):
+            return "yuv420p10le"
+        case (.sdr, _):
+            return "yuv420p"
+        }
+    }
+
+    private func outputColorspace(for dynamicRange: DynamicRange) -> String {
+        switch dynamicRange {
+        case .hdr:
+            return "bt2020nc"
+        case .sdr:
+            return "bt709"
+        }
+    }
+
+    private func outputColorPrimaries(for dynamicRange: DynamicRange) -> String {
+        switch dynamicRange {
+        case .hdr:
+            return "bt2020"
+        case .sdr:
+            return "bt709"
+        }
+    }
+
+    private func outputColorTransfer(for dynamicRange: DynamicRange) -> String {
+        switch dynamicRange {
+        case .hdr:
+            return "arib-std-b67"
+        case .sdr:
+            return "bt709"
+        }
     }
 }

@@ -74,8 +74,8 @@ Operational updates after first packaged run:
 - Hotfix: HDR pass now resolves per-frame source color tags (HLG/PQ/P3/709) instead of forcing HLG interpretation for every frame, and still-photo intermediates are now tagged from per-image source color space (P3 or BT.709) rather than one fixed BT.709 path.
 - Hotfix: HDR photo stills now use gain-map-aware decoding (when present) and are emitted as 10-bit BT.2020 HLG intermediates; non-HDR stills retain source-aware SDR tagging (P3/BT.709).
 - Added export option `Write diagnostics log (.log)` so diagnostics generation is explicitly user-controlled; when enabled, successful renders now produce a `.log` and run-report JSON includes the diagnostics path.
-- Pivoted HDR export backend from AVFoundation second-pass tone-mapping to capability-gated FFmpeg rendering (zscale + xfade + acrossfade + Main10 HEVC), with SDR remaining on AVFoundation.
-- Added HDR engine selection UI (`Auto/System/Bundled`) and persisted this preference with existing style/export settings.
+- Pivoted final export backend to capability-gated FFmpeg rendering (zscale + xfade + acrossfade + codec-aware encoder selection), with HDR on Main10 HEVC and SDR now also using FFmpeg instead of `AVAssetExportSession`.
+- Added FFmpeg engine selection UI (`Auto/System/Bundled`) and persisted this preference with existing style/export settings.
 - Added FFmpeg binary acquisition + bundling workflow (`scripts/fetch_ffmpeg_bundle.sh`, `scripts/build_app.sh`) with checksum verification and provenance file.
 - Added a known-good pre-pivot checkpoint tag for deterministic rollback: `checkpoint/20260304-known-good-pre-ffmpeg-pivot`.
 - Hotfix: FFmpeg HDR filter graph now avoids float RGB (`gbrpf32le`) intermediates to reduce high-resolution memory pressure and signal-9 failure risk; FFmpeg termination diagnostics now report signal-vs-exit and prioritize actionable stderr lines.
@@ -103,6 +103,7 @@ Operational updates after first packaged run:
 - Added Apple Photos Smart-fps inspection before render prep, including progress/status messaging, cached AVAsset reuse during later materialization, and cancellation-aware PhotoKit request handling.
 - Added a temporary auto-generated testing output name (`Testing - S2026E<epoch> - <Resolution> - <FPS>fps - <Range>`) that stays synced until manually edited.
 - Added a temporary `Mega Test` batch mode that expands checked Resolution/FPS/Range axes into sequential renders while reusing one preparation pass and prompting after per-combination failures.
+- Switched SDR final export from `AVAssetExportSession` to the shared FFmpeg backend, added SDR H.264/HEVC encoder capability probing, and normalized SDR outputs to BT.709 with real bitrate control.
 
 ## Decisions Log
 
@@ -140,6 +141,7 @@ Operational updates after first packaged run:
 - 2026-03-05: Expanded Photos input scope to support explicit album selection while preserving existing month/year filtering mode.
 - 2026-03-05: Approved Smart fps export policy with `30 fps` / `60 fps` / `Smart`, defaulting to `Smart` and promoting to `60 fps` only when any selected video is `>= 50 fps`.
 - 2026-03-05: Approved temporary testing-only output naming plus a removable mega-test batch UI for Resolution/FPS/Range matrix exports.
+- 2026-03-06: Approved moving SDR final export onto the shared FFmpeg backend while keeping AVFoundation for discovery and still/title intermediate generation.
 
 ## Changes Since Last Update
 
@@ -214,20 +216,23 @@ Operational updates after first packaged run:
 - 2026-03-05: Added temporary app-layer testing helpers for generated output names and mega-test matrix expansion, keeping the test-only logic isolated from the render engine.
 - 2026-03-05: Added Output name auto-sync/unlock behavior plus a `Mega Test` UI section that can batch sequential Resolution/FPS/Range renders and prompt to continue or stop after failures.
 - 2026-03-05: Added app-level tests for temporary output naming behavior, mega-test preparation reuse, manual-name bypass during batches, and stop/continue failure handling.
+- 2026-03-06: Replaced SDR `AVAssetExportSession` final export with the shared FFmpeg backend, generalized FFmpeg capability probing for SDR H.264/HEVC encoders, and updated command generation to emit BT.709-tagged SDR or BT.2020 HLG HDR outputs from the same pipeline.
+- 2026-03-06: Updated Export UI/copy and compatibility warnings so bitrate and engine messaging reflect unified FFmpeg final export behavior instead of HDR-only wording.
+- 2026-03-06: Added SDR FFmpeg command coverage in unit tests and removed active use of deprecated `AVAssetExportSession` APIs from the SDR final export path.
 
 ## Risks/Blockers
 
-- Current renderer uses AVFoundation APIs that are deprecated on macOS 15+; functional now, but should be migrated.
+- Final SDR/HDR export now runs on FFmpeg, but still/title intermediate generation and some legacy helper code still rely on AVFoundation/VideoToolbox.
 - Progress reporting is phase-based and monotonic but still ETA-free (not frame-accurate completion-time prediction).
 - Very large photo months may have long materialization times; additional user-facing progress granularity is still needed.
-- HDR exports now use FFmpeg high-quality normalization/encode path and can take materially longer than SDR exports, especially at large resolutions.
-- FFmpeg bundling is operator-managed; missing/invalid bundled binaries will fail HDR export in `Bundled Only` mode.
+- FFmpeg-backed final exports can take materially longer than the old SDR preset path, especially at `4K60` or when software encoders (`libx264`/`libx265`) are selected by capability fallback.
+- FFmpeg bundling is operator-managed; missing/invalid bundled binaries will fail exports in `Bundled Only` mode.
 
 ## Next Actions (Top 3)
 
-1. Complete S4 by finishing deprecated AVFoundation API migration on SDR path.
-2. Run manual HDR visual validation on mixed iPhone SDR/HDR months and tune FFmpeg normalization matrices if needed.
-3. Add integration smoke tests that execute the FFmpeg HDR path with fixture clips and verify metadata tags.
+1. Run manual SDR/HDR visual validation on mixed iPhone SDR/HDR months and tune FFmpeg SDR tone/compression defaults if needed.
+2. Add integration smoke tests that execute the unified FFmpeg final-export path with fixture clips and verify metadata tags.
+3. Decide whether to rename the legacy `hdrFFmpegBinaryMode`/`FFmpegHDRRenderer` symbols now that they serve both SDR and HDR.
 
 ## Rollback Procedure
 
@@ -243,4 +248,4 @@ For the pre-FFmpeg-pivot baseline, use:
 
 ## Last Updated
 
-2026-03-05 20:26 America/New_York by Codex
+2026-03-06 00:42 America/New_York by Codex

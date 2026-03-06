@@ -159,12 +159,10 @@ struct MainWindowView: View {
                         }
                     }
 
-                    if viewModel.selectedDynamicRange == .hdr {
-                        Picker("HDR Engine", selection: $viewModel.selectedHDRBinaryMode) {
-                            Text("Auto (System then Bundled)").tag(HDRFFmpegBinaryMode.autoSystemThenBundled)
-                            Text("System Only").tag(HDRFFmpegBinaryMode.systemOnly)
-                            Text("Bundled Only").tag(HDRFFmpegBinaryMode.bundledOnly)
-                        }
+                    Picker("FFmpeg Engine", selection: $viewModel.selectedHDRBinaryMode) {
+                        Text("Auto (System then Bundled)").tag(HDRFFmpegBinaryMode.autoSystemThenBundled)
+                        Text("System Only").tag(HDRFFmpegBinaryMode.systemOnly)
+                        Text("Bundled Only").tag(HDRFFmpegBinaryMode.bundledOnly)
                     }
 
                     HStack {

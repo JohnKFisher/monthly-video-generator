@@ -4,7 +4,6 @@ import Foundation
 import VideoToolbox
 
 public final class AVFoundationRenderEngine {
-    private var currentSession: AVAssetExportSession?
     private let stillImageClipFactory: StillImageClipFactory
     private let ffmpegHDRRenderer: FFmpegHDRRenderer
 
@@ -14,7 +13,6 @@ public final class AVFoundationRenderEngine {
     }
 
     public func cancelCurrentRender() {
-        currentSession?.cancelExport()
         ffmpegHDRRenderer.cancelCurrentRender()
     }
 
@@ -55,7 +53,6 @@ public final class AVFoundationRenderEngine {
 
         let requestedRenderSize = resolveRenderSize(from: timeline, policy: exportProfile.resolution)
         let resolvedFrameRate = resolveFrameRate(from: timeline, policy: exportProfile.frameRate)
-        let requiresFFmpegHDR = shouldApplyHDRToneMapping(for: exportProfile)
         let renderSize = constrainedRenderSizeForExport(requestedSize: requestedRenderSize, profile: exportProfile)
         diagnostics.add("Render size: \(Int(renderSize.width))x\(Int(renderSize.height))")
         diagnostics.add("Resolved output frame rate: \(resolvedFrameRate) fps")
@@ -95,164 +92,46 @@ public final class AVFoundationRenderEngine {
             diagnostics.add("Transition duration resolved: \(format(transitionDuration))")
             let outputURL = try OutputPathResolver.resolveUniqueURL(target: outputTarget, container: exportProfile.container)
             diagnostics.add("Resolved output URL: \(outputURL.path)")
-            if requiresFFmpegHDR {
-                reportStatus("Configuring HDR encode...", handler: statusHandler)
-                diagnostics.add("HDR export selected; routing to FFmpeg backend (mode=\(exportProfile.hdrFFmpegBinaryMode.rawValue)).")
-                let ffmpegPlan = FFmpegHDRRenderPlan(
-                    clips: clips.map { clip in
-                        FFmpegHDRClip(
-                            url: clip.assetURL,
-                            durationSeconds: max(clip.duration.seconds, 0.01),
-                            includeAudio: clip.includeAudio,
-                            hasAudioTrack: clip.audioTrack != nil,
-                            colorInfo: clip.colorInfo,
-                            sourceDescription: clip.sourceDescription
-                        )
-                    },
-                    transitionDurationSeconds: max(transitionDuration.seconds, 0),
-                    outputURL: outputURL,
-                    renderSize: renderSize,
-                    frameRate: resolvedFrameRate,
-                    bitrateMode: exportProfile.bitrateMode,
-                    container: exportProfile.container
-                )
-
-                let binaryResolution = try await ffmpegHDRRenderer.render(
-                    plan: ffmpegPlan,
-                    binaryMode: exportProfile.hdrFFmpegBinaryMode,
-                    diagnostics: { diagnostics.add($0) },
-                    progressHandler: { ffmpegProgress in
-                        let mapped = 0.30 + min(max(ffmpegProgress, 0), 1) * 0.68
-                        self.reportProgress(mapped, handler: progressHandler)
-                    },
-                    statusHandler: { ffmpegStatus in
-                        self.reportStatus(ffmpegStatus, handler: statusHandler)
-                    }
-                )
-                reportProgress(1.0, handler: progressHandler)
-                reportStatus("Finalizing output...", handler: statusHandler)
-                currentSession = nil
-
-                diagnostics.add("Render completed successfully")
-                let diagnosticsLogURL: URL?
-                if writeDiagnosticsLog {
-                    diagnosticsLogURL = persistDiagnosticsReport(
-                        diagnostics.renderReport(outcome: "success", error: nil),
-                        outputTarget: outputTarget,
-                        preferredURL: liveDiagnosticsLogURL
-                    )
-                } else {
-                    diagnosticsLogURL = nil
-                }
-                return RenderResult(
-                    outputURL: outputURL,
-                    diagnosticsLogURL: diagnosticsLogURL,
-                    backendSummary: binaryResolution.backendSummary
-                )
-            }
-
-            let composition = AVMutableComposition()
-            guard
-                let firstVideoTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
-                let secondVideoTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
-                let firstAudioTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid),
-                let secondAudioTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
-            else {
-                throw RenderError.exportFailed("Failed to allocate composition tracks")
-            }
-
-            let videoTracks = [firstVideoTrack, secondVideoTrack]
-            let audioTracks = [firstAudioTrack, secondAudioTrack]
-
-            var clipStartTimes: [CMTime] = []
-            var cursor = CMTime.zero
-
-            reportStatus("Compositing timeline clips...", handler: statusHandler)
-
-            for (index, clip) in clips.enumerated() {
-                clipStartTimes.append(cursor)
-                let trackIndex = index % 2
-                let videoSourceStart = validStartTime(clip.videoTrackTimeRange?.start)
-                let videoAvailableDuration = clip.videoTrackTimeRange?.duration
-                let insertDuration = minPositiveDuration(clip.duration, clip.videoTrackDuration, videoAvailableDuration) ?? clip.duration
-                let insertRange = CMTimeRange(start: videoSourceStart, duration: insertDuration)
-                diagnostics.add("Video insert attempt index=\(index) source=\(clip.sourceDescription) targetTrack=\(trackIndex) at=\(format(cursor)) range=\(format(insertRange)) sourceTrackRange=\(format(clip.videoTrackTimeRange)) sourceAsset=\(clip.assetURL.path)")
-
-                do {
-                    try videoTracks[trackIndex].insertTimeRange(insertRange, of: clip.videoTrack, at: cursor)
-                } catch {
-                    diagnostics.add("Video insertion failed at index \(index): \(describe(error))")
-                    throw RenderError.exportFailed("Video track insertion failed for \(clip.sourceDescription) at index \(index). \(describe(error))")
-                }
-
-                if clip.includeAudio, let audioTrack = clip.audioTrack {
-                    let audioSourceStart = validStartTime(clip.audioTrackTimeRange?.start)
-                    let audioAvailableDuration = clip.audioTrackTimeRange?.duration
-                    let audioDuration = minPositiveDuration(clip.duration, clip.audioTrackDuration, audioAvailableDuration) ?? clip.duration
-                    let audioRange = CMTimeRange(start: audioSourceStart, duration: audioDuration)
-                    diagnostics.add("Audio insert attempt index=\(index) source=\(clip.sourceDescription) targetTrack=\(trackIndex) at=\(format(cursor)) range=\(format(audioRange)) sourceTrackRange=\(format(clip.audioTrackTimeRange))")
-                    do {
-                        try audioTracks[trackIndex].insertTimeRange(audioRange, of: audioTrack, at: cursor)
-                    } catch {
-                        diagnostics.add("Audio insertion failed at index \(index): \(describe(error))")
-                        throw RenderError.exportFailed("Audio track insertion failed for \(clip.sourceDescription) at index \(index). \(describe(error))")
-                    }
-                }
-
-                cursor = add(cursor, insertDuration)
-                if index < clips.count - 1, transitionDuration > .zero {
-                    cursor = subtract(cursor, transitionDuration)
-                }
-
-                let insertionProgress = 0.23 + (Double(index + 1) / Double(max(clips.count, 1))) * 0.12
-                reportProgress(insertionProgress, handler: progressHandler)
-            }
-
-            let videoComposition = AVMutableVideoComposition()
-            videoComposition.renderSize = renderSize
-            videoComposition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(resolvedFrameRate))
-            videoComposition.instructions = buildInstructions(
-                clips: clips,
-                clipStartTimes: clipStartTimes,
-                transitionDuration: transitionDuration,
-                renderSize: renderSize,
-                compositionTracks: videoTracks
-            )
-            let colorConfiguration = colorConfiguration(for: exportProfile.dynamicRange)
-            videoComposition.colorPrimaries = colorConfiguration.colorPrimaries
-            videoComposition.colorTransferFunction = colorConfiguration.colorTransferFunction
-            videoComposition.colorYCbCrMatrix = colorConfiguration.colorYCbCrMatrix
+            reportStatus("Configuring \(exportProfile.dynamicRange == .hdr ? "HDR" : "SDR") encode...", handler: statusHandler)
             diagnostics.add(
-                "Video composition color properties: primaries=\(colorConfiguration.colorPrimaries), " +
-                "transfer=\(colorConfiguration.colorTransferFunction), matrix=\(colorConfiguration.colorYCbCrMatrix)"
+                "\(exportProfile.dynamicRange == .hdr ? "HDR" : "SDR") export selected; routing to FFmpeg backend " +
+                "(mode=\(exportProfile.hdrFFmpegBinaryMode.rawValue), codec=\(exportProfile.videoCodec.rawValue))."
+            )
+            let ffmpegPlan = FFmpegRenderPlan(
+                clips: clips.map { clip in
+                    FFmpegRenderClip(
+                        url: clip.assetURL,
+                        durationSeconds: max(clip.duration.seconds, 0.01),
+                        includeAudio: clip.includeAudio,
+                        hasAudioTrack: clip.audioTrack != nil,
+                        colorInfo: clip.colorInfo,
+                        sourceDescription: clip.sourceDescription
+                    )
+                },
+                transitionDurationSeconds: max(transitionDuration.seconds, 0),
+                outputURL: outputURL,
+                renderSize: renderSize,
+                frameRate: resolvedFrameRate,
+                bitrateMode: exportProfile.bitrateMode,
+                container: exportProfile.container,
+                videoCodec: exportProfile.videoCodec,
+                dynamicRange: exportProfile.dynamicRange
             )
 
-            let exportStartProgress = 0.35
-            let exportEndProgress = 0.98
-            let presetName = bestPreset(for: exportProfile, composition: composition)
-            diagnostics.add("Selected export preset: \(presetName)")
-            guard let session = AVAssetExportSession(asset: composition, presetName: presetName) else {
-                throw RenderError.exportSessionUnavailable
-            }
-
-            currentSession = session
-            let sessionFileType = preferredFileType(container: exportProfile.container, session: session)
-            session.outputURL = outputURL
-            session.outputFileType = sessionFileType
-            diagnostics.add("Selected output file type: \(session.outputFileType?.rawValue ?? "nil")")
-            session.shouldOptimizeForNetworkUse = false
-            session.videoComposition = videoComposition
-
-            reportStatus("Encoding SDR output...", handler: statusHandler)
-            try await export(
-                session: session,
-                progressStart: exportStartProgress,
-                progressEnd: exportEndProgress,
-                progressHandler: progressHandler
+            let binaryResolution = try await ffmpegHDRRenderer.render(
+                plan: ffmpegPlan,
+                binaryMode: exportProfile.hdrFFmpegBinaryMode,
+                diagnostics: { diagnostics.add($0) },
+                progressHandler: { ffmpegProgress in
+                    let mapped = 0.30 + min(max(ffmpegProgress, 0), 1) * 0.68
+                    self.reportProgress(mapped, handler: progressHandler)
+                },
+                statusHandler: { ffmpegStatus in
+                    self.reportStatus(ffmpegStatus, handler: statusHandler)
+                }
             )
             reportProgress(1.0, handler: progressHandler)
             reportStatus("Finalizing output...", handler: statusHandler)
-            currentSession = nil
 
             diagnostics.add("Render completed successfully")
             let diagnosticsLogURL: URL?
@@ -268,10 +147,12 @@ public final class AVFoundationRenderEngine {
             return RenderResult(
                 outputURL: outputURL,
                 diagnosticsLogURL: diagnosticsLogURL,
-                backendSummary: "AVFoundation SDR backend"
+                backendSummary: binaryResolution.backendSummary(
+                    codec: exportProfile.videoCodec,
+                    dynamicRange: exportProfile.dynamicRange
+                )
             )
         } catch {
-            currentSession = nil
             diagnostics.add("Render failed with error: \(describe(error))")
             let diagnosticURL: URL?
             if writeDiagnosticsLog {
@@ -581,23 +462,6 @@ public final class AVFoundationRenderEngine {
     func constrainedRenderSizeForExport(requestedSize: CGSize, profile: ExportProfile) -> CGSize {
         _ = profile
         return normalizedRenderSize(requestedSize)
-    }
-
-    private func bestPreset(for profile: ExportProfile, composition: AVAsset) -> String {
-        let preferred = profile.videoCodec == .hevc ? AVAssetExportPresetHEVCHighestQuality : AVAssetExportPresetHighestQuality
-        let compatible = AVAssetExportSession.exportPresets(compatibleWith: composition)
-        if compatible.contains(preferred) {
-            return preferred
-        }
-        return AVAssetExportPresetHighestQuality
-    }
-
-    private func preferredFileType(container: ContainerFormat, session: AVAssetExportSession) -> AVFileType {
-        let preferred: AVFileType = container == .mp4 ? .mp4 : .mov
-        if session.supportedFileTypes.contains(preferred) {
-            return preferred
-        }
-        return session.supportedFileTypes.first ?? .mov
     }
 
     struct VideoColorConfiguration: Equatable {
@@ -1137,37 +1001,6 @@ public final class AVFoundationRenderEngine {
         let width = evenDimension(max(2, Int(size.width.rounded())))
         let height = evenDimension(max(2, Int(size.height.rounded())))
         return CGSize(width: width, height: height)
-    }
-
-    private func export(
-        session: AVAssetExportSession,
-        progressStart: Double,
-        progressEnd: Double,
-        progressHandler: (@MainActor @Sendable (Double) -> Void)?
-    ) async throws {
-        reportProgress(progressStart, handler: progressHandler)
-        session.exportAsynchronously {}
-
-        while true {
-            let status = session.status
-            switch status {
-            case .unknown, .waiting, .exporting:
-                let rawProgress = Double(session.progress)
-                let clampedRaw = min(max(rawProgress, 0), 1)
-                let mappedProgress = progressStart + (progressEnd - progressStart) * clampedRaw
-                reportProgress(mappedProgress, handler: progressHandler)
-                try await Task.sleep(nanoseconds: 150_000_000)
-            case .completed:
-                reportProgress(progressEnd, handler: progressHandler)
-                return
-            case .cancelled:
-                throw RenderError.exportFailed("Render cancelled")
-            case .failed:
-                throw RenderError.exportFailed(session.error?.localizedDescription ?? "Unknown export failure")
-            @unknown default:
-                throw RenderError.exportFailed("Unexpected export status: \(status.rawValue)")
-            }
-        }
     }
 
     private func reportProgress(_ value: Double, handler: (@MainActor @Sendable (Double) -> Void)?) {
