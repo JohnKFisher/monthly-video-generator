@@ -144,6 +144,13 @@ struct FFmpegBinaryResolution: Equatable, Sendable {
         }
         return base
     }
+
+    func backendInfo(codec: VideoCodec, dynamicRange: DynamicRange) -> RenderBackendInfo {
+        RenderBackendInfo(
+            binarySource: selectedBinary.source.renderBackendBinarySource,
+            encoder: selectedCapabilities.preferredEncoder(for: codec, dynamicRange: dynamicRange)?.rawValue
+        )
+    }
 }
 
 struct FFmpegRenderClip: Equatable, Sendable {
@@ -227,5 +234,16 @@ private extension ColorInfo {
             return .pq
         }
         return .hlg
+    }
+}
+
+private extension FFmpegBinarySource {
+    var renderBackendBinarySource: RenderBackendBinarySource {
+        switch self {
+        case .system:
+            return .system
+        case .bundled:
+            return .bundled
+        }
     }
 }

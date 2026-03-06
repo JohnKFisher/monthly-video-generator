@@ -151,6 +151,15 @@ public final class AVFoundationRenderEngine {
                 backendSummary: binaryResolution.backendSummary(
                     codec: exportProfile.videoCodec,
                     dynamicRange: exportProfile.dynamicRange
+                ),
+                backendInfo: binaryResolution.backendInfo(
+                    codec: exportProfile.videoCodec,
+                    dynamicRange: exportProfile.dynamicRange
+                ),
+                resolvedVideoInfo: ResolvedRenderVideoInfo(
+                    width: Int(renderSize.width.rounded()),
+                    height: Int(renderSize.height.rounded()),
+                    frameRate: resolvedFrameRate
                 )
             )
         } catch {

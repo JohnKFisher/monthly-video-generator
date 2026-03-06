@@ -1,6 +1,37 @@
 import AVFoundation
 import Foundation
 
+public enum RenderBackendBinarySource: String, Codable, Sendable {
+    case system
+    case bundled
+
+    public var displayLabel: String {
+        rawValue.capitalized
+    }
+}
+
+public struct RenderBackendInfo: Equatable, Sendable {
+    public let binarySource: RenderBackendBinarySource?
+    public let encoder: String?
+
+    public init(binarySource: RenderBackendBinarySource?, encoder: String?) {
+        self.binarySource = binarySource
+        self.encoder = encoder
+    }
+}
+
+public struct ResolvedRenderVideoInfo: Equatable, Sendable {
+    public let width: Int
+    public let height: Int
+    public let frameRate: Int
+
+    public init(width: Int, height: Int, frameRate: Int) {
+        self.width = width
+        self.height = height
+        self.frameRate = frameRate
+    }
+}
+
 public struct RenderPreparation: @unchecked Sendable {
     public let items: [MediaItem]
     public let timeline: Timeline
@@ -17,11 +48,21 @@ public struct RenderResult: Sendable {
     public let outputURL: URL
     public let diagnosticsLogURL: URL?
     public let backendSummary: String?
+    public let backendInfo: RenderBackendInfo?
+    public let resolvedVideoInfo: ResolvedRenderVideoInfo?
 
-    public init(outputURL: URL, diagnosticsLogURL: URL?, backendSummary: String?) {
+    public init(
+        outputURL: URL,
+        diagnosticsLogURL: URL?,
+        backendSummary: String?,
+        backendInfo: RenderBackendInfo? = nil,
+        resolvedVideoInfo: ResolvedRenderVideoInfo? = nil
+    ) {
         self.outputURL = outputURL
         self.diagnosticsLogURL = diagnosticsLogURL
         self.backendSummary = backendSummary
+        self.backendInfo = backendInfo
+        self.resolvedVideoInfo = resolvedVideoInfo
     }
 }
 

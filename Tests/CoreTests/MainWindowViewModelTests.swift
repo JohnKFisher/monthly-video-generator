@@ -70,6 +70,74 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertEqual(coordinator.renderRequests.first?.output.baseFilename, "Testing - S2026E1700000999 - Smart - Smartfps - HDR - Smart")
     }
 
+    func testSingleRenderCompletionSummaryListsRequestedAndActualExportOptions() async throws {
+        let preparation = makePreparation(
+            items: [
+                makeVideoItem(
+                    id: "video-1",
+                    pixelSize: CGSize(width: 640, height: 360),
+                    sourceFrameRate: 60,
+                    sourceAudioChannelCount: 6
+                )
+            ]
+        )
+        let coordinator = RenderCoordinatorSpy(
+            preparation: preparation,
+            renderResultBuilder: { _, request, _ in
+                let outputURL = request.output.directory
+                    .appendingPathComponent(request.output.baseFilename)
+                    .appendingPathExtension(request.export.container.fileExtension)
+                return RenderResult(
+                    outputURL: outputURL,
+                    diagnosticsLogURL: nil,
+                    backendSummary: "FFmpeg HDR backend [bundled] (encoder: libx265)",
+                    backendInfo: RenderBackendInfo(binarySource: .bundled, encoder: "libx265"),
+                    resolvedVideoInfo: ResolvedRenderVideoInfo(width: 1280, height: 720, frameRate: 60)
+                )
+            }
+        )
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            filenameGenerator: TemporaryTestingFilenameGenerator(now: { Date(timeIntervalSince1970: 1_700_001_000) }),
+            preferencesStore: makePreferencesStore()
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.selectedFolderURL = directory
+        viewModel.outputDirectoryURL = directory
+        viewModel.selectedDynamicRange = .sdr
+        viewModel.selectedVideoCodec = .h264
+        viewModel.selectedAudioLayout = .smart
+        viewModel.selectedResolutionPolicy = .smart
+        viewModel.selectedFrameRatePolicy = .smart
+        viewModel.selectedHDRBinaryMode = .autoSystemThenBundled
+
+        viewModel.startRender()
+        await waitUntil(
+            timeout: 2.0,
+            message: "Timed out waiting for single render summary."
+        ) {
+            !viewModel.isRendering && viewModel.lastSingleRenderCompletionSummary != nil
+        }
+
+        let summary = try XCTUnwrap(viewModel.lastSingleRenderCompletionSummary)
+        XCTAssertEqual(
+            summary.rows.map(\.title),
+            ["Container", "Codec", "Audio", "Bitrate", "Resolution", "Frame Rate", "Range", "Engine"]
+        )
+        XCTAssertEqual(value(in: summary, forRowNamed: "Container"), "MP4")
+        XCTAssertEqual(value(in: summary, forRowNamed: "Codec"), "H.264")
+        XCTAssertEqual(value(in: summary, forRowNamed: "Audio"), "Smart (5.1)")
+        XCTAssertEqual(value(in: summary, forRowNamed: "Bitrate"), "Balanced")
+        XCTAssertEqual(value(in: summary, forRowNamed: "Resolution"), "Smart (720p)")
+        XCTAssertEqual(value(in: summary, forRowNamed: "Frame Rate"), "Smart (60 fps)")
+        XCTAssertEqual(value(in: summary, forRowNamed: "Range"), "SDR")
+        XCTAssertEqual(value(in: summary, forRowNamed: "Engine"), "Auto (Bundled)")
+        XCTAssertEqual(viewModel.renderCompleteAlertMessage, summary.alertMessage)
+        XCTAssertTrue(summary.alertMessage.hasPrefix(summary.outputPath))
+    }
+
     func testMegaTestReusesPreparationAndIgnoresManualOutputNameField() async throws {
         let dateProvider = DateSequenceProvider([
             Date(timeIntervalSince1970: 1_700_000_000),
@@ -103,6 +171,8 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertEqual(coordinator.prepareFolderRequests.count, 1)
         XCTAssertEqual(coordinator.renderRequests.count, 4)
         XCTAssertFalse(coordinator.renderRequests.contains { $0.output.baseFilename == "Manual Override" })
+        XCTAssertNil(viewModel.lastSingleRenderCompletionSummary)
+        XCTAssertEqual(viewModel.renderCompleteAlertMessage, viewModel.lastOutputPath)
 
         let generator = TemporaryTestingFilenameGenerator()
         let expectedNames = [
@@ -228,6 +298,80 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.statusMessage.contains("Mega test complete"))
     }
 
+    func testSingleRenderCompletionSummaryUsesRenderStartSnapshot() async throws {
+        let preparation = makePreparation(
+            items: [
+                makeVideoItem(
+                    id: "video-2",
+                    pixelSize: CGSize(width: 1280, height: 720),
+                    sourceFrameRate: 60,
+                    sourceAudioChannelCount: 2
+                )
+            ]
+        )
+        let coordinator = RenderCoordinatorSpy(
+            preparation: preparation,
+            suspendRenderUntilResumed: true,
+            renderResultBuilder: { _, request, _ in
+                let outputURL = request.output.directory
+                    .appendingPathComponent(request.output.baseFilename)
+                    .appendingPathExtension(request.export.container.fileExtension)
+                return RenderResult(
+                    outputURL: outputURL,
+                    diagnosticsLogURL: nil,
+                    backendSummary: "FFmpeg HDR backend [system] (encoder: libx265)",
+                    backendInfo: RenderBackendInfo(binarySource: .system, encoder: "libx265"),
+                    resolvedVideoInfo: ResolvedRenderVideoInfo(width: 1920, height: 1080, frameRate: 60)
+                )
+            }
+        )
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            filenameGenerator: TemporaryTestingFilenameGenerator(now: { Date(timeIntervalSince1970: 1_700_001_200) }),
+            preferencesStore: makePreferencesStore()
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.selectedFolderURL = directory
+        viewModel.outputDirectoryURL = directory
+        viewModel.selectedDynamicRange = .sdr
+        viewModel.selectedVideoCodec = .h264
+        viewModel.selectedAudioLayout = .smart
+        viewModel.selectedResolutionPolicy = .smart
+        viewModel.selectedFrameRatePolicy = .smart
+        viewModel.selectedHDRBinaryMode = .autoSystemThenBundled
+
+        viewModel.startRender()
+        await waitUntil(
+            timeout: 2.0,
+            message: "Timed out waiting for render request to start."
+        ) {
+            coordinator.renderRequests.count == 1
+        }
+
+        viewModel.selectedVideoCodec = .hevc
+        viewModel.selectedAudioLayout = .mono
+        viewModel.selectedResolutionPolicy = .fixed4K
+        viewModel.selectedFrameRatePolicy = .fps30
+        viewModel.selectedHDRBinaryMode = .bundledOnly
+
+        coordinator.resumeRender()
+        await waitUntil(
+            timeout: 2.0,
+            message: "Timed out waiting for suspended render to finish."
+        ) {
+            !viewModel.isRendering && viewModel.lastSingleRenderCompletionSummary != nil
+        }
+
+        let summary = try XCTUnwrap(viewModel.lastSingleRenderCompletionSummary)
+        XCTAssertEqual(value(in: summary, forRowNamed: "Codec"), "H.264")
+        XCTAssertEqual(value(in: summary, forRowNamed: "Audio"), "Smart (Stereo)")
+        XCTAssertEqual(value(in: summary, forRowNamed: "Resolution"), "Smart (1080p)")
+        XCTAssertEqual(value(in: summary, forRowNamed: "Frame Rate"), "Smart (60 fps)")
+        XCTAssertEqual(value(in: summary, forRowNamed: "Engine"), "Auto (System)")
+    }
+
     private func makeViewModel(
         coordinator: RenderCoordinating,
         filenameGenerator: TemporaryTestingFilenameGenerator,
@@ -240,25 +384,53 @@ final class MainWindowViewModelTests: XCTestCase {
         )
     }
 
-    private func makePreparation() -> RenderPreparation {
-        let item = MediaItem(
-            id: "image",
-            type: .image,
-            captureDate: Date(),
-            duration: nil,
-            pixelSize: CGSize(width: 1920, height: 1080),
-            colorInfo: .unknown,
-            locator: .file(URL(fileURLWithPath: "/tmp/image.jpg")),
-            fileSizeBytes: 1_000,
-            filename: "image.jpg"
-        )
+    private func makePreparation(items: [MediaItem]? = nil) -> RenderPreparation {
+        let resolvedItems = items ?? [makeImageItem()]
         let style = StyleProfile.stageOneDefault
         let timeline = TimelineBuilder().buildTimeline(
-            items: [item],
+            items: resolvedItems,
             ordering: .captureDateAscendingStable,
             style: style
         )
-        return RenderPreparation(items: [item], timeline: timeline, warnings: [])
+        return RenderPreparation(items: resolvedItems, timeline: timeline, warnings: [])
+    }
+
+    private func makeImageItem(
+        id: String = "image",
+        pixelSize: CGSize = CGSize(width: 1920, height: 1080)
+    ) -> MediaItem {
+        MediaItem(
+            id: id,
+            type: .image,
+            captureDate: Date(),
+            duration: nil,
+            pixelSize: pixelSize,
+            colorInfo: .unknown,
+            locator: .file(URL(fileURLWithPath: "/tmp/\(id).jpg")),
+            fileSizeBytes: 1_000,
+            filename: "\(id).jpg"
+        )
+    }
+
+    private func makeVideoItem(
+        id: String,
+        pixelSize: CGSize,
+        sourceFrameRate: Double?,
+        sourceAudioChannelCount: Int?
+    ) -> MediaItem {
+        MediaItem(
+            id: id,
+            type: .video,
+            captureDate: Date(),
+            duration: CMTime(seconds: 4, preferredTimescale: 600),
+            sourceFrameRate: sourceFrameRate,
+            sourceAudioChannelCount: sourceAudioChannelCount,
+            pixelSize: pixelSize,
+            colorInfo: .unknown,
+            locator: .file(URL(fileURLWithPath: "/tmp/\(id).mov")),
+            fileSizeBytes: 10_000,
+            filename: "\(id).mov"
+        )
     }
 
     private func makePreferencesStore() -> UserDefaults {
@@ -293,19 +465,42 @@ final class MainWindowViewModelTests: XCTestCase {
         }
         XCTAssertNotNil(viewModel.pendingMegaTestFailure, "Timed out waiting for mega test failure prompt.")
     }
+
+    private func value(
+        in summary: MainWindowViewModel.RenderCompletionSummary,
+        forRowNamed title: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> String {
+        guard let row = summary.rows.first(where: { $0.title == title }) else {
+            XCTFail("Missing summary row named \(title)", file: file, line: line)
+            return ""
+        }
+        return row.displayValue
+    }
 }
 
 @MainActor
 private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendable {
     let preparation: RenderPreparation
     let failedRenderIndices: Set<Int>
+    let suspendRenderUntilResumed: Bool
+    let renderResultBuilder: ((RenderPreparation, RenderRequest, Int) -> RenderResult)?
     private(set) var prepareFolderRequests: [RenderRequest] = []
     private(set) var renderRequests: [RenderRequest] = []
     private(set) var cancelCurrentRenderCallCount: Int = 0
+    private var suspendedRenderContinuation: CheckedContinuation<Void, Never>?
 
-    init(preparation: RenderPreparation, failedRenderIndices: Set<Int> = []) {
+    init(
+        preparation: RenderPreparation,
+        failedRenderIndices: Set<Int> = [],
+        suspendRenderUntilResumed: Bool = false,
+        renderResultBuilder: ((RenderPreparation, RenderRequest, Int) -> RenderResult)? = nil
+    ) {
         self.preparation = preparation
         self.failedRenderIndices = failedRenderIndices
+        self.suspendRenderUntilResumed = suspendRenderUntilResumed
+        self.renderResultBuilder = renderResultBuilder
     }
 
     func prepareFolderRender(request: RenderRequest) async throws -> RenderPreparation {
@@ -338,6 +533,12 @@ private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendabl
         statusHandler?(writeDiagnosticsLog ? "Encoding with diagnostics" : "Encoding")
         progressHandler?(1.0)
 
+        if suspendRenderUntilResumed {
+            await withCheckedContinuation { continuation in
+                suspendedRenderContinuation = continuation
+            }
+        }
+
         if failedRenderIndices.contains(index) {
             throw RenderError.exportFailed("Simulated failure \(index)")
         }
@@ -345,11 +546,63 @@ private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendabl
         let outputURL = request.output.directory
             .appendingPathComponent(request.output.baseFilename)
             .appendingPathExtension(request.export.container.fileExtension)
-        return RenderResult(outputURL: outputURL, diagnosticsLogURL: nil, backendSummary: nil)
+        if let renderResultBuilder {
+            return renderResultBuilder(preparation, request, index)
+        }
+        return RenderResult(
+            outputURL: outputURL,
+            diagnosticsLogURL: nil,
+            backendSummary: nil,
+            backendInfo: RenderBackendInfo(
+                binarySource: defaultBinarySource(for: request.export.hdrFFmpegBinaryMode),
+                encoder: nil
+            ),
+            resolvedVideoInfo: ResolvedRenderVideoInfo(
+                width: defaultVideoDimensions(for: request.export.resolution).width,
+                height: defaultVideoDimensions(for: request.export.resolution).height,
+                frameRate: defaultFrameRate(for: request.export.frameRate)
+            )
+        )
     }
 
     func cancelCurrentRender() {
         cancelCurrentRenderCallCount += 1
+    }
+
+    func resumeRender() {
+        suspendedRenderContinuation?.resume()
+        suspendedRenderContinuation = nil
+    }
+
+    private func defaultBinarySource(for mode: HDRFFmpegBinaryMode) -> RenderBackendBinarySource {
+        switch mode {
+        case .autoSystemThenBundled, .systemOnly:
+            return .system
+        case .bundledOnly:
+            return .bundled
+        }
+    }
+
+    private func defaultFrameRate(for policy: FrameRatePolicy) -> Int {
+        switch policy {
+        case .fps30, .smart:
+            return 30
+        case .fps60:
+            return 60
+        }
+    }
+
+    private func defaultVideoDimensions(for policy: ResolutionPolicy) -> (width: Int, height: Int) {
+        switch policy.normalized {
+        case .fixed720p:
+            return (1280, 720)
+        case .fixed1080p, .smart:
+            return (1920, 1080)
+        case .fixed4K:
+            return (3840, 2160)
+        case .matchSourceMax:
+            return (1920, 1080)
+        }
     }
 }
 

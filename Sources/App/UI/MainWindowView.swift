@@ -40,11 +40,7 @@ struct MainWindowView: View {
             }
             Button("OK", role: .cancel) {}
         } message: {
-            if viewModel.lastOutputPath.isEmpty {
-                Text("The slideshow was exported successfully.")
-            } else {
-                Text(viewModel.lastOutputPath)
-            }
+            Text(viewModel.renderCompleteAlertMessage)
         }
     }
 

@@ -100,6 +100,48 @@ final class MainWindowViewModel: ObservableObject {
         let usesPhotoMaterializer: Bool
     }
 
+    struct RenderCompletionSummary: Equatable {
+        struct Row: Equatable {
+            let title: String
+            let selectedLabel: String
+            let actualLabel: String
+
+            var displayValue: String {
+                if selectedLabel == actualLabel {
+                    return selectedLabel
+                }
+                return "\(selectedLabel) (\(actualLabel))"
+            }
+
+            var displayLine: String {
+                "\(title): \(displayValue)"
+            }
+        }
+
+        let outputPath: String
+        let rows: [Row]
+
+        var alertMessage: String {
+            var lines: [String] = []
+            if outputPath.isEmpty {
+                lines.append("The slideshow was exported successfully.")
+            } else {
+                lines.append(outputPath)
+            }
+
+            if !rows.isEmpty {
+                lines.append("")
+                lines.append(contentsOf: rows.map(\.displayLine))
+            }
+
+            return lines.joined(separator: "\n")
+        }
+    }
+
+    private struct SingleRenderSummarySnapshot: Sendable {
+        let requestedProfile: ExportProfile
+    }
+
     @Published var sourceMode: SourceMode = .folder {
         didSet { refreshPhotoAlbumsIfNeeded() }
     }
@@ -195,6 +237,7 @@ final class MainWindowViewModel: ObservableObject {
     @Published var lastOutputPath: String = ""
     @Published var lastDiagnosticsPath: String = ""
     @Published var lastBackendSummary: String = ""
+    @Published private(set) var lastSingleRenderCompletionSummary: RenderCompletionSummary?
     @Published var showRenderCompleteAlert: Bool = false
 
     let appVersionBuildLabel: String
@@ -336,6 +379,16 @@ final class MainWindowViewModel: ObservableObject {
         return "In Apple Photos mode, Smart audio may inspect/download selected videos before rendering to choose Mono, Stereo, or 5.1."
     }
 
+    var renderCompleteAlertMessage: String {
+        if let lastSingleRenderCompletionSummary {
+            return lastSingleRenderCompletionSummary.alertMessage
+        }
+        if lastOutputPath.isEmpty {
+            return "The slideshow was exported successfully."
+        }
+        return lastOutputPath
+    }
+
     var megaTestPhotosSmartAudioDescription: String? {
         guard sourceMode == .photos, megaTestVaryAudio else {
             return nil
@@ -396,8 +449,12 @@ final class MainWindowViewModel: ObservableObject {
         guard !isRendering, renderTask == nil else { return }
 
         let outputBaseFilename = currentSingleRenderOutputFilename()
+        let completionSummarySnapshot = makeSingleRenderSummarySnapshot()
         renderTask = Task {
-            await performSingleRender(outputBaseFilename: outputBaseFilename)
+            await performSingleRender(
+                outputBaseFilename: outputBaseFilename,
+                completionSummarySnapshot: completionSummarySnapshot
+            )
             await MainActor.run {
                 self.renderTask = nil
             }
@@ -445,7 +502,10 @@ final class MainWindowViewModel: ObservableObject {
         #endif
     }
 
-    private func performSingleRender(outputBaseFilename: String) async {
+    private func performSingleRender(
+        outputBaseFilename: String,
+        completionSummarySnapshot: SingleRenderSummarySnapshot
+    ) async {
         beginRenderRun(status: "Preparing media...")
 
         do {
@@ -484,7 +544,8 @@ final class MainWindowViewModel: ObservableObject {
             recordSuccessfulRender(
                 renderResult,
                 request: request,
-                preparation: preparedSession.preparation
+                preparation: preparedSession.preparation,
+                completionSummarySnapshot: completionSummarySnapshot
             )
             finishSuccessfulRun(status: "Render complete")
         } catch {
@@ -597,6 +658,17 @@ final class MainWindowViewModel: ObservableObject {
         return outputFilename
     }
 
+    private func makeSingleRenderSummarySnapshot() -> SingleRenderSummarySnapshot {
+        SingleRenderSummarySnapshot(
+            requestedProfile: buildSelectedExportProfile(
+                resolution: selectedResolutionPolicy.normalized,
+                frameRate: selectedFrameRatePolicy,
+                dynamicRange: selectedDynamicRange,
+                audioLayout: selectedAudioLayout
+            )
+        )
+    }
+
     private func generatedOutputName() -> String {
         filenameGenerator.makeOutputName(
             resolution: selectedResolutionPolicy.normalized,
@@ -636,6 +708,7 @@ final class MainWindowViewModel: ObservableObject {
         lastOutputPath = ""
         lastDiagnosticsPath = ""
         lastBackendSummary = ""
+        lastSingleRenderCompletionSummary = nil
         showRenderCompleteAlert = false
         pendingMegaTestFailure = nil
         clearMegaTestState()
@@ -660,6 +733,7 @@ final class MainWindowViewModel: ObservableObject {
         renderStatusDetail = nil
         progress = 0
         statusMessage = formatErrorForDisplay(error)
+        lastSingleRenderCompletionSummary = nil
         showRenderCompleteAlert = false
         pendingMegaTestFailure = nil
         clearMegaTestState()
@@ -680,16 +754,11 @@ final class MainWindowViewModel: ObservableObject {
         items: [MediaItem]
     ) -> ExportProfileResolution {
         exportProfileManager.resolveProfile(
-            for: ExportProfile(
-                container: selectedContainer,
-                videoCodec: selectedVideoCodec,
-                audioCodec: .aac,
-                frameRate: frameRate,
+            for: buildSelectedExportProfile(
                 resolution: resolution.normalized,
+                frameRate: frameRate,
                 dynamicRange: dynamicRange,
-                hdrFFmpegBinaryMode: selectedHDRBinaryMode,
-                audioLayout: audioLayout,
-                bitrateMode: selectedBitrateMode
+                audioLayout: audioLayout
             ),
             items: items
         )
@@ -702,6 +771,25 @@ final class MainWindowViewModel: ObservableObject {
             dynamicRange: combination.dynamicRange,
             audioLayout: combination.audioLayout,
             items: items
+        )
+    }
+
+    private func buildSelectedExportProfile(
+        resolution: ResolutionPolicy,
+        frameRate: FrameRatePolicy,
+        dynamicRange: DynamicRange,
+        audioLayout: AudioLayout
+    ) -> ExportProfile {
+        ExportProfile(
+            container: selectedContainer,
+            videoCodec: selectedVideoCodec,
+            audioCodec: .aac,
+            frameRate: frameRate,
+            resolution: resolution.normalized,
+            dynamicRange: dynamicRange,
+            hdrFFmpegBinaryMode: selectedHDRBinaryMode,
+            audioLayout: audioLayout,
+            bitrateMode: selectedBitrateMode
         )
     }
 
@@ -864,7 +952,8 @@ final class MainWindowViewModel: ObservableObject {
     private func recordSuccessfulRender(
         _ renderResult: RenderResult,
         request: RenderRequest,
-        preparation: RenderPreparation
+        preparation: RenderPreparation,
+        completionSummarySnapshot: SingleRenderSummarySnapshot? = nil
     ) {
         let outputURL = renderResult.outputURL
         let report = runReportService.makeReport(
@@ -880,6 +969,189 @@ final class MainWindowViewModel: ObservableObject {
         lastOutputPath = outputURL.path
         lastDiagnosticsPath = renderResult.diagnosticsLogURL?.path ?? ""
         lastBackendSummary = renderResult.backendSummary ?? ""
+        if let completionSummarySnapshot {
+            lastSingleRenderCompletionSummary = makeRenderCompletionSummary(
+                outputPath: outputURL.path,
+                requestedProfile: completionSummarySnapshot.requestedProfile,
+                actualProfile: request.export,
+                renderResult: renderResult
+            )
+        }
+    }
+
+    private func makeRenderCompletionSummary(
+        outputPath: String,
+        requestedProfile: ExportProfile,
+        actualProfile: ExportProfile,
+        renderResult: RenderResult
+    ) -> RenderCompletionSummary {
+        let rows = [
+            makeRenderCompletionSummaryRow(
+                title: "Container",
+                selectedLabel: containerLabel(for: requestedProfile.container),
+                actualLabel: containerLabel(for: actualProfile.container)
+            ),
+            makeRenderCompletionSummaryRow(
+                title: "Codec",
+                selectedLabel: videoCodecLabel(for: requestedProfile.videoCodec),
+                actualLabel: videoCodecLabel(for: actualProfile.videoCodec)
+            ),
+            makeRenderCompletionSummaryRow(
+                title: "Audio",
+                selectedLabel: requestedProfile.audioLayout.displayLabel,
+                actualLabel: actualProfile.audioLayout.displayLabel
+            ),
+            makeRenderCompletionSummaryRow(
+                title: "Bitrate",
+                selectedLabel: bitrateModeLabel(for: requestedProfile.bitrateMode),
+                actualLabel: bitrateModeLabel(for: actualProfile.bitrateMode)
+            ),
+            makeRenderCompletionSummaryRow(
+                title: "Resolution",
+                selectedLabel: resolutionPolicyLabel(for: requestedProfile.resolution),
+                actualLabel: resolvedResolutionLabel(renderResult: renderResult, fallbackPolicy: actualProfile.resolution)
+            ),
+            makeRenderCompletionSummaryRow(
+                title: "Frame Rate",
+                selectedLabel: frameRatePolicyLabel(for: requestedProfile.frameRate),
+                actualLabel: resolvedFrameRateLabel(renderResult: renderResult, fallbackPolicy: actualProfile.frameRate)
+            ),
+            makeRenderCompletionSummaryRow(
+                title: "Range",
+                selectedLabel: dynamicRangeLabel(for: requestedProfile.dynamicRange),
+                actualLabel: dynamicRangeLabel(for: actualProfile.dynamicRange)
+            ),
+            makeRenderCompletionSummaryRow(
+                title: "Engine",
+                selectedLabel: hdrBinaryModeLabel(for: requestedProfile.hdrFFmpegBinaryMode),
+                actualLabel: resolvedEngineLabel(
+                    selectedMode: actualProfile.hdrFFmpegBinaryMode,
+                    backendInfo: renderResult.backendInfo
+                )
+            )
+        ]
+
+        return RenderCompletionSummary(outputPath: outputPath, rows: rows)
+    }
+
+    private func makeRenderCompletionSummaryRow(
+        title: String,
+        selectedLabel: String,
+        actualLabel: String
+    ) -> RenderCompletionSummary.Row {
+        RenderCompletionSummary.Row(
+            title: title,
+            selectedLabel: selectedLabel,
+            actualLabel: actualLabel
+        )
+    }
+
+    private func containerLabel(for container: ContainerFormat) -> String {
+        container.rawValue.uppercased()
+    }
+
+    private func videoCodecLabel(for codec: VideoCodec) -> String {
+        switch codec {
+        case .hevc:
+            return "HEVC"
+        case .h264:
+            return "H.264"
+        }
+    }
+
+    private func bitrateModeLabel(for bitrateMode: BitrateMode) -> String {
+        switch bitrateMode {
+        case .balanced:
+            return "Balanced"
+        case .qualityFirst:
+            return "Quality First"
+        case .sizeFirst:
+            return "Size First"
+        }
+    }
+
+    private func resolutionPolicyLabel(for resolutionPolicy: ResolutionPolicy) -> String {
+        switch resolutionPolicy.normalized {
+        case .fixed720p:
+            return "720p"
+        case .fixed1080p:
+            return "1080p"
+        case .fixed4K:
+            return "4K"
+        case .smart, .matchSourceMax:
+            return "Smart"
+        }
+    }
+
+    private func frameRatePolicyLabel(for frameRatePolicy: FrameRatePolicy) -> String {
+        switch frameRatePolicy {
+        case .fps30:
+            return "30 fps"
+        case .fps60:
+            return "60 fps"
+        case .smart:
+            return "Smart"
+        }
+    }
+
+    private func dynamicRangeLabel(for dynamicRange: DynamicRange) -> String {
+        dynamicRange.rawValue.uppercased()
+    }
+
+    private func hdrBinaryModeLabel(for hdrBinaryMode: HDRFFmpegBinaryMode) -> String {
+        switch hdrBinaryMode {
+        case .autoSystemThenBundled:
+            return "Auto"
+        case .systemOnly:
+            return "System Only"
+        case .bundledOnly:
+            return "Bundled Only"
+        }
+    }
+
+    private func resolvedResolutionLabel(
+        renderResult: RenderResult,
+        fallbackPolicy: ResolutionPolicy
+    ) -> String {
+        if let resolvedVideoInfo = renderResult.resolvedVideoInfo {
+            return resolutionLabel(width: resolvedVideoInfo.width, height: resolvedVideoInfo.height)
+        }
+        return resolutionPolicyLabel(for: fallbackPolicy)
+    }
+
+    private func resolutionLabel(width: Int, height: Int) -> String {
+        switch (width, height) {
+        case (1280, 720):
+            return "720p"
+        case (1920, 1080):
+            return "1080p"
+        case (3840, 2160):
+            return "4K"
+        default:
+            return "\(width)x\(height)"
+        }
+    }
+
+    private func resolvedFrameRateLabel(
+        renderResult: RenderResult,
+        fallbackPolicy: FrameRatePolicy
+    ) -> String {
+        if let resolvedVideoInfo = renderResult.resolvedVideoInfo {
+            return "\(resolvedVideoInfo.frameRate) fps"
+        }
+        return frameRatePolicyLabel(for: fallbackPolicy)
+    }
+
+    private func resolvedEngineLabel(
+        selectedMode: HDRFFmpegBinaryMode,
+        backendInfo: RenderBackendInfo?
+    ) -> String {
+        switch selectedMode {
+        case .autoSystemThenBundled:
+            return backendInfo?.binarySource?.displayLabel ?? hdrBinaryModeLabel(for: selectedMode)
+        case .systemOnly, .bundledOnly:
+            return hdrBinaryModeLabel(for: selectedMode)
+        }
     }
 
     private func promptForMegaTestFailure(
