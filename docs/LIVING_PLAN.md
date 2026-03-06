@@ -104,6 +104,7 @@ Operational updates after first packaged run:
 - Added a temporary auto-generated testing output name (`Testing - S2026E<epoch> - <Resolution> - <FPS>fps - <Range>`) that stays synced until manually edited.
 - Added a temporary `Mega Test` batch mode that expands checked Resolution/FPS/Range axes into sequential renders while reusing one preparation pass and prompting after per-combination failures.
 - Switched SDR final export from `AVAssetExportSession` to the shared FFmpeg backend, added SDR H.264/HEVC encoder capability probing, and normalized SDR outputs to BT.709 with real bitrate control.
+- Reworked the main window into a denser two-column layout with a vertical scroll fallback so all controls remain reachable on smaller window heights.
 
 ## Decisions Log
 
@@ -142,6 +143,7 @@ Operational updates after first packaged run:
 - 2026-03-05: Approved Smart fps export policy with `30 fps` / `60 fps` / `Smart`, defaulting to `Smart` and promoting to `60 fps` only when any selected video is `>= 50 fps`.
 - 2026-03-05: Approved temporary testing-only output naming plus a removable mega-test batch UI for Resolution/FPS/Range matrix exports.
 - 2026-03-06: Approved moving SDR final export onto the shared FFmpeg backend while keeping AVFoundation for discovery and still/title intermediate generation.
+- 2026-03-06: Approved a space-efficiency UI pass so the full control set remains visible without vertically clipping the window.
 
 ## Changes Since Last Update
 
@@ -219,6 +221,7 @@ Operational updates after first packaged run:
 - 2026-03-06: Replaced SDR `AVAssetExportSession` final export with the shared FFmpeg backend, generalized FFmpeg capability probing for SDR H.264/HEVC encoders, and updated command generation to emit BT.709-tagged SDR or BT.2020 HLG HDR outputs from the same pipeline.
 - 2026-03-06: Updated Export UI/copy and compatibility warnings so bitrate and engine messaging reflect unified FFmpeg final export behavior instead of HDR-only wording.
 - 2026-03-06: Added SDR FFmpeg command coverage in unit tests and removed active use of deprecated `AVAssetExportSession` APIs from the SDR final export path.
+- 2026-03-06: Reorganized the main window into responsive two-column and one-column layouts, compacted the densest control rows, and wrapped the content in a scroll view so no options are lost on shorter windows.
 
 ## Risks/Blockers
 
@@ -248,4 +251,4 @@ For the pre-FFmpeg-pivot baseline, use:
 
 ## Last Updated
 
-2026-03-06 00:42 America/New_York by Codex
+2026-03-06 00:51 America/New_York by Codex
