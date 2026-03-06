@@ -47,6 +47,7 @@ Open for S4 completion:
 - Migrate renderer to newer non-deprecated AVFoundation export APIs.
 - Continue tightening renderer-option parity where settings remain advisory outside HDR constraints.
 - Refine progress UX with ETA prediction and stronger cancellation affordances for long HDR jobs.
+- Before finalizing export defaults, validate representative `4K60 / HEVC / Balanced` output sizes for the Plex -> Infuse -> Apple TV 4K workflow and reduce the balanced target if files are unreasonably large.
 
 Operational updates after first packaged run:
 - Added repeatable `.app` bundling script so each build produces a Finder app bundle.
