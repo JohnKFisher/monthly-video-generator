@@ -166,25 +166,34 @@ final class FFmpegHDRRenderer {
 
         let resolution = try resolver.resolve(
             mode: binaryMode,
-            codec: plan.videoCodec,
-            dynamicRange: plan.dynamicRange,
+            plan: plan,
             diagnostics: diagnostics
         )
         let command = try commandBuilder.buildCommand(plan: plan, resolution: resolution)
         callbacks.log("FFmpeg version: \(resolution.selectedCapabilities.versionDescription)")
         if let systemCaps = resolution.systemCapabilities {
             callbacks.log(
-                "FFmpeg system capabilities: zscale=\(systemCaps.hasZscale), xfade=\(systemCaps.hasXfade), " +
+                "FFmpeg system capabilities: zscale=\(systemCaps.hasZscale), tonemap=\(systemCaps.hasTonemap), xfade=\(systemCaps.hasXfade), " +
                 "acrossfade=\(systemCaps.hasAcrossfade), libx264=\(systemCaps.hasLibx264), h264_videotoolbox=\(systemCaps.hasH264VideoToolbox), " +
                 "libx265=\(systemCaps.hasLibx265), hevc_videotoolbox=\(systemCaps.hasHEVCVideoToolbox)"
             )
         }
         if let bundledCaps = resolution.bundledCapabilities {
             callbacks.log(
-                "FFmpeg bundled capabilities: zscale=\(bundledCaps.hasZscale), xfade=\(bundledCaps.hasXfade), " +
+                "FFmpeg bundled capabilities: zscale=\(bundledCaps.hasZscale), tonemap=\(bundledCaps.hasTonemap), xfade=\(bundledCaps.hasXfade), " +
                 "acrossfade=\(bundledCaps.hasAcrossfade), libx264=\(bundledCaps.hasLibx264), h264_videotoolbox=\(bundledCaps.hasH264VideoToolbox), " +
                 "libx265=\(bundledCaps.hasLibx265), hevc_videotoolbox=\(bundledCaps.hasHEVCVideoToolbox)"
             )
+        }
+        if plan.requiresHDRToSDRToneMapping {
+            callbacks.log(
+                "HDR-to-SDR tone mapping enabled: true (operator=mobius:desat=2, clips=\(plan.hdrToSDRToneMapClips.count))"
+            )
+            for clip in plan.hdrToSDRToneMapClips {
+                callbacks.log("HDR-to-SDR tone-map clip: \(clip.sourceDescription) [transfer=\(clip.transferFlavor.rawValue)]")
+            }
+        } else {
+            callbacks.log("HDR-to-SDR tone mapping enabled: false")
         }
         callbacks.log("FFmpeg selected binary: \(resolution.selectedBinary.ffmpegURL.path) [\(resolution.selectedBinary.source.rawValue)]")
         callbacks.log("FFmpeg command: \(command.printableCommand)")

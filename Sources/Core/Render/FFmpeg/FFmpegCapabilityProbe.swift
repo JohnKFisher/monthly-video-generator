@@ -21,6 +21,7 @@ struct FFmpegCapabilityProbe {
         let normalizedEncoders = encodersOutput.lowercased()
 
         let hasZscale = containsWord("zscale", in: normalizedFilters)
+        let hasTonemap = containsWord("tonemap", in: normalizedFilters)
         let hasXfade = containsWord("xfade", in: normalizedFilters)
         let hasAcrossfade = containsWord("acrossfade", in: normalizedFilters)
         let hasLibx264 = containsWord("libx264", in: normalizedEncoders)
@@ -31,6 +32,7 @@ struct FFmpegCapabilityProbe {
         return FFmpegCapabilities(
             versionDescription: parseVersionDescription(from: versionOutput),
             hasZscale: hasZscale,
+            hasTonemap: hasTonemap,
             hasXfade: hasXfade,
             hasAcrossfade: hasAcrossfade,
             hasLibx264: hasLibx264,

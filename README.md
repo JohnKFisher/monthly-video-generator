@@ -79,6 +79,7 @@ Notes:
 
 - In HDR mode, codec/audio selections are constrained to effective renderer behavior (`HEVC` + `Stereo`).
 - SDR and HDR final exports both use the FFmpeg backend; still/title intermediate clips are still generated locally with AVFoundation.
+- SDR exports that include HDR source videos now apply FFmpeg HDR-to-SDR tone mapping (`mobius:desat=2`) per affected video clip so highlights are preserved instead of clipped.
 - In Apple Photos mode, Smart fps may inspect/download selected videos during render prep to decide between `30 fps` and `60 fps`, then reuse that materialized asset during export.
 - Title cards are rendered at the resolved output size for both fixed-tier and Smart exports.
 - Use the app's `Reset to Plex Defaults` action to apply this profile to an existing installation.

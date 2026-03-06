@@ -27,6 +27,30 @@ struct FFmpegBinaryResolver {
         dynamicRange: DynamicRange,
         diagnostics: (String) -> Void
     ) throws -> FFmpegBinaryResolution {
+        try resolve(
+            mode: mode,
+            requirements: FFmpegCapabilityRequirements(codec: codec, dynamicRange: dynamicRange),
+            diagnostics: diagnostics
+        )
+    }
+
+    func resolve(
+        mode: HDRFFmpegBinaryMode,
+        plan: FFmpegRenderPlan,
+        diagnostics: (String) -> Void
+    ) throws -> FFmpegBinaryResolution {
+        try resolve(
+            mode: mode,
+            requirements: plan.capabilityRequirements,
+            diagnostics: diagnostics
+        )
+    }
+
+    private func resolve(
+        mode: HDRFFmpegBinaryMode,
+        requirements: FFmpegCapabilityRequirements,
+        diagnostics: (String) -> Void
+    ) throws -> FFmpegBinaryResolution {
         let systemBinary = systemBinaryOverride ?? discoverSystemBinary()
         let bundledBinary = bundledBinaryOverride ?? discoverBundledBinary()
 
@@ -40,7 +64,7 @@ struct FFmpegBinaryResolver {
         case .autoSystemThenBundled:
             if let systemBinary,
                let systemCapabilities,
-               systemCapabilities.supportsRenderPipeline(codec: codec, dynamicRange: dynamicRange) {
+               systemCapabilities.supportsRenderPipeline(requirements: requirements) {
                 diagnostics("FFmpeg resolver selected system binary.")
                 return FFmpegBinaryResolution(
                     selectedBinary: systemBinary,
@@ -53,10 +77,10 @@ struct FFmpegBinaryResolver {
 
             if let bundledBinary,
                let bundledCapabilities,
-               bundledCapabilities.supportsRenderPipeline(codec: codec, dynamicRange: dynamicRange) {
+               bundledCapabilities.supportsRenderPipeline(requirements: requirements) {
                 let fallbackReason: String
                 if let systemCapabilities {
-                    fallbackReason = "System FFmpeg missing required features: \(systemCapabilities.missingRequiredCapabilities(codec: codec, dynamicRange: dynamicRange).joined(separator: ", "))."
+                    fallbackReason = "System FFmpeg missing required features: \(systemCapabilities.missingRequiredCapabilities(requirements: requirements).joined(separator: ", "))."
                 } else {
                     fallbackReason = "System FFmpeg not found."
                 }
@@ -72,8 +96,7 @@ struct FFmpegBinaryResolver {
 
             throw RenderError.exportFailed(buildResolutionFailureMessage(
                 mode: mode,
-                codec: codec,
-                dynamicRange: dynamicRange,
+                requirements: requirements,
                 systemBinary: systemBinary,
                 systemCapabilities: systemCapabilities,
                 bundledBinary: bundledBinary,
@@ -87,9 +110,9 @@ struct FFmpegBinaryResolver {
             guard let systemCapabilities else {
                 throw RenderError.exportFailed("FFmpeg engine is set to System Only, but system ffmpeg capabilities could not be probed.")
             }
-            guard systemCapabilities.supportsRenderPipeline(codec: codec, dynamicRange: dynamicRange) else {
+            guard systemCapabilities.supportsRenderPipeline(requirements: requirements) else {
                 throw RenderError.exportFailed(
-                    "FFmpeg engine is set to System Only, but system ffmpeg is missing: \(systemCapabilities.missingRequiredCapabilities(codec: codec, dynamicRange: dynamicRange).joined(separator: ", "))."
+                    "FFmpeg engine is set to System Only, but system ffmpeg is missing: \(systemCapabilities.missingRequiredCapabilities(requirements: requirements).joined(separator: ", "))."
                 )
             }
             diagnostics("FFmpeg resolver selected system binary (System Only mode).")
@@ -108,9 +131,9 @@ struct FFmpegBinaryResolver {
             guard let bundledCapabilities else {
                 throw RenderError.exportFailed("FFmpeg engine is set to Bundled Only, but bundled ffmpeg capabilities could not be probed.")
             }
-            guard bundledCapabilities.supportsRenderPipeline(codec: codec, dynamicRange: dynamicRange) else {
+            guard bundledCapabilities.supportsRenderPipeline(requirements: requirements) else {
                 throw RenderError.exportFailed(
-                    "FFmpeg engine is set to Bundled Only, but bundled ffmpeg is missing: \(bundledCapabilities.missingRequiredCapabilities(codec: codec, dynamicRange: dynamicRange).joined(separator: ", "))."
+                    "FFmpeg engine is set to Bundled Only, but bundled ffmpeg is missing: \(bundledCapabilities.missingRequiredCapabilities(requirements: requirements).joined(separator: ", "))."
                 )
             }
             diagnostics("FFmpeg resolver selected bundled binary (Bundled Only mode).")
@@ -126,19 +149,21 @@ struct FFmpegBinaryResolver {
 
     private func buildResolutionFailureMessage(
         mode: HDRFFmpegBinaryMode,
-        codec: VideoCodec,
-        dynamicRange: DynamicRange,
+        requirements: FFmpegCapabilityRequirements,
         systemBinary: FFmpegBinary?,
         systemCapabilities: FFmpegCapabilities?,
         bundledBinary: FFmpegBinary?,
         bundledCapabilities: FFmpegCapabilities?
     ) -> String {
         var lines: [String] = []
-        lines.append("Unable to resolve FFmpeg for \(dynamicRange.rawValue.uppercased()) \(codec.rawValue.uppercased()) export mode \(mode.rawValue).")
+        lines.append("Unable to resolve FFmpeg for \(requirements.dynamicRange.rawValue.uppercased()) \(requirements.codec.rawValue.uppercased()) export mode \(mode.rawValue).")
+        if requirements.requiresHDRToSDRToneMapping {
+            lines.append("This render also requires HDR-to-SDR tone mapping support.")
+        }
 
         if let systemBinary {
             if let systemCapabilities {
-                lines.append("System: \(systemBinary.ffmpegURL.path) missing [\(systemCapabilities.missingRequiredCapabilities(codec: codec, dynamicRange: dynamicRange).joined(separator: ", "))]")
+                lines.append("System: \(systemBinary.ffmpegURL.path) missing [\(systemCapabilities.missingRequiredCapabilities(requirements: requirements).joined(separator: ", "))]")
             } else {
                 lines.append("System: \(systemBinary.ffmpegURL.path) probe unavailable")
             }
@@ -148,7 +173,7 @@ struct FFmpegBinaryResolver {
 
         if let bundledBinary {
             if let bundledCapabilities {
-                lines.append("Bundled: \(bundledBinary.ffmpegURL.path) missing [\(bundledCapabilities.missingRequiredCapabilities(codec: codec, dynamicRange: dynamicRange).joined(separator: ", "))]")
+                lines.append("Bundled: \(bundledBinary.ffmpegURL.path) missing [\(bundledCapabilities.missingRequiredCapabilities(requirements: requirements).joined(separator: ", "))]")
             } else {
                 lines.append("Bundled: \(bundledBinary.ffmpegURL.path) probe unavailable")
             }

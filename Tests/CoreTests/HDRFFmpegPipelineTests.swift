@@ -8,6 +8,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         let version = "ffmpeg version 7.1-custom"
         let filters = """
          ... zscale            V->V       Apply resizing, colorspace and bit depth conversion.
+         ... tonemap           V->V       Conversion to/from different dynamic ranges.
          ... xfade             VV->V      Cross fade one video with another.
          ... acrossfade        AA->A      Cross fade two input audio streams.
         """
@@ -25,6 +26,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         )
 
         XCTAssertTrue(capabilities.hasZscale)
+        XCTAssertTrue(capabilities.hasTonemap)
         XCTAssertTrue(capabilities.hasXfade)
         XCTAssertTrue(capabilities.hasAcrossfade)
         XCTAssertTrue(capabilities.hasLibx264)
@@ -54,6 +56,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
                     return FFmpegCapabilities(
                         versionDescription: "system",
                         hasZscale: false,
+                        hasTonemap: true,
                         hasXfade: true,
                         hasAcrossfade: true,
                         hasLibx264: true,
@@ -65,6 +68,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
                 return FFmpegCapabilities(
                     versionDescription: "bundled",
                     hasZscale: true,
+                    hasTonemap: true,
                     hasXfade: true,
                     hasAcrossfade: true,
                     hasLibx264: true,
@@ -101,6 +105,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
                 FFmpegCapabilities(
                     versionDescription: "system",
                     hasZscale: true,
+                    hasTonemap: true,
                     hasXfade: true,
                     hasAcrossfade: true,
                     hasLibx264: true,
@@ -133,6 +138,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
             selectedCapabilities: FFmpegCapabilities(
                 versionDescription: "bundled",
                 hasZscale: true,
+                hasTonemap: true,
                 hasXfade: true,
                 hasAcrossfade: true,
                 hasLibx264: true,
@@ -206,6 +212,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
             selectedCapabilities: FFmpegCapabilities(
                 versionDescription: "system",
                 hasZscale: true,
+                hasTonemap: true,
                 hasXfade: true,
                 hasAcrossfade: true,
                 hasLibx264: true,
@@ -246,8 +253,227 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("-color_trc bt709"))
         XCTAssertTrue(joined.contains("-color_primaries bt709"))
         XCTAssertTrue(joined.contains("-colorspace bt709"))
-        XCTAssertTrue(joined.contains("transfer=bt709:primaries=bt709:matrix=bt709"))
+        XCTAssertTrue(joined.contains("transferin=arib-std-b67:primariesin=bt2020:matrixin=bt2020nc:transfer=linear"))
+        XCTAssertTrue(joined.contains("format=gbrpf32le"))
+        XCTAssertTrue(joined.contains("tonemap=mobius:desat=2"))
+        XCTAssertTrue(joined.contains("zscale=transfer=bt709:primaries=bt709:matrix=bt709"))
         XCTAssertTrue(joined.contains("format=yuv420p"))
+    }
+
+    func testBinaryResolverAutoFallsBackToBundledWhenSystemIsMissingTonemapForSDRHDRSources() throws {
+        let systemBinary = FFmpegBinary(
+            ffmpegURL: URL(fileURLWithPath: "/tmp/system/ffmpeg"),
+            ffprobeURL: URL(fileURLWithPath: "/tmp/system/ffprobe"),
+            source: .system
+        )
+        let bundledBinary = FFmpegBinary(
+            ffmpegURL: URL(fileURLWithPath: "/tmp/bundled/ffmpeg"),
+            ffprobeURL: URL(fileURLWithPath: "/tmp/bundled/ffprobe"),
+            source: .bundled
+        )
+
+        let resolver = FFmpegBinaryResolver(
+            systemBinaryOverride: systemBinary,
+            bundledBinaryOverride: bundledBinary,
+            probeOverride: { binary in
+                if binary.source == .system {
+                    return FFmpegCapabilities(
+                        versionDescription: "system",
+                        hasZscale: true,
+                        hasTonemap: false,
+                        hasXfade: true,
+                        hasAcrossfade: true,
+                        hasLibx264: true,
+                        hasH264VideoToolbox: true,
+                        hasLibx265: true,
+                        hasHEVCVideoToolbox: true
+                    )
+                }
+                return FFmpegCapabilities(
+                    versionDescription: "bundled",
+                    hasZscale: true,
+                    hasTonemap: true,
+                    hasXfade: true,
+                    hasAcrossfade: true,
+                    hasLibx264: true,
+                    hasH264VideoToolbox: true,
+                    hasLibx265: true,
+                    hasHEVCVideoToolbox: true
+                )
+            }
+        )
+
+        let plan = FFmpegRenderPlan(
+            clips: [
+                FFmpegRenderClip(
+                    url: URL(fileURLWithPath: "/tmp/hdr.mov"),
+                    durationSeconds: 2,
+                    includeAudio: true,
+                    hasAudioTrack: true,
+                    colorInfo: ColorInfo(isHDR: true, colorPrimaries: "ITU_R_2020", transferFunction: "SMPTE_ST_2084_PQ"),
+                    sourceDescription: "hdr-source"
+                )
+            ],
+            transitionDurationSeconds: 0,
+            outputURL: URL(fileURLWithPath: "/tmp/out.mp4"),
+            renderSize: CGSize(width: 1920, height: 1080),
+            frameRate: 30,
+            bitrateMode: .balanced,
+            container: .mp4,
+            videoCodec: .h264,
+            dynamicRange: .sdr
+        )
+
+        let resolution = try resolver.resolve(
+            mode: .autoSystemThenBundled,
+            plan: plan,
+            diagnostics: { _ in }
+        )
+
+        XCTAssertEqual(resolution.selectedBinary.source, .bundled)
+        XCTAssertTrue(resolution.fallbackReason?.contains("tonemap filter") ?? false)
+    }
+
+    func testBinaryResolverDoesNotRequireTonemapForPureSDRSources() throws {
+        let systemBinary = FFmpegBinary(
+            ffmpegURL: URL(fileURLWithPath: "/tmp/system/ffmpeg"),
+            ffprobeURL: URL(fileURLWithPath: "/tmp/system/ffprobe"),
+            source: .system
+        )
+
+        let resolver = FFmpegBinaryResolver(
+            systemBinaryOverride: systemBinary,
+            bundledBinaryOverride: nil,
+            probeOverride: { _ in
+                FFmpegCapabilities(
+                    versionDescription: "system",
+                    hasZscale: true,
+                    hasTonemap: false,
+                    hasXfade: true,
+                    hasAcrossfade: true,
+                    hasLibx264: true,
+                    hasH264VideoToolbox: true,
+                    hasLibx265: true,
+                    hasHEVCVideoToolbox: true
+                )
+            }
+        )
+
+        let resolution = try resolver.resolve(
+            mode: .autoSystemThenBundled,
+            codec: .h264,
+            dynamicRange: .sdr,
+            diagnostics: { _ in }
+        )
+
+        XCTAssertEqual(resolution.selectedBinary.source, .system)
+    }
+
+    func testCommandBuilderToneMapsPQHDRSourceForSDROutput() throws {
+        let builder = FFmpegCommandBuilder()
+        let resolution = FFmpegBinaryResolution(
+            selectedBinary: FFmpegBinary(
+                ffmpegURL: URL(fileURLWithPath: "/tmp/ffmpeg"),
+                ffprobeURL: URL(fileURLWithPath: "/tmp/ffprobe"),
+                source: .system
+            ),
+            selectedCapabilities: FFmpegCapabilities(
+                versionDescription: "system",
+                hasZscale: true,
+                hasTonemap: true,
+                hasXfade: true,
+                hasAcrossfade: true,
+                hasLibx264: true,
+                hasH264VideoToolbox: true,
+                hasLibx265: true,
+                hasHEVCVideoToolbox: true
+            ),
+            systemCapabilities: nil,
+            bundledCapabilities: nil,
+            fallbackReason: nil
+        )
+
+        let plan = FFmpegRenderPlan(
+            clips: [
+                FFmpegRenderClip(
+                    url: URL(fileURLWithPath: "/tmp/pq.mov"),
+                    durationSeconds: 2.5,
+                    includeAudio: false,
+                    hasAudioTrack: false,
+                    colorInfo: ColorInfo(isHDR: true, colorPrimaries: "ITU_R_2020", transferFunction: "SMPTE_ST_2084_PQ"),
+                    sourceDescription: "pq-source"
+                )
+            ],
+            transitionDurationSeconds: 0,
+            outputURL: URL(fileURLWithPath: "/tmp/out.mp4"),
+            renderSize: CGSize(width: 3840, height: 2160),
+            frameRate: 30,
+            bitrateMode: .balanced,
+            container: .mp4,
+            videoCodec: .h264,
+            dynamicRange: .sdr
+        )
+
+        let command = try builder.buildCommand(plan: plan, resolution: resolution)
+        let joined = command.arguments.joined(separator: " ")
+
+        XCTAssertTrue(joined.contains("transferin=smpte2084:primariesin=bt2020:matrixin=bt2020nc:transfer=linear"))
+        XCTAssertTrue(joined.contains("format=gbrpf32le"))
+        XCTAssertTrue(joined.contains("tonemap=mobius:desat=2"))
+        XCTAssertTrue(joined.contains("zscale=transfer=bt709:primaries=bt709:matrix=bt709"))
+    }
+
+    func testCommandBuilderLeavesSDRSourceOnFastSDRPath() throws {
+        let builder = FFmpegCommandBuilder()
+        let resolution = FFmpegBinaryResolution(
+            selectedBinary: FFmpegBinary(
+                ffmpegURL: URL(fileURLWithPath: "/tmp/ffmpeg"),
+                ffprobeURL: URL(fileURLWithPath: "/tmp/ffprobe"),
+                source: .system
+            ),
+            selectedCapabilities: FFmpegCapabilities(
+                versionDescription: "system",
+                hasZscale: true,
+                hasTonemap: true,
+                hasXfade: true,
+                hasAcrossfade: true,
+                hasLibx264: true,
+                hasH264VideoToolbox: true,
+                hasLibx265: true,
+                hasHEVCVideoToolbox: true
+            ),
+            systemCapabilities: nil,
+            bundledCapabilities: nil,
+            fallbackReason: nil
+        )
+
+        let plan = FFmpegRenderPlan(
+            clips: [
+                FFmpegRenderClip(
+                    url: URL(fileURLWithPath: "/tmp/sdr.mov"),
+                    durationSeconds: 2,
+                    includeAudio: false,
+                    hasAudioTrack: false,
+                    colorInfo: ColorInfo(isHDR: false, colorPrimaries: "ITU_R_709_2", transferFunction: "ITU_R_709_2"),
+                    sourceDescription: "sdr-source"
+                )
+            ],
+            transitionDurationSeconds: 0,
+            outputURL: URL(fileURLWithPath: "/tmp/out.mp4"),
+            renderSize: CGSize(width: 1920, height: 1080),
+            frameRate: 30,
+            bitrateMode: .balanced,
+            container: .mp4,
+            videoCodec: .h264,
+            dynamicRange: .sdr
+        )
+
+        let command = try builder.buildCommand(plan: plan, resolution: resolution)
+        let joined = command.arguments.joined(separator: " ")
+
+        XCTAssertFalse(joined.contains("tonemap=mobius:desat=2"))
+        XCTAssertFalse(joined.contains("format=gbrpf32le"))
+        XCTAssertTrue(joined.contains("transferin=bt709:primariesin=bt709:matrixin=bt709:transfer=bt709:primaries=bt709:matrix=bt709"))
     }
 
     func testProgressParserReadsOutTimeUS() {
