@@ -6,19 +6,22 @@ public struct OpeningTitleCardDescriptor: Equatable, Sendable {
     public let previewItems: [MediaItem]
     public let dateSpanText: String?
     public let variationSeed: UInt64
+    public let contextLineMode: OpeningTitleCaptionMode
 
     public init(
         title: String,
         contextLine: String?,
         previewItems: [MediaItem],
         dateSpanText: String?,
-        variationSeed: UInt64
+        variationSeed: UInt64,
+        contextLineMode: OpeningTitleCaptionMode = .automatic
     ) {
         self.title = title
         self.contextLine = contextLine
         self.previewItems = previewItems
         self.dateSpanText = dateSpanText
         self.variationSeed = variationSeed
+        self.contextLineMode = contextLineMode
     }
 
     public var resolvedTitle: String {
@@ -27,17 +30,19 @@ public struct OpeningTitleCardDescriptor: Equatable, Sendable {
     }
 
     public var resolvedContextLine: String? {
-        let trimmedContext = trimmed(contextLine)
-        if let trimmedContext, !matches(trimmedContext, resolvedTitle) {
-            return trimmedContext
-        }
+        trimmed(contextLine)
+    }
 
-        let trimmedDateSpan = trimmed(dateSpanText)
-        if let trimmedDateSpan, !matches(trimmedDateSpan, resolvedTitle) {
-            return trimmedDateSpan
+    public var displayContextLine: String? {
+        guard let resolvedContextLine else {
+            return nil
         }
-
-        return nil
+        switch contextLineMode {
+        case .automatic:
+            return resolvedContextLine.uppercased()
+        case .custom:
+            return resolvedContextLine
+        }
     }
 
     private func trimmed(_ value: String?) -> String? {
@@ -46,10 +51,5 @@ public struct OpeningTitleCardDescriptor: Equatable, Sendable {
         }
         let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmedValue.isEmpty ? nil : trimmedValue
-    }
-
-    private func matches(_ lhs: String, _ rhs: String) -> Bool {
-        lhs.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current) ==
-            rhs.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
     }
 }

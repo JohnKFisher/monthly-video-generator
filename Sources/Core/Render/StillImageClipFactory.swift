@@ -165,7 +165,8 @@ public final class StillImageClipFactory {
             contextLine: nil,
             previewItems: [],
             dateSpanText: nil,
-            variationSeed: 0
+            variationSeed: 0,
+            contextLineMode: .automatic
         )
         return try await makeTitleCardClip(
             descriptor: descriptor,
@@ -185,7 +186,7 @@ public final class StillImageClipFactory {
     ) async throws -> URL {
         #if canImport(AppKit)
         let resolvedTitle = descriptor.resolvedTitle
-        let resolvedContextLine = descriptor.resolvedContextLine
+        let displayContextLine = descriptor.displayContextLine
 
         if !previewAssets.isEmpty {
             do {
@@ -215,10 +216,10 @@ public final class StillImageClipFactory {
 
         let titleImage: CGImage
         do {
-            titleImage = try await MainActor.run { [renderSize, resolvedTitle, resolvedContextLine] in
+            titleImage = try await MainActor.run { [renderSize, resolvedTitle, displayContextLine] in
                 try Self.makeStaticTitleCardRasterizedImage(
                     title: resolvedTitle,
-                    contextLine: resolvedContextLine,
+                    contextLine: displayContextLine,
                     renderSize: renderSize
                 )
             }
@@ -226,7 +227,7 @@ public final class StillImageClipFactory {
             titleImage = try makeFallbackTitleCardImage(
                 renderSize: renderSize,
                 title: resolvedTitle,
-                contextLine: resolvedContextLine
+                contextLine: displayContextLine
             )
         }
         return try await makeVideoClip(
@@ -473,7 +474,7 @@ public final class StillImageClipFactory {
                 generator: &generator
             ),
             title: descriptor.resolvedTitle,
-            contextLine: descriptor.resolvedContextLine
+            contextLine: descriptor.displayContextLine
         )
     }
 
@@ -772,7 +773,7 @@ public final class StillImageClipFactory {
                 NSAttributedString.Key(rawValue: kCTKernAttributeName as String): 1.6
             ]
             drawAttributedString(
-                NSAttributedString(string: contextLine.uppercased(), attributes: contextAttributes),
+                NSAttributedString(string: contextLine, attributes: contextAttributes),
                 in: contextRect,
                 context: context
             )
@@ -890,7 +891,7 @@ public final class StillImageClipFactory {
                 .foregroundColor: NSColor(calibratedWhite: 1.0, alpha: 0.78),
                 .paragraphStyle: paragraph
             ]
-            let attributedContext = NSAttributedString(string: contextLine.uppercased(), attributes: contextAttributes)
+            let attributedContext = NSAttributedString(string: contextLine, attributes: contextAttributes)
             let contextRect = NSRect(x: renderSize.width * 0.14, y: renderSize.height * 0.56, width: renderSize.width * 0.72, height: renderSize.height * 0.05)
             attributedContext.draw(in: contextRect)
         }
@@ -970,7 +971,7 @@ public final class StillImageClipFactory {
                 NSAttributedString.Key(rawValue: kCTFontAttributeName as String): contextFont,
                 NSAttributedString.Key(rawValue: kCTForegroundColorAttributeName as String): CGColor(red: 1, green: 1, blue: 1, alpha: 0.78)
             ]
-            let attributedContext = NSAttributedString(string: contextLine.uppercased(), attributes: contextAttributes)
+            let attributedContext = NSAttributedString(string: contextLine, attributes: contextAttributes)
             let contextLineRef = CTLineCreateWithAttributedString(attributedContext as CFAttributedString)
             var ascent: CGFloat = 0
             var descent: CGFloat = 0

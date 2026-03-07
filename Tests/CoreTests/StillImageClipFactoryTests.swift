@@ -141,6 +141,135 @@ final class StillImageClipFactoryTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(Double(nominalFrameRate), 50)
     }
 
+    func testCustomTitleCardCaptionPreservesTypedCase() async throws {
+        let factory = StillImageClipFactory()
+        let automaticDescriptor = OpeningTitleCardDescriptor(
+            title: "Summer 2026",
+            contextLine: "Cape Cod",
+            previewItems: [],
+            dateSpanText: nil,
+            variationSeed: 1,
+            contextLineMode: .automatic
+        )
+        let customDescriptor = OpeningTitleCardDescriptor(
+            title: "Summer 2026",
+            contextLine: "Cape Cod",
+            previewItems: [],
+            dateSpanText: nil,
+            variationSeed: 1,
+            contextLineMode: .custom
+        )
+
+        let automaticClipURL = try await factory.makeTitleCardClip(
+            descriptor: automaticDescriptor,
+            previewAssets: [],
+            duration: CMTime(seconds: 0.75, preferredTimescale: 600),
+            renderSize: CGSize(width: 1280, height: 720)
+        )
+        let customClipURL = try await factory.makeTitleCardClip(
+            descriptor: customDescriptor,
+            previewAssets: [],
+            duration: CMTime(seconds: 0.75, preferredTimescale: 600),
+            renderSize: CGSize(width: 1280, height: 720)
+        )
+
+        defer {
+            try? FileManager.default.removeItem(at: automaticClipURL)
+            try? FileManager.default.removeItem(at: customClipURL)
+        }
+
+        let automaticFrame = try await renderedFrame(from: automaticClipURL, at: CMTime(seconds: 0.1, preferredTimescale: 600))
+        let customFrame = try await renderedFrame(from: customClipURL, at: CMTime(seconds: 0.1, preferredTimescale: 600))
+
+        XCTAssertNotEqual(pixelChecksum(automaticFrame), pixelChecksum(customFrame))
+    }
+
+    func testAutomaticTitleCardCaptionStillUsesUppercaseTreatment() async throws {
+        let factory = StillImageClipFactory()
+        let automaticDescriptor = OpeningTitleCardDescriptor(
+            title: "Summer 2026",
+            contextLine: "Cape Cod",
+            previewItems: [],
+            dateSpanText: nil,
+            variationSeed: 2,
+            contextLineMode: .automatic
+        )
+        let uppercaseCustomDescriptor = OpeningTitleCardDescriptor(
+            title: "Summer 2026",
+            contextLine: "CAPE COD",
+            previewItems: [],
+            dateSpanText: nil,
+            variationSeed: 2,
+            contextLineMode: .custom
+        )
+
+        let automaticClipURL = try await factory.makeTitleCardClip(
+            descriptor: automaticDescriptor,
+            previewAssets: [],
+            duration: CMTime(seconds: 0.75, preferredTimescale: 600),
+            renderSize: CGSize(width: 1280, height: 720)
+        )
+        let customClipURL = try await factory.makeTitleCardClip(
+            descriptor: uppercaseCustomDescriptor,
+            previewAssets: [],
+            duration: CMTime(seconds: 0.75, preferredTimescale: 600),
+            renderSize: CGSize(width: 1280, height: 720)
+        )
+
+        defer {
+            try? FileManager.default.removeItem(at: automaticClipURL)
+            try? FileManager.default.removeItem(at: customClipURL)
+        }
+
+        let automaticFrame = try await renderedFrame(from: automaticClipURL, at: CMTime(seconds: 0.1, preferredTimescale: 600))
+        let customFrame = try await renderedFrame(from: customClipURL, at: CMTime(seconds: 0.1, preferredTimescale: 600))
+
+        XCTAssertEqual(pixelChecksum(automaticFrame), pixelChecksum(customFrame))
+    }
+
+    func testBlankCustomTitleCardCaptionProducesNoSmallCaption() async throws {
+        let factory = StillImageClipFactory()
+        let blankCustomDescriptor = OpeningTitleCardDescriptor(
+            title: "Summer 2026",
+            contextLine: "   ",
+            previewItems: [],
+            dateSpanText: nil,
+            variationSeed: 3,
+            contextLineMode: .custom
+        )
+        let noCaptionDescriptor = OpeningTitleCardDescriptor(
+            title: "Summer 2026",
+            contextLine: nil,
+            previewItems: [],
+            dateSpanText: nil,
+            variationSeed: 3,
+            contextLineMode: .custom
+        )
+
+        let blankClipURL = try await factory.makeTitleCardClip(
+            descriptor: blankCustomDescriptor,
+            previewAssets: [],
+            duration: CMTime(seconds: 0.75, preferredTimescale: 600),
+            renderSize: CGSize(width: 1280, height: 720)
+        )
+        let noCaptionClipURL = try await factory.makeTitleCardClip(
+            descriptor: noCaptionDescriptor,
+            previewAssets: [],
+            duration: CMTime(seconds: 0.75, preferredTimescale: 600),
+            renderSize: CGSize(width: 1280, height: 720)
+        )
+
+        defer {
+            try? FileManager.default.removeItem(at: blankClipURL)
+            try? FileManager.default.removeItem(at: noCaptionClipURL)
+        }
+
+        let blankFrame = try await renderedFrame(from: blankClipURL, at: CMTime(seconds: 0.1, preferredTimescale: 600))
+        let noCaptionFrame = try await renderedFrame(from: noCaptionClipURL, at: CMTime(seconds: 0.1, preferredTimescale: 600))
+
+        XCTAssertEqual(pixelChecksum(blankFrame), pixelChecksum(noCaptionFrame))
+    }
+
     func testAnimatedTitleCardClipMatchesRequestedRenderSize() async throws {
         let factory = StillImageClipFactory()
         let previewURL = try makeFixtureImage()

@@ -223,6 +223,122 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.showCaptureDateOverlay)
     }
 
+    func testTitleDurationPersistsAcrossLaunches() {
+        let preferencesStore = makePreferencesStore()
+        let initialViewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            filenameGenerator: TemporaryTestingFilenameGenerator(now: { Date(timeIntervalSince1970: 1_700_000_064) }),
+            preferencesStore: preferencesStore
+        )
+
+        initialViewModel.titleDurationSeconds = 6.25
+
+        let restoredViewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            filenameGenerator: TemporaryTestingFilenameGenerator(now: { Date(timeIntervalSince1970: 1_700_000_065) }),
+            preferencesStore: preferencesStore
+        )
+
+        XCTAssertEqual(restoredViewModel.titleDurationSeconds, 6.25, accuracy: 0.0001)
+    }
+
+    func testCrossfadeAndStillDurationPersistAcrossLaunches() {
+        let preferencesStore = makePreferencesStore()
+        let initialViewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            filenameGenerator: TemporaryTestingFilenameGenerator(now: { Date(timeIntervalSince1970: 1_700_000_066) }),
+            preferencesStore: preferencesStore
+        )
+
+        initialViewModel.crossfadeDurationSeconds = 1.25
+        initialViewModel.stillImageDurationSeconds = 4.5
+
+        let restoredViewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            filenameGenerator: TemporaryTestingFilenameGenerator(now: { Date(timeIntervalSince1970: 1_700_000_067) }),
+            preferencesStore: preferencesStore
+        )
+
+        XCTAssertEqual(restoredViewModel.crossfadeDurationSeconds, 1.25, accuracy: 0.0001)
+        XCTAssertEqual(restoredViewModel.stillImageDurationSeconds, 4.5, accuracy: 0.0001)
+    }
+
+    func testOpeningTitleCaptionSettingsPersistAcrossLaunches() {
+        let preferencesStore = makePreferencesStore()
+        let initialViewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            filenameGenerator: TemporaryTestingFilenameGenerator(now: { Date(timeIntervalSince1970: 1_700_000_068) }),
+            preferencesStore: preferencesStore
+        )
+
+        initialViewModel.openingTitleCaptionMode = .custom
+        initialViewModel.openingTitleCaptionText = "Cape Cod at dusk"
+
+        let restoredViewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            filenameGenerator: TemporaryTestingFilenameGenerator(now: { Date(timeIntervalSince1970: 1_700_000_069) }),
+            preferencesStore: preferencesStore
+        )
+
+        XCTAssertEqual(restoredViewModel.openingTitleCaptionMode, .custom)
+        XCTAssertEqual(restoredViewModel.openingTitleCaptionText, "Cape Cod at dusk")
+    }
+
+    func testOpeningTitleCaptionLegacyDefaultsLoadSafely() throws {
+        let preferencesStore = makePreferencesStore()
+        let legacyPayload: [String: Any] = [
+            "includeOpeningTitle": true,
+            "openingTitleText": "June 2026",
+            "crossfadeDurationSeconds": 0.75,
+            "stillImageDurationSeconds": 3.0,
+            "selectedPhotosFilterMode": "monthYear",
+            "selectedPhotoAlbumID": "",
+            "selectedContainer": "mp4",
+            "selectedVideoCodec": "hevc",
+            "selectedFrameRatePolicy": "smart",
+            "selectedResolutionPolicy": "smart",
+            "selectedDynamicRange": "hdr",
+            "selectedHDRBinaryMode": "autoSystemThenBundled",
+            "selectedHDRHEVCEncoderMode": "automatic",
+            "selectedAudioLayout": "smart",
+            "selectedBitrateMode": "balanced",
+            "writeDiagnosticsLog": true
+        ]
+        let data = try JSONSerialization.data(withJSONObject: legacyPayload)
+        preferencesStore.set(data, forKey: "MainWindowViewModel.renderSettings.v1")
+
+        let viewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            filenameGenerator: TemporaryTestingFilenameGenerator(now: { Date(timeIntervalSince1970: 1_700_000_070) }),
+            preferencesStore: preferencesStore
+        )
+
+        XCTAssertEqual(viewModel.titleDurationSeconds, 2.5, accuracy: 0.0001)
+        XCTAssertEqual(viewModel.openingTitleCaptionMode, .automatic)
+        XCTAssertEqual(viewModel.openingTitleCaptionText, "")
+    }
+
+    func testSwitchingToCustomCaptionPrefillsAutomaticCaptionAndPreservesManualValue() {
+        let viewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            filenameGenerator: TemporaryTestingFilenameGenerator(now: { Date(timeIntervalSince1970: 1_700_000_071) }),
+            preferencesStore: makePreferencesStore()
+        )
+        let expectedAutomaticCaption = MonthYear(month: viewModel.selectedMonth, year: viewModel.selectedYear).displayLabel
+
+        viewModel.sourceMode = .photos
+        viewModel.openingTitleText = "Summer Highlights"
+        viewModel.openingTitleCaptionMode = .custom
+
+        XCTAssertEqual(viewModel.openingTitleCaptionText, expectedAutomaticCaption)
+
+        viewModel.openingTitleCaptionText = "Cape Cod at dusk"
+        viewModel.openingTitleCaptionMode = .automatic
+        viewModel.openingTitleCaptionMode = .custom
+
+        XCTAssertEqual(viewModel.openingTitleCaptionText, "Cape Cod at dusk")
+    }
+
     func testMegaTestReusesPreparationAndIgnoresManualOutputNameField() async throws {
         let dateProvider = DateSequenceProvider([
             Date(timeIntervalSince1970: 1_700_000_000),

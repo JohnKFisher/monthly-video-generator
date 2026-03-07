@@ -235,6 +235,7 @@ Operational updates after first packaged run:
 - 2026-03-06: Expanded audio layout controls to `Mono` / `Stereo` / `5.1` / `Smart`, made Smart the new default, and resolved Smart audio from inspected source-video channel counts with a conservative `5.1` fallback for uninspectable videos.
 - 2026-03-06: Added an `Audio` Mega Test axis plus `- <Audio>` testing filename tokens, keeping generated names synced with the selected audio policy while Mega Test varies audio combinations deterministically.
 - 2026-03-06: Updated the FFmpeg render plan/command builder to emit real mono/stereo/5.1 AAC outputs instead of hard-coded stereo, including layout-matched silent fillers, final `-ac`, and bitrate-aware output size estimates.
+- 2026-03-07: Added persisted title-card duration and caption controls, including an `Automatic / Custom` small-caption mode that preserves typed casing for custom captions while keeping automatic source captions styled as before.
 
 ## Risks/Blockers
 
@@ -264,4 +265,4 @@ For the pre-FFmpeg-pivot baseline, use:
 
 ## Last Updated
 
-2026-03-06 00:51 America/New_York by Codex
+2026-03-07 09:17 America/New_York by Codex

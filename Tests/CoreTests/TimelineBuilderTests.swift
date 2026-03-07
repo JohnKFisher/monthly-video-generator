@@ -97,6 +97,70 @@ final class TimelineBuilderTests: XCTestCase {
         XCTAssertEqual(descriptor.contextLine, "Cape Cod")
     }
 
+    func testCustomOpeningTitleCaptionUsesUserTextAndCustomTitleDuration() {
+        let items = [
+            makeImageItem(id: "1", filename: "1.jpg", captureDate: Date(timeIntervalSince1970: 1_700_000_000), fileSizeBytes: 100)
+        ]
+        let style = StyleProfile(
+            openingTitle: "Summer 2026",
+            titleDurationSeconds: 4.5,
+            crossfadeDurationSeconds: 0.75,
+            stillImageDurationSeconds: 3,
+            openingTitleCaptionMode: .custom,
+            openingTitleCaptionText: "Cape Cod at dusk"
+        )
+
+        let timeline = TimelineBuilder(variationSeedGenerator: { 11 }).buildTimeline(
+            items: items,
+            ordering: .captureDateAscendingStable,
+            style: style,
+            source: .photosLibrary(scope: .album(localIdentifier: "album-1", title: "Cape Cod"))
+        )
+
+        guard let firstSegment = timeline.segments.first else {
+            XCTFail("Expected title-card segment")
+            return
+        }
+        XCTAssertEqual(firstSegment.duration.seconds, 4.5, accuracy: 0.0001)
+        guard case let .titleCard(descriptor) = firstSegment.asset else {
+            XCTFail("Expected title-card descriptor")
+            return
+        }
+
+        XCTAssertEqual(descriptor.contextLineMode, .custom)
+        XCTAssertEqual(descriptor.contextLine, "Cape Cod at dusk")
+        XCTAssertEqual(descriptor.resolvedContextLine, "Cape Cod at dusk")
+    }
+
+    func testBlankCustomOpeningTitleCaptionHidesCaption() {
+        let items = [
+            makeImageItem(id: "1", filename: "1.jpg", captureDate: Date(timeIntervalSince1970: 1_700_000_000), fileSizeBytes: 100)
+        ]
+        let style = StyleProfile(
+            openingTitle: "Summer 2026",
+            titleDurationSeconds: 2.5,
+            crossfadeDurationSeconds: 0.75,
+            stillImageDurationSeconds: 3,
+            openingTitleCaptionMode: .custom,
+            openingTitleCaptionText: "   "
+        )
+
+        let timeline = TimelineBuilder(variationSeedGenerator: { 12 }).buildTimeline(
+            items: items,
+            ordering: .captureDateAscendingStable,
+            style: style,
+            source: .photosLibrary(scope: .album(localIdentifier: "album-1", title: "Cape Cod"))
+        )
+
+        guard case let .titleCard(descriptor) = timeline.segments.first?.asset else {
+            XCTFail("Expected title-card descriptor")
+            return
+        }
+
+        XCTAssertNil(descriptor.resolvedContextLine)
+        XCTAssertNil(descriptor.displayContextLine)
+    }
+
     private func makeImageItem(
         id: String,
         filename: String,

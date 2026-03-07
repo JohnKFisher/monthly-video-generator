@@ -175,6 +175,15 @@ final class MainWindowViewModel: ObservableObject {
     @Published var openingTitleText: String {
         didSet { handleRenderSettingChange() }
     }
+    @Published var titleDurationSeconds: Double = 2.5 {
+        didSet { handleRenderSettingChange() }
+    }
+    @Published var openingTitleCaptionMode: OpeningTitleCaptionMode = .automatic {
+        didSet { handleOpeningTitleCaptionModeChange(previousValue: oldValue) }
+    }
+    @Published var openingTitleCaptionText: String = "" {
+        didSet { handleRenderSettingChange() }
+    }
     @Published var crossfadeDurationSeconds: Double = 0.75 {
         didSet { handleRenderSettingChange() }
     }
@@ -671,10 +680,12 @@ final class MainWindowViewModel: ObservableObject {
         let openingTitle = includeOpeningTitle ? resolvedOpeningTitle(for: monthYear) : nil
         return StyleProfile(
             openingTitle: openingTitle,
-            titleDurationSeconds: includeOpeningTitle ? 2.5 : 0,
+            titleDurationSeconds: includeOpeningTitle ? titleDurationSeconds : 0,
             crossfadeDurationSeconds: crossfadeDurationSeconds,
             stillImageDurationSeconds: stillImageDurationSeconds,
-            showCaptureDateOverlay: showCaptureDateOverlay
+            showCaptureDateOverlay: showCaptureDateOverlay,
+            openingTitleCaptionMode: openingTitleCaptionMode,
+            openingTitleCaptionText: openingTitleCaptionText
         )
     }
 
@@ -1333,6 +1344,43 @@ final class MainWindowViewModel: ObservableObject {
         return monthYear.displayLabel
     }
 
+    private func automaticOpeningTitleCaption(for monthYear: MonthYear) -> String? {
+        let source: MediaSource?
+        let resolverMonthYear: MonthYear?
+
+        switch sourceMode {
+        case .folder:
+            if let selectedFolderURL {
+                source = .folder(path: selectedFolderURL, recursive: recursiveScan)
+            } else {
+                source = nil
+            }
+            resolverMonthYear = nil
+        case .photos:
+            switch selectedPhotosFilterMode {
+            case .monthYear:
+                source = .photosLibrary(scope: .entireLibrary(monthYear: monthYear))
+                resolverMonthYear = monthYear
+            case .album:
+                let selectedAlbumTitle = photoAlbums.first(where: { $0.localIdentifier == selectedPhotoAlbumID })?.title
+                let trimmedAlbumID = selectedPhotoAlbumID.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmedAlbumID.isEmpty {
+                    source = nil
+                } else {
+                    source = .photosLibrary(scope: .album(localIdentifier: trimmedAlbumID, title: selectedAlbumTitle))
+                }
+                resolverMonthYear = nil
+            }
+        }
+
+        return OpeningTitleCardContextResolver.resolveAutomaticContextLine(
+            title: resolvedOpeningTitle(for: monthYear),
+            source: source,
+            monthYear: resolverMonthYear,
+            dateSpanText: nil
+        )
+    }
+
     private func applyReportedRenderProgress(_ reportedProgress: Double) {
         let clamped = min(max(reportedProgress, 0), 1)
         progress = max(progress, clamped)
@@ -1383,6 +1431,17 @@ final class MainWindowViewModel: ObservableObject {
             enforceHDRSelectionConstraints()
         }
         persistRenderSettings()
+    }
+
+    private func handleOpeningTitleCaptionModeChange(previousValue: OpeningTitleCaptionMode) {
+        if !isRestoringPersistedSettings,
+           previousValue != .custom,
+           openingTitleCaptionMode == .custom,
+           openingTitleCaptionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let monthYear = MonthYear(month: selectedMonth, year: selectedYear)
+            openingTitleCaptionText = automaticOpeningTitleCaption(for: monthYear) ?? ""
+        }
+        handleRenderSettingChange()
     }
 
     private func refreshPhotoAlbumsIfNeeded() {
@@ -1467,6 +1526,9 @@ final class MainWindowViewModel: ObservableObject {
         isRestoringPersistedSettings = true
         includeOpeningTitle = settings.includeOpeningTitle
         openingTitleText = settings.openingTitleText
+        titleDurationSeconds = min(max(settings.titleDurationSeconds ?? 2.5, 1), 10)
+        openingTitleCaptionMode = settings.openingTitleCaptionMode ?? .automatic
+        openingTitleCaptionText = settings.openingTitleCaptionText ?? ""
         crossfadeDurationSeconds = min(max(settings.crossfadeDurationSeconds, 0), 2)
         stillImageDurationSeconds = min(max(settings.stillImageDurationSeconds, 1), 10)
         showCaptureDateOverlay = settings.showCaptureDateOverlay ?? true
@@ -1499,6 +1561,9 @@ final class MainWindowViewModel: ObservableObject {
         let settings = PersistedRenderSettings(
             includeOpeningTitle: includeOpeningTitle,
             openingTitleText: openingTitleText,
+            titleDurationSeconds: titleDurationSeconds,
+            openingTitleCaptionMode: openingTitleCaptionMode,
+            openingTitleCaptionText: openingTitleCaptionText,
             crossfadeDurationSeconds: crossfadeDurationSeconds,
             stillImageDurationSeconds: stillImageDurationSeconds,
             showCaptureDateOverlay: showCaptureDateOverlay,
@@ -1525,6 +1590,9 @@ final class MainWindowViewModel: ObservableObject {
     private struct PersistedRenderSettings: Codable {
         let includeOpeningTitle: Bool
         let openingTitleText: String
+        let titleDurationSeconds: Double?
+        let openingTitleCaptionMode: OpeningTitleCaptionMode?
+        let openingTitleCaptionText: String?
         let crossfadeDurationSeconds: Double
         let stillImageDurationSeconds: Double
         let showCaptureDateOverlay: Bool?

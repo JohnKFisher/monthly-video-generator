@@ -162,6 +162,28 @@ struct MainWindowView: View {
                 if viewModel.includeOpeningTitle {
                     TextField("Title text", text: $viewModel.openingTitleText)
                     caption("If left blank, uses the selected month/year label. The opener now animates a small collage from upcoming media and may modestly increase export time.")
+
+                    sliderRow(
+                        title: "Title card duration",
+                        value: $viewModel.titleDurationSeconds,
+                        range: 1...10,
+                        step: 0.25,
+                        displayValue: String(format: "%.2fs", viewModel.titleDurationSeconds)
+                    )
+
+                    Picker("Small caption", selection: $viewModel.openingTitleCaptionMode) {
+                        ForEach(OpeningTitleCaptionMode.allCases, id: \.self) { mode in
+                            Text(mode.displayLabel).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    if viewModel.openingTitleCaptionMode == .custom {
+                        TextField("Caption text", text: $viewModel.openingTitleCaptionText)
+                        caption("Leave blank to hide the smaller caption.")
+                    } else {
+                        caption("Automatic uses the current album title, month/year label, or date span when available.")
+                    }
                 }
 
                 sliderRow(

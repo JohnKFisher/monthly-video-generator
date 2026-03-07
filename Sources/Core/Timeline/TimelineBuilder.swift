@@ -54,6 +54,7 @@ public final class TimelineBuilder {
             let duration = CMTime(seconds: style.titleDurationSeconds, preferredTimescale: 600)
             let descriptor = buildOpeningTitleCardDescriptor(
                 title: openingTitle,
+                style: style,
                 orderedItems: ordered,
                 source: source,
                 monthYear: monthYear
@@ -83,58 +84,33 @@ public final class TimelineBuilder {
 
     private func buildOpeningTitleCardDescriptor(
         title: String,
+        style: StyleProfile,
         orderedItems: [MediaItem],
         source: MediaSource?,
         monthYear: MonthYear?
     ) -> OpeningTitleCardDescriptor {
         let variationSeed = variationSeedGenerator()
         let dateSpanText = formattedDateSpan(for: orderedItems)
-        return OpeningTitleCardDescriptor(
-            title: title,
-            contextLine: resolvedContextLine(
+        let resolvedContextLine: String?
+        switch style.openingTitleCaptionMode {
+        case .automatic:
+            resolvedContextLine = OpeningTitleCardContextResolver.resolveAutomaticContextLine(
                 title: title,
                 source: source,
                 monthYear: monthYear,
                 dateSpanText: dateSpanText
-            ),
+            )
+        case .custom:
+            resolvedContextLine = style.openingTitleCaptionText
+        }
+        return OpeningTitleCardDescriptor(
+            title: title,
+            contextLine: resolvedContextLine,
             previewItems: selectedPreviewItems(from: orderedItems, variationSeed: variationSeed),
             dateSpanText: dateSpanText,
-            variationSeed: variationSeed
+            variationSeed: variationSeed,
+            contextLineMode: style.openingTitleCaptionMode
         )
-    }
-
-    private func resolvedContextLine(
-        title: String,
-        source: MediaSource?,
-        monthYear: MonthYear?,
-        dateSpanText: String?
-    ) -> String? {
-        if case let .photosLibrary(scope)? = source {
-            switch scope {
-            case let .album(_, title: albumTitle):
-                if let albumTitle = trimmed(albumTitle), !matches(albumTitle, title) {
-                    return albumTitle
-                }
-            case let .entireLibrary(sourceMonthYear):
-                let label = sourceMonthYear.displayLabel
-                if !matches(label, title) {
-                    return label
-                }
-            }
-        }
-
-        if let monthYear {
-            let label = monthYear.displayLabel
-            if !matches(label, title) {
-                return label
-            }
-        }
-
-        if let dateSpanText = trimmed(dateSpanText), !matches(dateSpanText, title) {
-            return dateSpanText
-        }
-
-        return nil
     }
 
     private func selectedPreviewItems(from orderedItems: [MediaItem], variationSeed: UInt64) -> [MediaItem] {
@@ -209,19 +185,6 @@ public final class TimelineBuilder {
         formatter.timeZone = .current
         formatter.setLocalizedDateFormatFromTemplate("yyyy")
         return formatter
-    }
-
-    private func trimmed(_ value: String?) -> String? {
-        guard let value else {
-            return nil
-        }
-        let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmedValue.isEmpty ? nil : trimmedValue
-    }
-
-    private func matches(_ lhs: String, _ rhs: String) -> Bool {
-        lhs.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current) ==
-            rhs.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
     }
 
     private func calculateEstimatedDuration(segments: [TimelineSegment], crossfadeSeconds: Double) -> CMTime {
