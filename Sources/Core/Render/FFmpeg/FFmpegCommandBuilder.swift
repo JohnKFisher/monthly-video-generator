@@ -25,8 +25,11 @@ struct FFmpegCommandBuilder {
             throw RenderError.exportFailed("FFmpeg command build failed: no clips were provided.")
         }
         guard let outputChannelLayout = plan.audioLayout.ffmpegChannelLayout,
-              let outputChannelCount = plan.audioLayout.outputChannelCount,
-              let audioBitrate = plan.audioLayout.aacBitrate else {
+              let outputChannelCount = plan.audioLayout.outputChannelCount else {
+            throw RenderError.exportFailed("FFmpeg command build failed: audio layout must be resolved before command generation.")
+        }
+        let audioBitrate = plan.renderIntent == .finalDelivery ? plan.audioLayout.aacBitrate : nil
+        if plan.renderIntent == .finalDelivery, audioBitrate == nil {
             throw RenderError.exportFailed("FFmpeg command build failed: audio layout must be resolved before command generation.")
         }
         if plan.requiresHDRToSDRToneMapping && !resolution.selectedCapabilities.hasTonemap {
@@ -42,7 +45,8 @@ struct FFmpegCommandBuilder {
         guard let selectedEncoder = resolution.selectedCapabilities.preferredEncoder(
             for: plan.videoCodec,
             dynamicRange: plan.dynamicRange,
-            hdrHEVCEncoderMode: plan.hdrHEVCEncoderMode
+            hdrHEVCEncoderMode: plan.hdrHEVCEncoderMode,
+            renderIntent: plan.renderIntent
         ) else {
             throw RenderError.exportFailed(
                 "FFmpeg command build failed: no compatible encoder is available for \(plan.dynamicRange.rawValue.uppercased()) \(plan.videoCodec.rawValue.uppercased())."
@@ -176,16 +180,18 @@ struct FFmpegCommandBuilder {
         ])
 
         appendEncoderArguments(for: selectedEncoder, plan: plan, arguments: &arguments)
+        appendAudioArguments(
+            for: plan,
+            outputChannelCount: outputChannelCount,
+            audioBitrate: audioBitrate,
+            arguments: &arguments
+        )
 
         arguments.append(contentsOf: [
             "-movflags", "+write_colr",
             "-colorspace", outputColorspace(for: plan.dynamicRange),
             "-color_primaries", outputColorPrimaries(for: plan.dynamicRange),
             "-color_trc", outputColorTransfer(for: plan.dynamicRange),
-            "-c:a", "aac",
-            "-ar", "48000",
-            "-ac", String(outputChannelCount),
-            "-b:a", audioBitrateArgument(audioBitrate),
             plan.outputURL.path
         ])
 
@@ -196,6 +202,34 @@ struct FFmpegCommandBuilder {
         let total = plan.clips.reduce(0) { $0 + max($1.durationSeconds, 0.01) }
         let transitions = max(plan.transitionDurationSeconds, 0) * Double(max(plan.clips.count - 1, 0))
         return max(total - transitions, 0.01)
+    }
+
+    func profileSummary(for plan: FFmpegRenderPlan, encoder: FFmpegVideoEncoder) -> String {
+        switch plan.renderIntent {
+        case .finalDelivery:
+            switch encoder {
+            case .libx264:
+                return "intent=finalDelivery encoder=libx264 preset=\(x264Preset(for: plan.bitrateMode)) crf=\(x264CRF(for: plan.bitrateMode)) audio=aac"
+            case .h264VideoToolbox:
+                return "intent=finalDelivery encoder=h264_videotoolbox bitrate=\(estimatedBitrate(for: plan.renderSize, frameRate: plan.frameRate, bitrateMode: plan.bitrateMode, encoder: encoder, dynamicRange: plan.dynamicRange)) audio=aac"
+            case .libx265:
+                return "intent=finalDelivery encoder=libx265 preset=\(x265Preset(for: plan.bitrateMode)) crf=\(x265CRF(for: plan.bitrateMode, dynamicRange: plan.dynamicRange)) audio=aac"
+            case .hevcVideoToolbox:
+                return "intent=finalDelivery encoder=hevc_videotoolbox bitrate=\(estimatedBitrate(for: plan.renderSize, frameRate: plan.frameRate, bitrateMode: plan.bitrateMode, encoder: encoder, dynamicRange: plan.dynamicRange)) audio=aac"
+            }
+        case .intermediateChunk:
+            let bitrate = intermediateBitrate(for: plan.renderSize, frameRate: plan.frameRate)
+            switch encoder {
+            case .hevcVideoToolbox:
+                return "intent=intermediateChunk encoder=hevc_videotoolbox bitrate=\(bitrate) audio=pcm_s16le"
+            case .libx265:
+                return "intent=intermediateChunk encoder=libx265 preset=medium bitrate=\(bitrate) audio=pcm_s16le"
+            case .h264VideoToolbox:
+                return "intent=intermediateChunk encoder=h264_videotoolbox audio=pcm_s16le"
+            case .libx264:
+                return "intent=intermediateChunk encoder=libx264 audio=pcm_s16le"
+            }
+        }
     }
 
     private func colorNormalizeFilter(for colorInfo: ColorInfo, outputDynamicRange: DynamicRange) -> String {
@@ -359,7 +393,21 @@ struct FFmpegCommandBuilder {
         return String(Int(max(estimate.rounded(), 10_000_000)))
     }
 
+    private func intermediateBitrate(
+        for renderSize: CGSize,
+        frameRate: Int
+    ) -> String {
+        let bitsPerPixel = 0.22
+        let estimate = max(renderSize.width * renderSize.height, 1) * Double(max(frameRate, 24)) * bitsPerPixel
+        return String(Int(max(estimate.rounded(), 18_000_000)))
+    }
+
     private func appendEncoderArguments(for encoder: FFmpegVideoEncoder, plan: FFmpegRenderPlan, arguments: inout [String]) {
+        if plan.renderIntent == .intermediateChunk {
+            appendIntermediateEncoderArguments(for: encoder, plan: plan, arguments: &arguments)
+            return
+        }
+
         switch encoder {
         case .libx264:
             arguments.append(contentsOf: [
@@ -422,6 +470,77 @@ struct FFmpegCommandBuilder {
         }
     }
 
+    private func appendIntermediateEncoderArguments(
+        for encoder: FFmpegVideoEncoder,
+        plan: FFmpegRenderPlan,
+        arguments: inout [String]
+    ) {
+        let bitrate = intermediateBitrate(for: plan.renderSize, frameRate: plan.frameRate)
+
+        switch encoder {
+        case .hevcVideoToolbox:
+            arguments.append(contentsOf: [
+                "-c:v", "hevc_videotoolbox",
+                "-profile:v", plan.dynamicRange == .hdr ? "main10" : "main",
+                "-pix_fmt", plan.dynamicRange == .hdr ? "p010le" : "yuv420p",
+                "-tag:v", "hvc1",
+                "-b:v", bitrate
+            ])
+
+        case .libx265:
+            var values = [
+                "-c:v", "libx265",
+                "-preset", "medium",
+                "-b:v", bitrate,
+                "-maxrate", bitrate,
+                "-bufsize", String(Int((Double(bitrate) ?? 18_000_000) * 2)),
+                "-pix_fmt", plan.dynamicRange == .hdr ? "yuv420p10le" : "yuv420p",
+                "-tag:v", "hvc1"
+            ]
+            if plan.dynamicRange == .hdr {
+                values.append(contentsOf: [
+                    "-x265-params", "colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc:repeat-headers=1"
+                ])
+            } else {
+                values.append(contentsOf: [
+                    "-x265-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709:repeat-headers=1"
+                ])
+            }
+            arguments.append(contentsOf: values)
+
+        case .h264VideoToolbox, .libx264:
+            // The chunked path is HDR/HEVC-only today, but keep a compatible
+            // fallback so intent-specific command generation remains coherent.
+            appendEncoderArguments(for: encoder.fallbackForUnsupportedIntermediate, plan: plan.finalDeliveryEquivalent, arguments: &arguments)
+        }
+    }
+
+    private func appendAudioArguments(
+        for plan: FFmpegRenderPlan,
+        outputChannelCount: Int,
+        audioBitrate: Int?,
+        arguments: inout [String]
+    ) {
+        switch plan.renderIntent {
+        case .finalDelivery:
+            guard let audioBitrate else {
+                return
+            }
+            arguments.append(contentsOf: [
+                "-c:a", "aac",
+                "-ar", "48000",
+                "-ac", String(outputChannelCount),
+                "-b:a", audioBitrateArgument(audioBitrate)
+            ])
+        case .intermediateChunk:
+            arguments.append(contentsOf: [
+                "-c:a", "pcm_s16le",
+                "-ar", "48000",
+                "-ac", String(outputChannelCount)
+            ])
+        }
+    }
+
     private func intermediatePixelFormat(for dynamicRange: DynamicRange) -> String {
         switch dynamicRange {
         case .hdr:
@@ -467,5 +586,37 @@ struct FFmpegCommandBuilder {
         case .sdr:
             return "bt709"
         }
+    }
+}
+
+private extension FFmpegVideoEncoder {
+    var fallbackForUnsupportedIntermediate: FFmpegVideoEncoder {
+        switch self {
+        case .libx264, .h264VideoToolbox:
+            return .libx264
+        case .libx265:
+            return .libx265
+        case .hevcVideoToolbox:
+            return .hevcVideoToolbox
+        }
+    }
+}
+
+private extension FFmpegRenderPlan {
+    var finalDeliveryEquivalent: FFmpegRenderPlan {
+        FFmpegRenderPlan(
+            clips: clips,
+            transitionDurationSeconds: transitionDurationSeconds,
+            outputURL: outputURL,
+            renderSize: renderSize,
+            frameRate: frameRate,
+            audioLayout: audioLayout,
+            bitrateMode: bitrateMode,
+            container: container,
+            videoCodec: videoCodec,
+            dynamicRange: dynamicRange,
+            hdrHEVCEncoderMode: hdrHEVCEncoderMode,
+            renderIntent: .finalDelivery
+        )
     }
 }

@@ -7,6 +7,8 @@ public final class AVFoundationRenderEngine {
     private let stillImageClipFactory: StillImageClipFactory
     private let captureDateOverlayFactory: CaptureDateOverlayFactory
     private let ffmpegHDRRenderer: FFmpegHDRRenderer
+    private let ffmpegCommandBuilder: FFmpegCommandBuilder
+    private let ffmpegChunkPipelineBuilder: FFmpegHDRChunkPipelineBuilder
 
     public init(
         stillImageClipFactory: StillImageClipFactory = StillImageClipFactory(),
@@ -15,6 +17,8 @@ public final class AVFoundationRenderEngine {
         self.stillImageClipFactory = stillImageClipFactory
         self.captureDateOverlayFactory = captureDateOverlayFactory
         self.ffmpegHDRRenderer = FFmpegHDRRenderer()
+        self.ffmpegCommandBuilder = FFmpegCommandBuilder()
+        self.ffmpegChunkPipelineBuilder = FFmpegHDRChunkPipelineBuilder()
     }
 
     public func cancelCurrentRender() {
@@ -73,11 +77,6 @@ public final class AVFoundationRenderEngine {
             )
         }
         var temporaryURLs: [URL] = []
-        defer {
-            for url in temporaryURLs {
-                try? FileManager.default.removeItem(at: url)
-            }
-        }
 
         do {
             reportStatus("Preparing media clips...", handler: statusHandler)
@@ -108,46 +107,109 @@ public final class AVFoundationRenderEngine {
                 "\(exportProfile.dynamicRange == .hdr ? "HDR" : "SDR") export selected; routing to FFmpeg backend " +
                 "(mode=\(exportProfile.hdrFFmpegBinaryMode.rawValue), codec=\(exportProfile.videoCodec.rawValue))."
             )
-            let ffmpegPlan = FFmpegRenderPlan(
-                clips: clips.map { clip in
-                    FFmpegRenderClip(
-                        url: clip.assetURL,
-                        durationSeconds: max(clip.duration.seconds, 0.01),
-                        includeAudio: clip.includeAudio,
-                        hasAudioTrack: clip.audioTrack != nil,
-                        colorInfo: clip.colorInfo,
-                        sourceDescription: clip.sourceDescription,
-                        captureDateOverlayURL: clip.captureDateOverlayURL
-                    )
-                },
-                transitionDurationSeconds: max(transitionDuration.seconds, 0),
+            let ffmpegPlan = makeFFmpegRenderPlan(
+                clips: clips,
+                transitionDuration: transitionDuration,
                 outputURL: outputURL,
                 renderSize: renderSize,
                 frameRate: resolvedFrameRate,
-                audioLayout: exportProfile.audioLayout,
-                bitrateMode: exportProfile.bitrateMode,
-                container: exportProfile.container,
-                videoCodec: exportProfile.videoCodec,
-                dynamicRange: exportProfile.dynamicRange,
-                hdrHEVCEncoderMode: exportProfile.hdrHEVCEncoderMode
+                exportProfile: exportProfile
             )
 
-            let binaryResolution = try await ffmpegHDRRenderer.render(
-                plan: ffmpegPlan,
-                binaryMode: exportProfile.hdrFFmpegBinaryMode,
-                diagnostics: { diagnostics.add($0) },
-                progressHandler: { ffmpegProgress in
-                    let mapped = 0.30 + min(max(ffmpegProgress, 0), 1) * 0.68
-                    self.reportProgress(mapped, handler: progressHandler)
-                },
-                statusHandler: { ffmpegStatus in
-                    self.reportStatus(ffmpegStatus, handler: statusHandler)
+            let binaryResolution: FFmpegBinaryResolution
+            if let chunkExecutionPlan = ffmpegChunkPipelineBuilder.makeExecutionPlan(
+                for: ffmpegPlan,
+                intermediateOutputURL: { _ in
+                    let url = self.temporaryRenderURL(fileType: .mov)
+                    temporaryURLs.append(url)
+                    return url
                 }
-            )
+            ) {
+                diagnostics.add(
+                    "HDR chunking enabled: true (chunks=\(chunkExecutionPlan.chunkPlan.chunks.count), " +
+                    "maxClipsPerChunk=\(ffmpegChunkPipelineBuilder.planner.maxClipsPerChunk), " +
+                    "maxChunkDuration=\(String(format: "%.2fs", ffmpegChunkPipelineBuilder.planner.maxChunkDurationSeconds)))"
+                )
+                for chunk in chunkExecutionPlan.chunkPlan.chunks {
+                    diagnostics.add(
+                        "HDR chunk plan: index=\(chunk.sequenceIndex + 1), clips=\(chunk.clips.count), " +
+                        "expectedDuration=\(String(format: "%.2fs", chunk.expectedDurationSeconds)), " +
+                        "output=\(chunkExecutionPlan.chunkPlans[chunk.sequenceIndex].outputURL.path)"
+                    )
+                }
+                reportStatus("Configuring chunked HDR encode...", handler: statusHandler)
+
+                let stagePlans = chunkExecutionPlan.chunkPlans + [chunkExecutionPlan.finalPlan]
+                let stageWeights = stagePlans.map { ffmpegCommandBuilder.expectedDurationSeconds(for: $0) }
+                let totalWeight = max(stageWeights.reduce(0, +), 0.01)
+                var completedWeight = 0.0
+
+                for (index, chunkPlan) in chunkExecutionPlan.chunkPlans.enumerated() {
+                    let stageWeight = stageWeights[index]
+                    let progressRange = progressRangeForFFmpegStage(
+                        completedWeight: completedWeight,
+                        stageWeight: stageWeight,
+                        totalWeight: totalWeight
+                    )
+                    diagnostics.add(
+                        "HDR chunk render started: index=\(index + 1)/\(chunkExecutionPlan.chunkPlans.count), output=\(chunkPlan.outputURL.path)"
+                    )
+                    _ = try await executeFFmpegPlan(
+                        chunkPlan,
+                        binaryMode: exportProfile.hdrFFmpegBinaryMode,
+                        diagnostics: diagnostics,
+                        progressRange: progressRange,
+                        statusPrefix: "HDR chunk \(index + 1)/\(chunkExecutionPlan.chunkPlans.count)",
+                        progressHandler: progressHandler,
+                        statusHandler: statusHandler
+                    )
+                    diagnostics.add(
+                        "HDR chunk render completed: index=\(index + 1)/\(chunkExecutionPlan.chunkPlans.count), output=\(chunkPlan.outputURL.path)"
+                    )
+                    completedWeight += stageWeight
+                }
+
+                let finalStageWeight = stageWeights.last ?? 0.01
+                diagnostics.add(
+                    "HDR final merge started: clips=\(chunkExecutionPlan.finalPlan.clips.count), output=\(chunkExecutionPlan.finalPlan.outputURL.path)"
+                )
+                binaryResolution = try await executeFFmpegPlan(
+                    chunkExecutionPlan.finalPlan,
+                    binaryMode: exportProfile.hdrFFmpegBinaryMode,
+                    diagnostics: diagnostics,
+                    progressRange: progressRangeForFFmpegStage(
+                        completedWeight: completedWeight,
+                        stageWeight: finalStageWeight,
+                        totalWeight: totalWeight
+                    ),
+                    statusPrefix: "HDR final merge",
+                    progressHandler: progressHandler,
+                    statusHandler: statusHandler
+                )
+                diagnostics.add("HDR final merge completed: output=\(chunkExecutionPlan.finalPlan.outputURL.path)")
+            } else {
+                let chunkingReason: String
+                if ffmpegPlan.dynamicRange != .hdr || ffmpegPlan.videoCodec != .hevc {
+                    chunkingReason = "not_applicable"
+                } else {
+                    chunkingReason = "single_pass_plan"
+                }
+                diagnostics.add("HDR chunking enabled: false (reason=\(chunkingReason))")
+                binaryResolution = try await executeFFmpegPlan(
+                    ffmpegPlan,
+                    binaryMode: exportProfile.hdrFFmpegBinaryMode,
+                    diagnostics: diagnostics,
+                    progressRange: 0.30...0.98,
+                    statusPrefix: nil,
+                    progressHandler: progressHandler,
+                    statusHandler: statusHandler
+                )
+            }
             reportProgress(1.0, handler: progressHandler)
             reportStatus("Finalizing output...", handler: statusHandler)
 
             diagnostics.add("Render completed successfully")
+            cleanupTemporaryFiles(&temporaryURLs, diagnostics: diagnostics)
             let diagnosticsLogURL: URL?
             if writeDiagnosticsLog {
                 diagnosticsLogURL = persistDiagnosticsReport(
@@ -179,6 +241,7 @@ public final class AVFoundationRenderEngine {
             )
         } catch {
             diagnostics.add("Render failed with error: \(describe(error))")
+            cleanupTemporaryFiles(&temporaryURLs, diagnostics: diagnostics)
             let diagnosticURL: URL?
             if writeDiagnosticsLog {
                 diagnosticURL = persistDiagnosticsReport(
@@ -195,6 +258,74 @@ public final class AVFoundationRenderEngine {
             }
             throw RenderError.exportFailed(baseMessage)
         }
+    }
+
+    private func makeFFmpegRenderPlan(
+        clips: [InputClip],
+        transitionDuration: CMTime,
+        outputURL: URL,
+        renderSize: CGSize,
+        frameRate: Int,
+        exportProfile: ExportProfile
+    ) -> FFmpegRenderPlan {
+        FFmpegRenderPlan(
+            clips: clips.map {
+                FFmpegRenderClip(
+                    url: $0.assetURL,
+                    durationSeconds: max($0.duration.seconds, 0.01),
+                    includeAudio: $0.includeAudio,
+                    hasAudioTrack: $0.audioTrack != nil,
+                    colorInfo: $0.colorInfo,
+                    sourceDescription: $0.sourceDescription,
+                    captureDateOverlayURL: $0.captureDateOverlayURL
+                )
+            },
+            transitionDurationSeconds: max(transitionDuration.seconds, 0),
+            outputURL: outputURL,
+            renderSize: renderSize,
+            frameRate: frameRate,
+            audioLayout: exportProfile.audioLayout,
+            bitrateMode: exportProfile.bitrateMode,
+            container: exportProfile.container,
+            videoCodec: exportProfile.videoCodec,
+            dynamicRange: exportProfile.dynamicRange,
+            hdrHEVCEncoderMode: exportProfile.hdrHEVCEncoderMode,
+            renderIntent: .finalDelivery
+        )
+    }
+
+    private func executeFFmpegPlan(
+        _ plan: FFmpegRenderPlan,
+        binaryMode: HDRFFmpegBinaryMode,
+        diagnostics: RenderDiagnostics,
+        progressRange: ClosedRange<Double>,
+        statusPrefix: String?,
+        progressHandler: (@MainActor @Sendable (Double) -> Void)?,
+        statusHandler: (@MainActor @Sendable (String) -> Void)?
+    ) async throws -> FFmpegBinaryResolution {
+        try await ffmpegHDRRenderer.render(
+            plan: plan,
+            binaryMode: binaryMode,
+            diagnostics: { diagnostics.add($0) },
+            progressHandler: { ffmpegProgress in
+                let mapped = progressRange.lowerBound + min(max(ffmpegProgress, 0), 1) * (progressRange.upperBound - progressRange.lowerBound)
+                self.reportProgress(mapped, handler: progressHandler)
+            },
+            statusHandler: { ffmpegStatus in
+                let status = statusPrefix.map { "\($0): \(ffmpegStatus)" } ?? ffmpegStatus
+                self.reportStatus(status, handler: statusHandler)
+            }
+        )
+    }
+
+    private func progressRangeForFFmpegStage(
+        completedWeight: Double,
+        stageWeight: Double,
+        totalWeight: Double
+    ) -> ClosedRange<Double> {
+        let lower = 0.30 + 0.68 * (completedWeight / max(totalWeight, 0.01))
+        let upper = 0.30 + 0.68 * ((completedWeight + stageWeight) / max(totalWeight, 0.01))
+        return lower...max(lower, upper)
     }
 
     private func buildInstructions(
@@ -1100,6 +1231,25 @@ public final class AVFoundationRenderEngine {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let fileExtension = fileType == .mp4 ? "mp4" : "mov"
         return directory.appendingPathComponent(UUID().uuidString).appendingPathExtension(fileExtension)
+    }
+
+    private func cleanupTemporaryFiles(_ urls: inout [URL], diagnostics: RenderDiagnostics) {
+        guard !urls.isEmpty else {
+            return
+        }
+
+        let fileManager = FileManager.default
+        for url in urls {
+            do {
+                if fileManager.fileExists(atPath: url.path) {
+                    try fileManager.removeItem(at: url)
+                    diagnostics.add("Removed temporary artifact: \(url.path)")
+                }
+            } catch {
+                diagnostics.add("Temporary artifact cleanup skipped for \(url.path): \(describe(error))")
+            }
+        }
+        urls.removeAll(keepingCapacity: false)
     }
 
     private func estimatedHDRBitrate(renderSize: CGSize, frameRate: Double) -> Int {

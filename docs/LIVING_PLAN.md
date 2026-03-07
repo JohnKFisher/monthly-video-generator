@@ -237,6 +237,7 @@ Operational updates after first packaged run:
 - 2026-03-06: Updated the FFmpeg render plan/command builder to emit real mono/stereo/5.1 AAC outputs instead of hard-coded stereo, including layout-matched silent fillers, final `-ac`, and bitrate-aware output size estimates.
 - 2026-03-07: Added persisted title-card duration and caption controls, including an `Automatic / Custom` small-caption mode that preserves typed casing for custom captions while keeping automatic source captions styled as before.
 - 2026-03-07: Shrunk capture-date overlay plates from full-frame transparent PNGs to tightly cropped badge rasters and moved final placement into FFmpeg overlay expressions, preventing 4K HDR exports from constructing dozens of extra full-screen RGBA streams.
+- 2026-03-07: Added a chunked HDR FFmpeg execution path for complex HEVC/HDR renders, using bounded intermediate `.mov` chunks with a dedicated Main10 temp profile and preserving the user-selected final encoder for the delivered output.
 
 ## Risks/Blockers
 

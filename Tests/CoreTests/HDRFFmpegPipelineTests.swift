@@ -79,6 +79,54 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         )
     }
 
+    func testIntermediateChunkIntentPrefersVideoToolboxWhenAvailable() {
+        let capabilities = FFmpegCapabilities(
+            versionDescription: "dual-encoder",
+            hasZscale: true,
+            hasTonemap: true,
+            hasXfade: true,
+            hasAcrossfade: true,
+            hasLibx264: true,
+            hasH264VideoToolbox: true,
+            hasLibx265: true,
+            hasHEVCVideoToolbox: true
+        )
+
+        XCTAssertEqual(
+            capabilities.preferredEncoder(
+                for: .hevc,
+                dynamicRange: .hdr,
+                hdrHEVCEncoderMode: .automatic,
+                renderIntent: .intermediateChunk
+            ),
+            .hevcVideoToolbox
+        )
+    }
+
+    func testIntermediateChunkIntentFallsBackToLibx265WhenVideoToolboxIsUnavailable() {
+        let capabilities = FFmpegCapabilities(
+            versionDescription: "software-only",
+            hasZscale: true,
+            hasTonemap: true,
+            hasXfade: true,
+            hasAcrossfade: true,
+            hasLibx264: true,
+            hasH264VideoToolbox: true,
+            hasLibx265: true,
+            hasHEVCVideoToolbox: false
+        )
+
+        XCTAssertEqual(
+            capabilities.preferredEncoder(
+                for: .hevc,
+                dynamicRange: .hdr,
+                hdrHEVCEncoderMode: .automatic,
+                renderIntent: .intermediateChunk
+            ),
+            .libx265
+        )
+    }
+
     func testHDRVideoToolboxModeRequiresVideoToolboxEncoder() {
         let capabilities = FFmpegCapabilities(
             versionDescription: "dual-encoder",
@@ -381,6 +429,103 @@ final class HDRFFmpegPipelineTests: XCTestCase {
 
         XCTAssertTrue(joined.contains("hevc_videotoolbox"))
         XCTAssertFalse(joined.contains("libx265"))
+    }
+
+    func testCommandBuilderUsesIntermediateChunkProfileForHDRVideoToolbox() throws {
+        let builder = FFmpegCommandBuilder()
+        let resolution = makeCapableResolution()
+        let plan = FFmpegRenderPlan(
+            clips: [
+                FFmpegRenderClip(
+                    url: URL(fileURLWithPath: "/tmp/a.mov"),
+                    durationSeconds: 2,
+                    includeAudio: true,
+                    hasAudioTrack: true,
+                    colorInfo: ColorInfo(isHDR: true, colorPrimaries: "ITU_R_2020", transferFunction: "ITU_R_2100_HLG"),
+                    sourceDescription: "clip-a"
+                )
+            ],
+            transitionDurationSeconds: 0,
+            outputURL: URL(fileURLWithPath: "/tmp/out.mov"),
+            renderSize: CGSize(width: 3840, height: 2160),
+            frameRate: 60,
+            audioLayout: .stereo,
+            bitrateMode: .balanced,
+            container: .mov,
+            videoCodec: .hevc,
+            dynamicRange: .hdr,
+            hdrHEVCEncoderMode: .automatic,
+            renderIntent: .intermediateChunk
+        )
+
+        let command = try builder.buildCommand(plan: plan, resolution: resolution)
+        let joined = command.arguments.joined(separator: " ")
+
+        XCTAssertTrue(joined.contains("hevc_videotoolbox"))
+        XCTAssertTrue(joined.contains("-profile:v main10"))
+        XCTAssertTrue(joined.contains("-pix_fmt p010le"))
+        XCTAssertTrue(joined.contains("-b:v 109486080"))
+        XCTAssertTrue(joined.contains("-c:a pcm_s16le"))
+        XCTAssertFalse(joined.contains("-c:a aac"))
+        XCTAssertFalse(joined.contains("-b:a"))
+    }
+
+    func testCommandBuilderFallsBackToLibx265ForIntermediateChunkWhenVideoToolboxIsUnavailable() throws {
+        let builder = FFmpegCommandBuilder()
+        let resolution = FFmpegBinaryResolution(
+            selectedBinary: FFmpegBinary(
+                ffmpegURL: URL(fileURLWithPath: "/tmp/ffmpeg"),
+                ffprobeURL: URL(fileURLWithPath: "/tmp/ffprobe"),
+                source: .system
+            ),
+            selectedCapabilities: FFmpegCapabilities(
+                versionDescription: "software-only",
+                hasZscale: true,
+                hasTonemap: true,
+                hasXfade: true,
+                hasAcrossfade: true,
+                hasLibx264: true,
+                hasH264VideoToolbox: true,
+                hasLibx265: true,
+                hasHEVCVideoToolbox: false
+            ),
+            systemCapabilities: nil,
+            bundledCapabilities: nil,
+            fallbackReason: nil
+        )
+        let plan = FFmpegRenderPlan(
+            clips: [
+                FFmpegRenderClip(
+                    url: URL(fileURLWithPath: "/tmp/a.mov"),
+                    durationSeconds: 2,
+                    includeAudio: true,
+                    hasAudioTrack: true,
+                    colorInfo: ColorInfo(isHDR: true, colorPrimaries: "ITU_R_2020", transferFunction: "ITU_R_2100_HLG"),
+                    sourceDescription: "clip-a"
+                )
+            ],
+            transitionDurationSeconds: 0,
+            outputURL: URL(fileURLWithPath: "/tmp/out.mov"),
+            renderSize: CGSize(width: 3840, height: 2160),
+            frameRate: 60,
+            audioLayout: .stereo,
+            bitrateMode: .balanced,
+            container: .mov,
+            videoCodec: .hevc,
+            dynamicRange: .hdr,
+            hdrHEVCEncoderMode: .automatic,
+            renderIntent: .intermediateChunk
+        )
+
+        let command = try builder.buildCommand(plan: plan, resolution: resolution)
+        let joined = command.arguments.joined(separator: " ")
+
+        XCTAssertTrue(joined.contains("libx265"))
+        XCTAssertTrue(joined.contains("-b:v 109486080"))
+        XCTAssertTrue(joined.contains("-maxrate 109486080"))
+        XCTAssertTrue(joined.contains("-bufsize 218972160"))
+        XCTAssertTrue(joined.contains("-c:a pcm_s16le"))
+        XCTAssertFalse(joined.contains("-crf"))
     }
 
     func testCommandBuilderIncludesBT709MetadataForSDRH264() throws {

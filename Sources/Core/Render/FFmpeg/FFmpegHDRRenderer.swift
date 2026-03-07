@@ -169,6 +169,16 @@ final class FFmpegHDRRenderer {
             plan: plan,
             diagnostics: diagnostics
         )
+        guard let selectedEncoder = resolution.selectedCapabilities.preferredEncoder(
+            for: plan.videoCodec,
+            dynamicRange: plan.dynamicRange,
+            hdrHEVCEncoderMode: plan.hdrHEVCEncoderMode,
+            renderIntent: plan.renderIntent
+        ) else {
+            throw RenderError.exportFailed(
+                "FFmpeg \(plan.dynamicRange == .hdr ? "HDR" : "SDR") render failed: no compatible encoder was available after capability resolution."
+            )
+        }
         let command = try commandBuilder.buildCommand(plan: plan, resolution: resolution)
         callbacks.log("FFmpeg version: \(resolution.selectedCapabilities.versionDescription)")
         if let systemCaps = resolution.systemCapabilities {
@@ -195,8 +205,15 @@ final class FFmpegHDRRenderer {
         } else {
             callbacks.log("HDR-to-SDR tone mapping enabled: false")
         }
+        callbacks.log("FFmpeg render intent: \(plan.renderIntent.rawValue)")
         callbacks.log("Capture-date overlays enabled: \(plan.requiresCaptureDateOverlay) (clips=\(plan.clips.filter { $0.captureDateOverlayURL != nil }.count))")
         callbacks.log("FFmpeg selected binary: \(resolution.selectedBinary.ffmpegURL.path) [\(resolution.selectedBinary.source.rawValue)]")
+        callbacks.log("FFmpeg encoder profile: \(commandBuilder.profileSummary(for: plan, encoder: selectedEncoder))")
+        if plan.renderIntent == .intermediateChunk,
+           selectedEncoder != .hevcVideoToolbox,
+           resolution.selectedCapabilities.hasHEVCVideoToolbox == false {
+            callbacks.log("FFmpeg intermediate encoder fallback: hevc_videotoolbox unavailable; using \(selectedEncoder.rawValue).")
+        }
         callbacks.log("FFmpeg command: \(command.printableCommand)")
         if let fallbackReason = resolution.fallbackReason {
             callbacks.log("FFmpeg fallback reason: \(fallbackReason)")
