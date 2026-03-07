@@ -893,6 +893,27 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         }
     }
 
+    func testStatusLineUsesEffectiveDynamicRangeLabel() {
+        let sdrLine = FFmpegHDRRenderer.statusLine(
+            dynamicRange: .sdr,
+            progress: 0.97,
+            elapsed: 80,
+            outputSizeBytes: 83_400_000,
+            speed: 0.83
+        )
+        let hdrLine = FFmpegHDRRenderer.statusLine(
+            dynamicRange: .hdr,
+            progress: 0.97,
+            elapsed: 80,
+            outputSizeBytes: 83_400_000,
+            speed: 0.83
+        )
+
+        XCTAssertTrue(sdrLine.hasPrefix("SDR encode: 97%"))
+        XCTAssertFalse(sdrLine.contains("HDR encode"))
+        XCTAssertTrue(hdrLine.hasPrefix("HDR encode: 97%"))
+    }
+
     func testBinaryResolverAutoFallsBackToBundledWhenSystemIsMissingTonemapForSDRHDRSources() throws {
         let systemBinary = FFmpegBinary(
             ffmpegURL: URL(fileURLWithPath: "/tmp/system/ffmpeg"),

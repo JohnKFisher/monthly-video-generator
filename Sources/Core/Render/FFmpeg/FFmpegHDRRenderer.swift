@@ -253,6 +253,7 @@ final class FFmpegHDRRenderer {
         async let stderrTask: [String] = Self.consumeStderr(
             handle: stderrHandle,
             callbacks: callbacks,
+            dynamicRange: plan.dynamicRange,
             activityTracker: activityTracker,
             totalDurationMicroseconds: totalDurationMicroseconds,
             estimatedOutputBytes: estimatedOutputBytes,
@@ -264,6 +265,7 @@ final class FFmpegHDRRenderer {
             return try await waitForTermination(
                 of: process,
                 outputURL: plan.outputURL,
+                dynamicRange: plan.dynamicRange,
                 activityTracker: activityTracker,
                 callbacks: callbacks,
                 totalDurationMicroseconds: totalDurationMicroseconds,
@@ -300,6 +302,7 @@ final class FFmpegHDRRenderer {
         let finalSnapshot = activityTracker.snapshot()
         callbacks.updateStatus(
             Self.statusLine(
+                dynamicRange: plan.dynamicRange,
                 progress: 1.0,
                 elapsed: Date().timeIntervalSince(renderStartedAt),
                 outputSizeBytes: finalSnapshot.latestOutputSizeBytes,
@@ -324,6 +327,7 @@ final class FFmpegHDRRenderer {
     private static func consumeStderr(
         handle: FileHandle,
         callbacks: CallbackRelay,
+        dynamicRange: DynamicRange,
         activityTracker: ActivityTracker,
         totalDurationMicroseconds: Int64,
         estimatedOutputBytes: UInt64,
@@ -340,6 +344,7 @@ final class FFmpegHDRRenderer {
                 trimmed,
                 parser: &progressParser,
                 callbacks: callbacks,
+                dynamicRange: dynamicRange,
                 activityTracker: activityTracker,
                 totalDurationMicroseconds: totalDurationMicroseconds,
                 estimatedOutputBytes: estimatedOutputBytes,
@@ -418,6 +423,7 @@ final class FFmpegHDRRenderer {
         _ line: String,
         parser: inout FFmpegProgressParser,
         callbacks: CallbackRelay,
+        dynamicRange: DynamicRange,
         activityTracker: ActivityTracker,
         totalDurationMicroseconds: Int64,
         estimatedOutputBytes: UInt64,
@@ -463,6 +469,7 @@ final class FFmpegHDRRenderer {
             let preferredOutputSize = max(outputSizeBytes, snapshot.latestOutputSizeBytes)
             callbacks.updateStatus(
                 statusLine(
+                    dynamicRange: dynamicRange,
                     progress: combinedProgress,
                     elapsed: Date().timeIntervalSince(renderStartedAt),
                     outputSizeBytes: preferredOutputSize,
@@ -476,6 +483,7 @@ final class FFmpegHDRRenderer {
     private func waitForTermination(
         of process: Process,
         outputURL: URL,
+        dynamicRange: DynamicRange,
         activityTracker: ActivityTracker,
         callbacks: CallbackRelay,
         totalDurationMicroseconds: Int64,
@@ -525,6 +533,7 @@ final class FFmpegHDRRenderer {
                 callbacks.report(combinedProgress)
                 callbacks.updateStatus(
                     Self.statusLine(
+                        dynamicRange: dynamicRange,
                         progress: combinedProgress,
                         elapsed: now.timeIntervalSince(renderStartedAt),
                         outputSizeBytes: snapshot.latestOutputSizeBytes,
@@ -689,7 +698,8 @@ final class FFmpegHDRRenderer {
         return Double(totalNanoseconds) / 1_000_000_000
     }
 
-    private static func statusLine(
+    static func statusLine(
+        dynamicRange: DynamicRange,
         progress: Double,
         elapsed: TimeInterval,
         outputSizeBytes: UInt64,
@@ -697,7 +707,8 @@ final class FFmpegHDRRenderer {
     ) -> String {
         let clampedProgress = min(max(progress, 0), 1)
         let percent = Int((clampedProgress * 100).rounded())
-        return "HDR encode: \(percent)% | elapsed \(formatElapsed(elapsed)) | output \(formatByteCount(outputSizeBytes)) | speed \(formatSpeed(speed))"
+        let rangeLabel = dynamicRange == .hdr ? "HDR" : "SDR"
+        return "\(rangeLabel) encode: \(percent)% | elapsed \(formatElapsed(elapsed)) | output \(formatByteCount(outputSizeBytes)) | speed \(formatSpeed(speed))"
     }
 
     private static func formatElapsed(_ elapsed: TimeInterval) -> String {
