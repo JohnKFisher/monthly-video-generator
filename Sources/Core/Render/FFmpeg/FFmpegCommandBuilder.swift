@@ -114,11 +114,13 @@ struct FFmpegCommandBuilder {
             )
 
             if let overlayInputIndex = overlayInputIndexForClip[index] {
+                let overlayLayout = CaptureDateOverlayLayout.metrics(for: plan.renderSize)
                 filterParts.append(
                     "[\(overlayInputIndex):v]trim=duration=\(formatSeconds(clipDuration)),setpts=PTS-STARTPTS,format=rgba[ov\(index)]"
                 )
                 filterParts.append(
-                    "[\(videoOutputLabel)][ov\(index)]overlay=0:0:shortest=1:format=auto[v\(index)]"
+                    "[\(videoOutputLabel)][ov\(index)]overlay=x=main_w-overlay_w-\(overlayLayout.horizontalMargin):" +
+                    "y=main_h-overlay_h-\(overlayLayout.verticalMargin):shortest=1:format=auto[v\(index)]"
                 )
             }
 

@@ -547,7 +547,9 @@ final class HDRFFmpegPipelineTests: XCTestCase {
 
         XCTAssertTrue(joined.contains(overlayURL.path))
         XCTAssertTrue(joined.contains("-loop 1"))
-        XCTAssertTrue(joined.contains("overlay=0:0:shortest=1:format=auto"))
+        XCTAssertTrue(
+            joined.contains("overlay=x=main_w-overlay_w-48:y=main_h-overlay_h-27:shortest=1:format=auto")
+        )
         XCTAssertTrue(plan.capabilityRequirements.requiresOverlay)
     }
 
@@ -579,7 +581,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         let command = try builder.buildCommand(plan: plan, resolution: resolution)
         let joined = command.arguments.joined(separator: " ")
 
-        XCTAssertFalse(joined.contains("overlay=0:0:shortest=1:format=auto"))
+        XCTAssertFalse(joined.contains("overlay=x=main_w-overlay_w-"))
         XCTAssertFalse(plan.capabilityRequirements.requiresOverlay)
     }
 
