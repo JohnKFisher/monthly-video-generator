@@ -134,6 +134,7 @@ struct FFmpegHDRChunkPipelineBuilder {
             FFmpegRenderPlan(
                 clips: chunk.clips,
                 transitionDurationSeconds: finalPlan.transitionDurationSeconds,
+                endFadeToBlackDurationSeconds: 0,
                 outputURL: intermediateOutputURL(chunk.sequenceIndex),
                 renderSize: finalPlan.renderSize,
                 frameRate: finalPlan.frameRate,
@@ -161,6 +162,7 @@ struct FFmpegHDRChunkPipelineBuilder {
         let mergedPlan = FFmpegRenderPlan(
             clips: finalClips,
             transitionDurationSeconds: finalPlan.transitionDurationSeconds,
+            endFadeToBlackDurationSeconds: finalPlan.endFadeToBlackDurationSeconds,
             outputURL: finalPlan.outputURL,
             renderSize: finalPlan.renderSize,
             frameRate: finalPlan.frameRate,

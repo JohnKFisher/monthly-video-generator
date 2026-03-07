@@ -138,6 +138,7 @@ struct FFmpegCommandBuilder {
         }
 
         let transition = max(plan.transitionDurationSeconds, 0)
+        let totalDurationSeconds = expectedDurationSeconds(for: plan)
         let finalVideoLabel: String
         let finalAudioLabel: String
 
@@ -170,7 +171,20 @@ struct FFmpegCommandBuilder {
             finalAudioLabel = currentAudioLabel
         }
 
-        filterParts.append("[\(finalVideoLabel)]format=\(finalPixelFormat(for: plan.dynamicRange, encoder: selectedEncoder))[vfinal]")
+        let endFadeDurationSeconds = min(max(plan.endFadeToBlackDurationSeconds, 0), totalDurationSeconds)
+        let composedVideoLabel: String
+        if endFadeDurationSeconds > 0 {
+            let endFadeStartSeconds = max(totalDurationSeconds - endFadeDurationSeconds, 0)
+            let fadedVideoLabel = "vfaded"
+            filterParts.append(
+                "[\(finalVideoLabel)]fade=t=out:st=\(formatSeconds(endFadeStartSeconds)):d=\(formatSeconds(endFadeDurationSeconds)):color=black[\(fadedVideoLabel)]"
+            )
+            composedVideoLabel = fadedVideoLabel
+        } else {
+            composedVideoLabel = finalVideoLabel
+        }
+
+        filterParts.append("[\(composedVideoLabel)]format=\(finalPixelFormat(for: plan.dynamicRange, encoder: selectedEncoder))[vfinal]")
         filterParts.append("[\(finalAudioLabel)]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=\(outputChannelLayout)[afinal]")
 
         arguments.append(contentsOf: [
@@ -607,6 +621,7 @@ private extension FFmpegRenderPlan {
         FFmpegRenderPlan(
             clips: clips,
             transitionDurationSeconds: transitionDurationSeconds,
+            endFadeToBlackDurationSeconds: endFadeToBlackDurationSeconds,
             outputURL: outputURL,
             renderSize: renderSize,
             frameRate: frameRate,

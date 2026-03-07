@@ -110,6 +110,7 @@ public final class AVFoundationRenderEngine {
             let ffmpegPlan = makeFFmpegRenderPlan(
                 clips: clips,
                 transitionDuration: transitionDuration,
+                endFadeToBlackDurationSeconds: max(style.crossfadeDurationSeconds * 2, 0),
                 outputURL: outputURL,
                 renderSize: renderSize,
                 frameRate: resolvedFrameRate,
@@ -263,6 +264,7 @@ public final class AVFoundationRenderEngine {
     private func makeFFmpegRenderPlan(
         clips: [InputClip],
         transitionDuration: CMTime,
+        endFadeToBlackDurationSeconds: Double,
         outputURL: URL,
         renderSize: CGSize,
         frameRate: Int,
@@ -281,6 +283,7 @@ public final class AVFoundationRenderEngine {
                 )
             },
             transitionDurationSeconds: max(transitionDuration.seconds, 0),
+            endFadeToBlackDurationSeconds: endFadeToBlackDurationSeconds,
             outputURL: outputURL,
             renderSize: renderSize,
             frameRate: frameRate,

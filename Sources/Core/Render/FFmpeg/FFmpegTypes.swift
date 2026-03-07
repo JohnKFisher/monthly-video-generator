@@ -365,6 +365,7 @@ struct FFmpegHDRToSDRToneMapClip: Equatable, Sendable {
 struct FFmpegRenderPlan: Equatable, Sendable {
     let clips: [FFmpegRenderClip]
     let transitionDurationSeconds: Double
+    let endFadeToBlackDurationSeconds: Double
     let outputURL: URL
     let renderSize: CGSize
     let frameRate: Int
@@ -379,6 +380,7 @@ struct FFmpegRenderPlan: Equatable, Sendable {
     init(
         clips: [FFmpegRenderClip],
         transitionDurationSeconds: Double,
+        endFadeToBlackDurationSeconds: Double = 0,
         outputURL: URL,
         renderSize: CGSize,
         frameRate: Int,
@@ -392,6 +394,7 @@ struct FFmpegRenderPlan: Equatable, Sendable {
     ) {
         self.clips = clips
         self.transitionDurationSeconds = transitionDurationSeconds
+        self.endFadeToBlackDurationSeconds = max(endFadeToBlackDurationSeconds, 0)
         self.outputURL = outputURL
         self.renderSize = renderSize
         self.frameRate = frameRate

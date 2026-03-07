@@ -36,6 +36,8 @@ final class FFmpegChunkedPipelineTests: XCTestCase {
 
         XCTAssertEqual(executionPlan.finalPlan.clips.count, 3)
         XCTAssertEqual(executionPlan.finalPlan.clips.map(\.captureDateOverlayURL), [nil, nil, nil])
+        XCTAssertTrue(executionPlan.chunkPlans.allSatisfy { $0.endFadeToBlackDurationSeconds == 0 })
+        XCTAssertEqual(executionPlan.finalPlan.endFadeToBlackDurationSeconds, plan.endFadeToBlackDurationSeconds, accuracy: 0.0001)
     }
 
     func testLargeHDRPlanProducesBoundedChunksAndPreservesDurationMath() {
@@ -64,6 +66,7 @@ final class FFmpegChunkedPipelineTests: XCTestCase {
         let intermediateIntentPlan = FFmpegRenderPlan(
             clips: finalIntentPlan.clips,
             transitionDurationSeconds: finalIntentPlan.transitionDurationSeconds,
+            endFadeToBlackDurationSeconds: finalIntentPlan.endFadeToBlackDurationSeconds,
             outputURL: finalIntentPlan.outputURL,
             renderSize: finalIntentPlan.renderSize,
             frameRate: finalIntentPlan.frameRate,
@@ -105,6 +108,7 @@ final class FFmpegChunkedPipelineTests: XCTestCase {
                 )
             },
             transitionDurationSeconds: transitionDuration,
+            endFadeToBlackDurationSeconds: max(transitionDuration * 2, 0),
             outputURL: URL(fileURLWithPath: "/tmp/final.mov"),
             renderSize: CGSize(width: 3840, height: 2160),
             frameRate: 60,

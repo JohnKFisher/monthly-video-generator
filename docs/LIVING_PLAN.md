@@ -112,6 +112,7 @@ Operational updates after first packaged run:
 - Mega Test now forces `VideoToolbox` for HDR HEVC combinations at execution time so large HDR test batches run faster without mutating the user’s saved single-render encoder choice.
 - 2026-03-07: Replaced the static opening title card with a seeded animated media-collage opener that samples preview assets across the run, adds light source/date context, and falls back to the legacy static card if preview loading or animation fails.
 - 2026-03-07: Added a default-on Style toggle for per-clip capture-date stamps, rendering transparent bottom-right overlay plates for dated photos/videos and compositing them in the FFmpeg path before crossfades.
+- 2026-03-07: Added an automatic final-delivery FFmpeg fade-to-black on the last `2 x` crossfade seconds of video output, while leaving audio unchanged and skipping the fade on intermediate HDR chunk renders.
 
 ## Decisions Log
 

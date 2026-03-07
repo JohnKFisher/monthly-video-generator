@@ -367,6 +367,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
                 )
             ],
             transitionDurationSeconds: 0.75,
+            endFadeToBlackDurationSeconds: 1.5,
             outputURL: URL(fileURLWithPath: "/tmp/out.mov"),
             renderSize: CGSize(width: 1920, height: 1080),
             frameRate: 60,
@@ -382,6 +383,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
 
         XCTAssertTrue(joined.contains("xfade=transition=fade"))
         XCTAssertTrue(joined.contains("acrossfade=d=0.750000"))
+        XCTAssertTrue(joined.contains("fade=t=out:st=4.750000:d=1.500000:color=black"))
         XCTAssertTrue(joined.contains(":a:0]atrim"))
         XCTAssertTrue(joined.contains("fps=60"))
         XCTAssertTrue(joined.contains("zscale="))
@@ -396,6 +398,100 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("-colorspace bt2020nc"))
         XCTAssertTrue(joined.contains("libx265"))
         XCTAssertFalse(joined.contains("hdr-opt=1"))
+    }
+
+    func testCommandBuilderAppliesEndFadeToSingleClipOutput() throws {
+        let builder = FFmpegCommandBuilder()
+        let plan = FFmpegRenderPlan(
+            clips: [
+                FFmpegRenderClip(
+                    url: URL(fileURLWithPath: "/tmp/single.mov"),
+                    durationSeconds: 3.0,
+                    includeAudio: true,
+                    hasAudioTrack: true,
+                    colorInfo: ColorInfo(isHDR: false, colorPrimaries: "ITU_R_709_2", transferFunction: "ITU_R_709_2"),
+                    sourceDescription: "single"
+                )
+            ],
+            transitionDurationSeconds: 0,
+            endFadeToBlackDurationSeconds: 1.5,
+            outputURL: URL(fileURLWithPath: "/tmp/out.mp4"),
+            renderSize: CGSize(width: 1920, height: 1080),
+            frameRate: 30,
+            audioLayout: .stereo,
+            bitrateMode: .balanced,
+            container: .mp4,
+            videoCodec: .h264,
+            dynamicRange: .sdr
+        )
+
+        let command = try builder.buildCommand(plan: plan, resolution: makeCapableResolution())
+        let joined = command.arguments.joined(separator: " ")
+
+        XCTAssertTrue(joined.contains("fade=t=out:st=1.500000:d=1.500000:color=black"))
+    }
+
+    func testCommandBuilderClampsEndFadeToOutputDuration() throws {
+        let builder = FFmpegCommandBuilder()
+        let plan = FFmpegRenderPlan(
+            clips: [
+                FFmpegRenderClip(
+                    url: URL(fileURLWithPath: "/tmp/short.mov"),
+                    durationSeconds: 1.0,
+                    includeAudio: false,
+                    hasAudioTrack: false,
+                    colorInfo: ColorInfo(isHDR: false, colorPrimaries: "ITU_R_709_2", transferFunction: "ITU_R_709_2"),
+                    sourceDescription: "short"
+                )
+            ],
+            transitionDurationSeconds: 0,
+            endFadeToBlackDurationSeconds: 2.0,
+            outputURL: URL(fileURLWithPath: "/tmp/out.mp4"),
+            renderSize: CGSize(width: 1920, height: 1080),
+            frameRate: 30,
+            audioLayout: .stereo,
+            bitrateMode: .balanced,
+            container: .mp4,
+            videoCodec: .h264,
+            dynamicRange: .sdr
+        )
+
+        let command = try builder.buildCommand(plan: plan, resolution: makeCapableResolution())
+        let joined = command.arguments.joined(separator: " ")
+
+        XCTAssertTrue(joined.contains("fade=t=out:st=0.000000:d=1.000000:color=black"))
+    }
+
+    func testCommandBuilderSkipsEndFadeForIntermediateChunkPlan() throws {
+        let builder = FFmpegCommandBuilder()
+        let plan = FFmpegRenderPlan(
+            clips: [
+                FFmpegRenderClip(
+                    url: URL(fileURLWithPath: "/tmp/chunk.mov"),
+                    durationSeconds: 4.0,
+                    includeAudio: true,
+                    hasAudioTrack: true,
+                    colorInfo: ColorInfo(isHDR: true, colorPrimaries: "ITU_R_2020", transferFunction: "ITU_R_2100_HLG"),
+                    sourceDescription: "chunk"
+                )
+            ],
+            transitionDurationSeconds: 0,
+            endFadeToBlackDurationSeconds: 0,
+            outputURL: URL(fileURLWithPath: "/tmp/chunk-out.mov"),
+            renderSize: CGSize(width: 1920, height: 1080),
+            frameRate: 30,
+            audioLayout: .stereo,
+            bitrateMode: .balanced,
+            container: .mov,
+            videoCodec: .hevc,
+            dynamicRange: .hdr,
+            renderIntent: .intermediateChunk
+        )
+
+        let command = try builder.buildCommand(plan: plan, resolution: makeCapableResolution())
+        let joined = command.arguments.joined(separator: " ")
+
+        XCTAssertFalse(joined.contains("fade=t=out"))
     }
 
     func testCommandBuilderUsesVideoToolboxForHDRWhenRequested() throws {
