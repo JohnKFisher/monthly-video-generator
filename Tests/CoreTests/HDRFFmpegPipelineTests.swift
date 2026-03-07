@@ -11,6 +11,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
          ... tonemap           V->V       Conversion to/from different dynamic ranges.
          ... xfade             VV->V      Cross fade one video with another.
          ... acrossfade        AA->A      Cross fade two input audio streams.
+         ... overlay           VV->V      Overlay a video source on top of the input.
         """
         let encoders = """
          V....D libx264              libx264 H.264 / AVC
@@ -29,6 +30,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(capabilities.hasTonemap)
         XCTAssertTrue(capabilities.hasXfade)
         XCTAssertTrue(capabilities.hasAcrossfade)
+        XCTAssertTrue(capabilities.hasOverlay)
         XCTAssertTrue(capabilities.hasLibx264)
         XCTAssertTrue(capabilities.hasLibx265)
         XCTAssertTrue(capabilities.supportsRenderPipeline(codec: .hevc, dynamicRange: .hdr))
@@ -493,6 +495,130 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("channel_layouts=5.1"))
         XCTAssertTrue(joined.contains("-ac 6"))
         XCTAssertTrue(joined.contains("-b:a 384k"))
+    }
+
+    func testCommandBuilderAddsCaptureDateOverlayInputsWhenPresent() throws {
+        let builder = FFmpegCommandBuilder()
+        let resolution = makeCapableResolution()
+        let overlayURL = URL(fileURLWithPath: "/tmp/capture-date-overlay.png")
+        let plan = FFmpegRenderPlan(
+            clips: [
+                FFmpegRenderClip(
+                    url: URL(fileURLWithPath: "/tmp/a.mov"),
+                    durationSeconds: 2,
+                    includeAudio: false,
+                    hasAudioTrack: false,
+                    colorInfo: .unknown,
+                    sourceDescription: "clip-a",
+                    captureDateOverlayURL: overlayURL
+                )
+            ],
+            transitionDurationSeconds: 0,
+            outputURL: URL(fileURLWithPath: "/tmp/out.mp4"),
+            renderSize: CGSize(width: 1920, height: 1080),
+            frameRate: 30,
+            audioLayout: .stereo,
+            bitrateMode: .balanced,
+            container: .mp4,
+            videoCodec: .h264,
+            dynamicRange: .sdr
+        )
+
+        let command = try builder.buildCommand(plan: plan, resolution: resolution)
+        let joined = command.arguments.joined(separator: " ")
+
+        XCTAssertTrue(joined.contains(overlayURL.path))
+        XCTAssertTrue(joined.contains("-loop 1"))
+        XCTAssertTrue(joined.contains("overlay=0:0:shortest=1:format=auto"))
+        XCTAssertTrue(plan.capabilityRequirements.requiresOverlay)
+    }
+
+    func testCommandBuilderOmitsCaptureDateOverlayWhenNotPresent() throws {
+        let builder = FFmpegCommandBuilder()
+        let resolution = makeCapableResolution()
+        let plan = FFmpegRenderPlan(
+            clips: [
+                FFmpegRenderClip(
+                    url: URL(fileURLWithPath: "/tmp/a.mov"),
+                    durationSeconds: 2,
+                    includeAudio: false,
+                    hasAudioTrack: false,
+                    colorInfo: .unknown,
+                    sourceDescription: "clip-a"
+                )
+            ],
+            transitionDurationSeconds: 0,
+            outputURL: URL(fileURLWithPath: "/tmp/out.mp4"),
+            renderSize: CGSize(width: 1920, height: 1080),
+            frameRate: 30,
+            audioLayout: .stereo,
+            bitrateMode: .balanced,
+            container: .mp4,
+            videoCodec: .h264,
+            dynamicRange: .sdr
+        )
+
+        let command = try builder.buildCommand(plan: plan, resolution: resolution)
+        let joined = command.arguments.joined(separator: " ")
+
+        XCTAssertFalse(joined.contains("overlay=0:0:shortest=1:format=auto"))
+        XCTAssertFalse(plan.capabilityRequirements.requiresOverlay)
+    }
+
+    func testCommandBuilderFailsWhenOverlayFilterIsMissing() {
+        let builder = FFmpegCommandBuilder()
+        let overlayURL = URL(fileURLWithPath: "/tmp/capture-date-overlay.png")
+        let resolution = FFmpegBinaryResolution(
+            selectedBinary: FFmpegBinary(
+                ffmpegURL: URL(fileURLWithPath: "/tmp/ffmpeg"),
+                ffprobeURL: URL(fileURLWithPath: "/tmp/ffprobe"),
+                source: .bundled
+            ),
+            selectedCapabilities: FFmpegCapabilities(
+                versionDescription: "overlay-missing",
+                hasZscale: true,
+                hasTonemap: true,
+                hasXfade: true,
+                hasAcrossfade: true,
+                hasOverlay: false,
+                hasLibx264: true,
+                hasH264VideoToolbox: true,
+                hasLibx265: true,
+                hasHEVCVideoToolbox: true
+            ),
+            systemCapabilities: nil,
+            bundledCapabilities: nil,
+            fallbackReason: nil
+        )
+        let plan = FFmpegRenderPlan(
+            clips: [
+                FFmpegRenderClip(
+                    url: URL(fileURLWithPath: "/tmp/a.mov"),
+                    durationSeconds: 2,
+                    includeAudio: false,
+                    hasAudioTrack: false,
+                    colorInfo: .unknown,
+                    sourceDescription: "clip-a",
+                    captureDateOverlayURL: overlayURL
+                )
+            ],
+            transitionDurationSeconds: 0,
+            outputURL: URL(fileURLWithPath: "/tmp/out.mp4"),
+            renderSize: CGSize(width: 1920, height: 1080),
+            frameRate: 30,
+            audioLayout: .stereo,
+            bitrateMode: .balanced,
+            container: .mp4,
+            videoCodec: .h264,
+            dynamicRange: .sdr
+        )
+
+        XCTAssertThrowsError(try builder.buildCommand(plan: plan, resolution: resolution)) { error in
+            guard case let RenderError.exportFailed(message) = error else {
+                return XCTFail("Expected exportFailed, got \(error)")
+            }
+            XCTAssertTrue(message.contains("overlay filter"))
+        }
     }
 
     func testBinaryResolverAutoFallsBackToBundledWhenSystemIsMissingTonemapForSDRHDRSources() throws {

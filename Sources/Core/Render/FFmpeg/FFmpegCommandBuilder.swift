@@ -34,6 +34,11 @@ struct FFmpegCommandBuilder {
                 "FFmpeg command build failed: selected binary does not support the tonemap filter required for SDR export with HDR source clips."
             )
         }
+        if plan.requiresCaptureDateOverlay && !resolution.selectedCapabilities.hasOverlay {
+            throw RenderError.exportFailed(
+                "FFmpeg command build failed: selected binary does not support the overlay filter required for capture-date overlays."
+            )
+        }
         guard let selectedEncoder = resolution.selectedCapabilities.preferredEncoder(
             for: plan.videoCodec,
             dynamicRange: plan.dynamicRange,
@@ -58,6 +63,7 @@ struct FFmpegCommandBuilder {
         ]
 
         var videoInputIndexForClip: [Int: Int] = [:]
+        var overlayInputIndexForClip: [Int: Int] = [:]
         var audioInputIndexForClip: [Int: Int] = [:]
         var nextInputIndex = 0
 
@@ -66,6 +72,17 @@ struct FFmpegCommandBuilder {
             arguments.append(contentsOf: ["-i", clip.url.path])
             nextInputIndex += 1
             videoInputIndexForClip[clipIndex] = videoInputIndex
+
+            if let overlayURL = clip.captureDateOverlayURL {
+                let overlayInputIndex = nextInputIndex
+                arguments.append(contentsOf: [
+                    "-framerate", String(plan.frameRate),
+                    "-loop", "1",
+                    "-i", overlayURL.path
+                ])
+                nextInputIndex += 1
+                overlayInputIndexForClip[clipIndex] = overlayInputIndex
+            }
 
             if clip.includeAudio && clip.hasAudioTrack {
                 audioInputIndexForClip[clipIndex] = videoInputIndex
@@ -88,12 +105,22 @@ struct FFmpegCommandBuilder {
             guard let videoInputIndex = videoInputIndexForClip[index] else {
                 throw RenderError.exportFailed("FFmpeg command build failed: missing video input index for clip index \(index).")
             }
+            let videoOutputLabel = overlayInputIndexForClip[index] == nil ? "v\(index)" : "vbase\(index)"
             filterParts.append(
                 "[\(videoInputIndex):v]trim=duration=\(formatSeconds(clipDuration)),setpts=PTS-STARTPTS,fps=\(plan.frameRate)," +
                 "scale=w=\(Int(plan.renderSize.width)):h=\(Int(plan.renderSize.height)):force_original_aspect_ratio=decrease:flags=lanczos," +
                 "pad=\(Int(plan.renderSize.width)):\(Int(plan.renderSize.height)):(ow-iw)/2:(oh-ih)/2:color=black," +
-                "\(normalizeFilter),format=\(intermediatePixelFormat(for: plan.dynamicRange))[v\(index)]"
+                "\(normalizeFilter),format=\(intermediatePixelFormat(for: plan.dynamicRange))[\(videoOutputLabel)]"
             )
+
+            if let overlayInputIndex = overlayInputIndexForClip[index] {
+                filterParts.append(
+                    "[\(overlayInputIndex):v]trim=duration=\(formatSeconds(clipDuration)),setpts=PTS-STARTPTS,format=rgba[ov\(index)]"
+                )
+                filterParts.append(
+                    "[\(videoOutputLabel)][ov\(index)]overlay=0:0:shortest=1:format=auto[v\(index)]"
+                )
+            }
 
             guard let audioInputIndex = audioInputIndexForClip[index] else {
                 throw RenderError.exportFailed("FFmpeg command build failed: no audio input available for clip index \(index).")

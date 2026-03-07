@@ -49,10 +49,35 @@ struct FFmpegCapabilities: Equatable, Sendable {
     let hasTonemap: Bool
     let hasXfade: Bool
     let hasAcrossfade: Bool
+    let hasOverlay: Bool
     let hasLibx264: Bool
     let hasH264VideoToolbox: Bool
     let hasLibx265: Bool
     let hasHEVCVideoToolbox: Bool
+
+    init(
+        versionDescription: String,
+        hasZscale: Bool,
+        hasTonemap: Bool,
+        hasXfade: Bool,
+        hasAcrossfade: Bool,
+        hasOverlay: Bool = true,
+        hasLibx264: Bool,
+        hasH264VideoToolbox: Bool,
+        hasLibx265: Bool,
+        hasHEVCVideoToolbox: Bool
+    ) {
+        self.versionDescription = versionDescription
+        self.hasZscale = hasZscale
+        self.hasTonemap = hasTonemap
+        self.hasXfade = hasXfade
+        self.hasAcrossfade = hasAcrossfade
+        self.hasOverlay = hasOverlay
+        self.hasLibx264 = hasLibx264
+        self.hasH264VideoToolbox = hasH264VideoToolbox
+        self.hasLibx265 = hasLibx265
+        self.hasHEVCVideoToolbox = hasHEVCVideoToolbox
+    }
 
     func preferredEncoder(
         for codec: VideoCodec,
@@ -88,6 +113,7 @@ struct FFmpegCapabilities: Equatable, Sendable {
             (!requirements.requiresHDRToSDRToneMapping || hasTonemap) &&
             hasXfade &&
             hasAcrossfade &&
+            (!requirements.requiresOverlay || hasOverlay) &&
             preferredEncoder(
                 for: requirements.codec,
                 dynamicRange: requirements.dynamicRange,
@@ -122,6 +148,9 @@ struct FFmpegCapabilities: Equatable, Sendable {
         }
         if !hasAcrossfade {
             missing.append("acrossfade filter")
+        }
+        if requirements.requiresOverlay && !hasOverlay {
+            missing.append("overlay filter")
         }
         if preferredEncoder(
             for: requirements.codec,
@@ -237,6 +266,25 @@ struct FFmpegRenderClip: Equatable, Sendable {
     let hasAudioTrack: Bool
     let colorInfo: ColorInfo
     let sourceDescription: String
+    let captureDateOverlayURL: URL?
+
+    init(
+        url: URL,
+        durationSeconds: Double,
+        includeAudio: Bool,
+        hasAudioTrack: Bool,
+        colorInfo: ColorInfo,
+        sourceDescription: String,
+        captureDateOverlayURL: URL? = nil
+    ) {
+        self.url = url
+        self.durationSeconds = durationSeconds
+        self.includeAudio = includeAudio
+        self.hasAudioTrack = hasAudioTrack
+        self.colorInfo = colorInfo
+        self.sourceDescription = sourceDescription
+        self.captureDateOverlayURL = captureDateOverlayURL
+    }
 }
 
 struct FFmpegCapabilityRequirements: Equatable, Sendable {
@@ -244,17 +292,20 @@ struct FFmpegCapabilityRequirements: Equatable, Sendable {
     let dynamicRange: DynamicRange
     let hdrHEVCEncoderMode: HDRHEVCEncoderMode
     let requiresHDRToSDRToneMapping: Bool
+    let requiresOverlay: Bool
 
     init(
         codec: VideoCodec,
         dynamicRange: DynamicRange,
         hdrHEVCEncoderMode: HDRHEVCEncoderMode = .automatic,
-        requiresHDRToSDRToneMapping: Bool = false
+        requiresHDRToSDRToneMapping: Bool = false,
+        requiresOverlay: Bool = false
     ) {
         self.codec = codec
         self.dynamicRange = dynamicRange
         self.hdrHEVCEncoderMode = hdrHEVCEncoderMode
         self.requiresHDRToSDRToneMapping = requiresHDRToSDRToneMapping
+        self.requiresOverlay = requiresOverlay
     }
 }
 
@@ -312,7 +363,8 @@ struct FFmpegRenderPlan: Equatable, Sendable {
             codec: videoCodec,
             dynamicRange: dynamicRange,
             hdrHEVCEncoderMode: hdrHEVCEncoderMode,
-            requiresHDRToSDRToneMapping: requiresHDRToSDRToneMapping
+            requiresHDRToSDRToneMapping: requiresHDRToSDRToneMapping,
+            requiresOverlay: requiresCaptureDateOverlay
         )
     }
 
@@ -333,6 +385,10 @@ struct FFmpegRenderPlan: Equatable, Sendable {
                 transferFlavor: transferFlavor
             )
         }
+    }
+
+    var requiresCaptureDateOverlay: Bool {
+        clips.contains { $0.captureDateOverlayURL != nil }
     }
 }
 

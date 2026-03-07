@@ -111,6 +111,7 @@ Operational updates after first packaged run:
 - Added an `HDR HEVC Encoder` picker with `Default` and strict `VideoToolbox` modes, threaded that selection through FFmpeg capability resolution and completion summaries, and kept `Default` as the persisted Plex/Infuse baseline.
 - Mega Test now forces `VideoToolbox` for HDR HEVC combinations at execution time so large HDR test batches run faster without mutating the user’s saved single-render encoder choice.
 - 2026-03-07: Replaced the static opening title card with a seeded animated media-collage opener that samples preview assets across the run, adds light source/date context, and falls back to the legacy static card if preview loading or animation fails.
+- 2026-03-07: Added a default-on Style toggle for per-clip capture-date stamps, rendering transparent bottom-right overlay plates for dated photos/videos and compositing them in the FFmpeg path before crossfades.
 
 ## Decisions Log
 

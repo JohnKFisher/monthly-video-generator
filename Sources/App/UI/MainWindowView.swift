@@ -179,6 +179,9 @@ struct MainWindowView: View {
                     step: 0.25,
                     displayValue: String(format: "%.2fs", viewModel.stillImageDurationSeconds)
                 )
+
+                Toggle("Show capture date", isOn: $viewModel.showCaptureDateOverlay)
+                caption("Displays each photo or video's capture date in the bottom-right corner using your current local timezone.")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

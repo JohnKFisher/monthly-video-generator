@@ -162,6 +162,67 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertEqual(restoredViewModel.selectedHDRHEVCEncoderMode, .automatic)
     }
 
+    func testCaptureDateOverlayDefaultsToEnabled() {
+        let viewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            filenameGenerator: TemporaryTestingFilenameGenerator(now: { Date(timeIntervalSince1970: 1_700_000_060) }),
+            preferencesStore: makePreferencesStore()
+        )
+
+        XCTAssertTrue(viewModel.showCaptureDateOverlay)
+    }
+
+    func testCaptureDateOverlayPersistsAcrossLaunches() {
+        let preferencesStore = makePreferencesStore()
+        let initialViewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            filenameGenerator: TemporaryTestingFilenameGenerator(now: { Date(timeIntervalSince1970: 1_700_000_061) }),
+            preferencesStore: preferencesStore
+        )
+
+        initialViewModel.showCaptureDateOverlay = false
+
+        let restoredViewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            filenameGenerator: TemporaryTestingFilenameGenerator(now: { Date(timeIntervalSince1970: 1_700_000_062) }),
+            preferencesStore: preferencesStore
+        )
+
+        XCTAssertFalse(restoredViewModel.showCaptureDateOverlay)
+    }
+
+    func testCaptureDateOverlayMissingPersistedValueDefaultsToEnabled() throws {
+        let preferencesStore = makePreferencesStore()
+        let legacyPayload: [String: Any] = [
+            "includeOpeningTitle": true,
+            "openingTitleText": "June 2026",
+            "crossfadeDurationSeconds": 0.75,
+            "stillImageDurationSeconds": 3.0,
+            "selectedPhotosFilterMode": "monthYear",
+            "selectedPhotoAlbumID": "",
+            "selectedContainer": "mp4",
+            "selectedVideoCodec": "hevc",
+            "selectedFrameRatePolicy": "smart",
+            "selectedResolutionPolicy": "smart",
+            "selectedDynamicRange": "hdr",
+            "selectedHDRBinaryMode": "autoSystemThenBundled",
+            "selectedHDRHEVCEncoderMode": "automatic",
+            "selectedAudioLayout": "smart",
+            "selectedBitrateMode": "balanced",
+            "writeDiagnosticsLog": true
+        ]
+        let data = try JSONSerialization.data(withJSONObject: legacyPayload)
+        preferencesStore.set(data, forKey: "MainWindowViewModel.renderSettings.v1")
+
+        let viewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            filenameGenerator: TemporaryTestingFilenameGenerator(now: { Date(timeIntervalSince1970: 1_700_000_063) }),
+            preferencesStore: preferencesStore
+        )
+
+        XCTAssertTrue(viewModel.showCaptureDateOverlay)
+    }
+
     func testMegaTestReusesPreparationAndIgnoresManualOutputNameField() async throws {
         let dateProvider = DateSequenceProvider([
             Date(timeIntervalSince1970: 1_700_000_000),

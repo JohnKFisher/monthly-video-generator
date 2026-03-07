@@ -5,10 +5,15 @@ import VideoToolbox
 
 public final class AVFoundationRenderEngine {
     private let stillImageClipFactory: StillImageClipFactory
+    private let captureDateOverlayFactory: CaptureDateOverlayFactory
     private let ffmpegHDRRenderer: FFmpegHDRRenderer
 
-    public init(stillImageClipFactory: StillImageClipFactory = StillImageClipFactory()) {
+    public init(
+        stillImageClipFactory: StillImageClipFactory = StillImageClipFactory(),
+        captureDateOverlayFactory: CaptureDateOverlayFactory = CaptureDateOverlayFactory()
+    ) {
         self.stillImageClipFactory = stillImageClipFactory
+        self.captureDateOverlayFactory = captureDateOverlayFactory
         self.ffmpegHDRRenderer = FFmpegHDRRenderer()
     }
 
@@ -42,7 +47,11 @@ public final class AVFoundationRenderEngine {
             diagnostics.add("Diagnostics log path: \(liveDiagnosticsLogURL.path)")
         }
         diagnostics.add("Timeline segments: \(timeline.segments.count)")
-        diagnostics.add("Style: title=\(style.openingTitle ?? "none"), titleDuration=\(style.titleDurationSeconds), crossfade=\(style.crossfadeDurationSeconds), stillDuration=\(style.stillImageDurationSeconds)")
+        diagnostics.add(
+            "Style: title=\(style.openingTitle ?? "none"), titleDuration=\(style.titleDurationSeconds), " +
+            "crossfade=\(style.crossfadeDurationSeconds), stillDuration=\(style.stillImageDurationSeconds), " +
+            "captureDateOverlay=\(style.showCaptureDateOverlay)"
+        )
         diagnostics.add(
             "Export profile: container=\(exportProfile.container.rawValue), codec=\(exportProfile.videoCodec.rawValue), " +
             "frameRate=\(exportProfile.frameRate.rawValue), " +
@@ -75,6 +84,7 @@ public final class AVFoundationRenderEngine {
             reportProgress(0.02, handler: progressHandler)
             let clips = try await materializeInputClips(
                 segments: timeline.segments,
+                style: style,
                 renderSize: renderSize,
                 frameRate: resolvedFrameRate,
                 exportDynamicRange: exportProfile.dynamicRange,
@@ -106,7 +116,8 @@ public final class AVFoundationRenderEngine {
                         includeAudio: clip.includeAudio,
                         hasAudioTrack: clip.audioTrack != nil,
                         colorInfo: clip.colorInfo,
-                        sourceDescription: clip.sourceDescription
+                        sourceDescription: clip.sourceDescription,
+                        captureDateOverlayURL: clip.captureDateOverlayURL
                     )
                 },
                 transitionDurationSeconds: max(transitionDuration.seconds, 0),
@@ -274,6 +285,7 @@ public final class AVFoundationRenderEngine {
 
     private func materializeInputClips(
         segments: [TimelineSegment],
+        style: StyleProfile,
         renderSize: CGSize,
         frameRate: Int,
         exportDynamicRange: DynamicRange,
@@ -315,6 +327,8 @@ public final class AVFoundationRenderEngine {
                     includeAudio: false,
                     sourceDescription: "title card '\(descriptor.resolvedTitle)'",
                     sourceColorInfo: .unknown,
+                    captureDateOverlayText: nil,
+                    captureDateOverlayURL: nil,
                     diagnostics: diagnostics,
                     isTemporary: true
                 ) {
@@ -325,6 +339,15 @@ public final class AVFoundationRenderEngine {
                 switch item.type {
                 case .image:
                     let sourceURL = try await resolveURL(for: item, photoMaterializer: photoMaterializer)
+                    let captureDateOverlayText = formattedCaptureDateOverlayText(for: item, style: style)
+                    let captureDateOverlayURL = makeCaptureDateOverlayIfNeeded(
+                        overlayText: captureDateOverlayText,
+                        renderSize: renderSize,
+                        diagnostics: diagnostics
+                    )
+                    if let captureDateOverlayURL {
+                        temporaryURLs.append(captureDateOverlayURL)
+                    }
                     let imageClipURL = try await stillImageClipFactory.makeVideoClip(
                         fromImageURL: sourceURL,
                         duration: segment.duration,
@@ -340,6 +363,8 @@ public final class AVFoundationRenderEngine {
                         includeAudio: false,
                         sourceDescription: "image \(item.filename)",
                         sourceColorInfo: item.colorInfo,
+                        captureDateOverlayText: captureDateOverlayText,
+                        captureDateOverlayURL: captureDateOverlayURL,
                         diagnostics: diagnostics,
                         isTemporary: true
                     ) {
@@ -348,6 +373,15 @@ public final class AVFoundationRenderEngine {
 
                 case .video:
                     let sourceURL = try await resolveURL(for: item, photoMaterializer: photoMaterializer)
+                    let captureDateOverlayText = formattedCaptureDateOverlayText(for: item, style: style)
+                    let captureDateOverlayURL = makeCaptureDateOverlayIfNeeded(
+                        overlayText: captureDateOverlayText,
+                        renderSize: renderSize,
+                        diagnostics: diagnostics
+                    )
+                    if let captureDateOverlayURL {
+                        temporaryURLs.append(captureDateOverlayURL)
+                    }
                     diagnostics.add("Using source video clip \(sourceURL.path) for \(item.filename)")
                     if let clip = try await makeClip(
                         assetURL: sourceURL,
@@ -355,6 +389,8 @@ public final class AVFoundationRenderEngine {
                         includeAudio: true,
                         sourceDescription: "video \(item.filename)",
                         sourceColorInfo: item.colorInfo,
+                        captureDateOverlayText: captureDateOverlayText,
+                        captureDateOverlayURL: captureDateOverlayURL,
                         diagnostics: diagnostics,
                         isTemporary: false
                     ) {
@@ -398,6 +434,30 @@ public final class AVFoundationRenderEngine {
         return previewAssets
     }
 
+    private func formattedCaptureDateOverlayText(for item: MediaItem, style: StyleProfile) -> String? {
+        guard style.showCaptureDateOverlay, let captureDate = item.captureDate else {
+            return nil
+        }
+        return CaptureDateOverlayFormatter.string(from: captureDate)
+    }
+
+    private func makeCaptureDateOverlayIfNeeded(
+        overlayText: String?,
+        renderSize: CGSize,
+        diagnostics: RenderDiagnostics
+    ) -> URL? {
+        guard let overlayText else {
+            return nil
+        }
+
+        do {
+            return try captureDateOverlayFactory.makeOverlayPlate(text: overlayText, renderSize: renderSize)
+        } catch {
+            diagnostics.add("Capture-date overlay skipped: \(describe(error))")
+            return nil
+        }
+    }
+
     private func resolveURL(for item: MediaItem, photoMaterializer: PhotoAssetMaterializing?) async throws -> URL {
         switch item.locator {
         case let .file(url):
@@ -416,6 +476,8 @@ public final class AVFoundationRenderEngine {
         includeAudio: Bool,
         sourceDescription: String,
         sourceColorInfo: ColorInfo,
+        captureDateOverlayText: String?,
+        captureDateOverlayURL: URL?,
         diagnostics: RenderDiagnostics,
         isTemporary: Bool
     ) async throws -> InputClip? {
@@ -467,7 +529,8 @@ public final class AVFoundationRenderEngine {
             "assetDuration=\(format(assetDuration)), videoTrackRange=\(format(videoTrackRange)), " +
             "audioTrackRange=\(format(audioTrackTimeRange)), codec=\(codecDescription), " +
             "colorPrimaries=\(resolvedColorInfo.colorPrimaries ?? "nil"), transfer=\(resolvedColorInfo.transferFunction ?? "nil"), " +
-            "isHDR=\(resolvedColorInfo.isHDR), temp=\(isTemporary)"
+            "isHDR=\(resolvedColorInfo.isHDR), temp=\(isTemporary), " +
+            "captureDateOverlay=\(captureDateOverlayText ?? "none")"
         )
 
         return InputClip(
@@ -485,7 +548,9 @@ public final class AVFoundationRenderEngine {
             sourceDescription: sourceDescription,
             isTemporary: isTemporary,
             includeAudio: includeAudio,
-            colorInfo: resolvedColorInfo
+            colorInfo: resolvedColorInfo,
+            captureDateOverlayText: captureDateOverlayText,
+            captureDateOverlayURL: captureDateOverlayURL
         )
     }
 
@@ -1099,6 +1164,8 @@ public final class AVFoundationRenderEngine {
         let isTemporary: Bool
         let includeAudio: Bool
         let colorInfo: ColorInfo
+        let captureDateOverlayText: String?
+        let captureDateOverlayURL: URL?
     }
 
     private func describe(_ error: Error) -> String {

@@ -175,14 +175,14 @@ final class FFmpegHDRRenderer {
             callbacks.log(
                 "FFmpeg system capabilities: zscale=\(systemCaps.hasZscale), tonemap=\(systemCaps.hasTonemap), xfade=\(systemCaps.hasXfade), " +
                 "acrossfade=\(systemCaps.hasAcrossfade), libx264=\(systemCaps.hasLibx264), h264_videotoolbox=\(systemCaps.hasH264VideoToolbox), " +
-                "libx265=\(systemCaps.hasLibx265), hevc_videotoolbox=\(systemCaps.hasHEVCVideoToolbox)"
+                "overlay=\(systemCaps.hasOverlay), libx265=\(systemCaps.hasLibx265), hevc_videotoolbox=\(systemCaps.hasHEVCVideoToolbox)"
             )
         }
         if let bundledCaps = resolution.bundledCapabilities {
             callbacks.log(
                 "FFmpeg bundled capabilities: zscale=\(bundledCaps.hasZscale), tonemap=\(bundledCaps.hasTonemap), xfade=\(bundledCaps.hasXfade), " +
                 "acrossfade=\(bundledCaps.hasAcrossfade), libx264=\(bundledCaps.hasLibx264), h264_videotoolbox=\(bundledCaps.hasH264VideoToolbox), " +
-                "libx265=\(bundledCaps.hasLibx265), hevc_videotoolbox=\(bundledCaps.hasHEVCVideoToolbox)"
+                "overlay=\(bundledCaps.hasOverlay), libx265=\(bundledCaps.hasLibx265), hevc_videotoolbox=\(bundledCaps.hasHEVCVideoToolbox)"
             )
         }
         if plan.requiresHDRToSDRToneMapping {
@@ -195,6 +195,7 @@ final class FFmpegHDRRenderer {
         } else {
             callbacks.log("HDR-to-SDR tone mapping enabled: false")
         }
+        callbacks.log("Capture-date overlays enabled: \(plan.requiresCaptureDateOverlay) (clips=\(plan.clips.filter { $0.captureDateOverlayURL != nil }.count))")
         callbacks.log("FFmpeg selected binary: \(resolution.selectedBinary.ffmpegURL.path) [\(resolution.selectedBinary.source.rawValue)]")
         callbacks.log("FFmpeg command: \(command.printableCommand)")
         if let fallbackReason = resolution.fallbackReason {

@@ -24,6 +24,7 @@ struct FFmpegCapabilityProbe {
         let hasTonemap = containsWord("tonemap", in: normalizedFilters)
         let hasXfade = containsWord("xfade", in: normalizedFilters)
         let hasAcrossfade = containsWord("acrossfade", in: normalizedFilters)
+        let hasOverlay = containsWord("overlay", in: normalizedFilters)
         let hasLibx264 = containsWord("libx264", in: normalizedEncoders)
         let hasH264VideoToolbox = containsWord("h264_videotoolbox", in: normalizedEncoders)
         let hasLibx265 = containsWord("libx265", in: normalizedEncoders)
@@ -35,6 +36,7 @@ struct FFmpegCapabilityProbe {
             hasTonemap: hasTonemap,
             hasXfade: hasXfade,
             hasAcrossfade: hasAcrossfade,
+            hasOverlay: hasOverlay,
             hasLibx264: hasLibx264,
             hasH264VideoToolbox: hasH264VideoToolbox,
             hasLibx265: hasLibx265,

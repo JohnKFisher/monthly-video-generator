@@ -181,6 +181,9 @@ final class MainWindowViewModel: ObservableObject {
     @Published var stillImageDurationSeconds: Double = 3.0 {
         didSet { handleRenderSettingChange() }
     }
+    @Published var showCaptureDateOverlay: Bool = true {
+        didSet { handleRenderSettingChange() }
+    }
 
     @Published var selectedContainer: ContainerFormat = MainWindowViewModel.defaultExportProfile.container {
         didSet { handleRenderSettingChange() }
@@ -670,7 +673,8 @@ final class MainWindowViewModel: ObservableObject {
             openingTitle: openingTitle,
             titleDurationSeconds: includeOpeningTitle ? 2.5 : 0,
             crossfadeDurationSeconds: crossfadeDurationSeconds,
-            stillImageDurationSeconds: stillImageDurationSeconds
+            stillImageDurationSeconds: stillImageDurationSeconds,
+            showCaptureDateOverlay: showCaptureDateOverlay
         )
     }
 
@@ -1465,6 +1469,7 @@ final class MainWindowViewModel: ObservableObject {
         openingTitleText = settings.openingTitleText
         crossfadeDurationSeconds = min(max(settings.crossfadeDurationSeconds, 0), 2)
         stillImageDurationSeconds = min(max(settings.stillImageDurationSeconds, 1), 10)
+        showCaptureDateOverlay = settings.showCaptureDateOverlay ?? true
         selectedPhotosFilterMode = settings.selectedPhotosFilterMode ?? .monthYear
         selectedPhotoAlbumID = settings.selectedPhotoAlbumID ?? ""
         selectedContainer = settings.selectedContainer
@@ -1496,6 +1501,7 @@ final class MainWindowViewModel: ObservableObject {
             openingTitleText: openingTitleText,
             crossfadeDurationSeconds: crossfadeDurationSeconds,
             stillImageDurationSeconds: stillImageDurationSeconds,
+            showCaptureDateOverlay: showCaptureDateOverlay,
             selectedPhotosFilterMode: selectedPhotosFilterMode,
             selectedPhotoAlbumID: selectedPhotoAlbumID,
             selectedContainer: selectedContainer,
@@ -1521,6 +1527,7 @@ final class MainWindowViewModel: ObservableObject {
         let openingTitleText: String
         let crossfadeDurationSeconds: Double
         let stillImageDurationSeconds: Double
+        let showCaptureDateOverlay: Bool?
         let selectedPhotosFilterMode: PhotosFilterMode?
         let selectedPhotoAlbumID: String?
         let selectedContainer: ContainerFormat
