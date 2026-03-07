@@ -212,6 +212,7 @@ final class FFmpegHDRRenderer {
         process.standardError = stderrPipe
 
         try process.run()
+        Self.closeUnusedPipeWriteEnds(stdoutPipe: stdoutPipe, stderrPipe: stderrPipe)
         setCurrentProcess(process)
         callbacks.report(0.01)
         callbacks.updateStatus("\(plan.dynamicRange == .hdr ? "HDR" : "SDR") encode: starting...")
@@ -257,12 +258,10 @@ final class FFmpegHDRRenderer {
         }
         callbacks.log("FFmpeg process terminated: \(terminationDescription(status: termination.status, reason: termination.reason))")
 
-        // Force-close pipes after termination so line readers cannot hang waiting for EOF.
-        stdoutPipe.fileHandleForReading.closeFile()
-        stderrPipe.fileHandleForReading.closeFile()
-
         let stderrTail = await stderrTask
         _ = await stdoutTask
+        stdoutHandle.closeFile()
+        stderrHandle.closeFile()
 
         guard termination.status == 0 else {
             let details = failureDetails(from: stderrTail)
@@ -338,6 +337,13 @@ final class FFmpegHDRRenderer {
             }
         }
         return tail
+    }
+
+    // Parent never writes to these pipes. Closing the parent-side write ends
+    // lets the read side observe EOF when FFmpeg exits without racing a read-handle close.
+    static func closeUnusedPipeWriteEnds(stdoutPipe: Pipe, stderrPipe: Pipe) {
+        stdoutPipe.fileHandleForWriting.closeFile()
+        stderrPipe.fileHandleForWriting.closeFile()
     }
 
     private static func consumePipeText(

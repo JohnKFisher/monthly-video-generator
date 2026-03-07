@@ -1,9 +1,27 @@
 @testable import Core
 import CoreGraphics
+import Darwin
 import Foundation
 import XCTest
 
 final class HDRFFmpegPipelineTests: XCTestCase {
+    func testRendererClosesParentPipeWriteEndsAfterLaunch() {
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        let stdoutWriteFD = stdoutPipe.fileHandleForWriting.fileDescriptor
+        let stderrWriteFD = stderrPipe.fileHandleForWriting.fileDescriptor
+
+        FFmpegHDRRenderer.closeUnusedPipeWriteEnds(stdoutPipe: stdoutPipe, stderrPipe: stderrPipe)
+
+        errno = 0
+        XCTAssertEqual(fcntl(stdoutWriteFD, F_GETFD), -1)
+        XCTAssertEqual(errno, EBADF)
+
+        errno = 0
+        XCTAssertEqual(fcntl(stderrWriteFD, F_GETFD), -1)
+        XCTAssertEqual(errno, EBADF)
+    }
+
     func testCapabilityProbeParsesRequiredFeatures() {
         let version = "ffmpeg version 7.1-custom"
         let filters = """
