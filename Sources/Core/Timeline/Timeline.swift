@@ -3,7 +3,7 @@ import Foundation
 
 public enum TimelineAsset: Equatable, @unchecked Sendable {
     case media(MediaItem)
-    case titleCard(String)
+    case titleCard(OpeningTitleCardDescriptor)
 }
 
 public struct TimelineSegment: Equatable, @unchecked Sendable {

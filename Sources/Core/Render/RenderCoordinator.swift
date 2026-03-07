@@ -96,7 +96,7 @@ public final class RenderCoordinator: @unchecked Sendable {
         request: RenderRequest,
         additionalWarnings: [String] = []
     ) -> RenderPreparation {
-        let timeline = timelineBuilder.buildTimeline(items: items, ordering: request.ordering, style: request.style)
+        let timeline = timelineBuilder.buildTimeline(items: items, request: request)
 
         var warnings = additionalWarnings
         if timeline.estimatedDuration.seconds >= longDurationWarningThresholdSeconds {

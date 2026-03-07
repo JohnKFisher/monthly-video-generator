@@ -291,20 +291,29 @@ public final class AVFoundationRenderEngine {
             let segmentProgress = 0.05 + (Double(index) / Double(totalSegments)) * 0.18
             reportProgress(segmentProgress, handler: progressHandler)
             switch segment.asset {
-            case let .titleCard(title):
+            case let .titleCard(descriptor):
+                let previewAssets = try await resolveTitleCardPreviewAssets(
+                    from: descriptor.previewItems,
+                    photoMaterializer: photoMaterializer,
+                    diagnostics: diagnostics
+                )
                 let titleURL = try await stillImageClipFactory.makeTitleCardClip(
-                    title: title,
+                    descriptor: descriptor,
+                    previewAssets: previewAssets,
                     duration: segment.duration,
                     renderSize: renderSize,
                     frameRate: frameRate
                 )
                 temporaryURLs.append(titleURL)
-                diagnostics.add("Materialized title card clip at \(titleURL.path) for title '\(title)'")
+                diagnostics.add(
+                    "Materialized title card clip at \(titleURL.path) for title '\(descriptor.resolvedTitle)' " +
+                    "(previews=\(previewAssets.count), seed=\(descriptor.variationSeed))"
+                )
                 if let clip = try await makeClip(
                     assetURL: titleURL,
                     fallbackDuration: segment.duration,
                     includeAudio: false,
-                    sourceDescription: "title card '\(title)'",
+                    sourceDescription: "title card '\(descriptor.resolvedTitle)'",
                     sourceColorInfo: .unknown,
                     diagnostics: diagnostics,
                     isTemporary: true
@@ -359,6 +368,34 @@ public final class AVFoundationRenderEngine {
         }
 
         return clips
+    }
+
+    private func resolveTitleCardPreviewAssets(
+        from items: [MediaItem],
+        photoMaterializer: PhotoAssetMaterializing?,
+        diagnostics: RenderDiagnostics
+    ) async throws -> [StillImageClipFactory.TitleCardPreviewAsset] {
+        var previewAssets: [StillImageClipFactory.TitleCardPreviewAsset] = []
+        previewAssets.reserveCapacity(items.count)
+
+        for item in items {
+            do {
+                let url = try await resolveURL(for: item, photoMaterializer: photoMaterializer)
+                previewAssets.append(
+                    StillImageClipFactory.TitleCardPreviewAsset(
+                        url: url,
+                        mediaType: item.type,
+                        filename: item.filename
+                    )
+                )
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                diagnostics.add("Title preview skipped for \(item.filename): \(describe(error))")
+            }
+        }
+
+        return previewAssets
     }
 
     private func resolveURL(for item: MediaItem, photoMaterializer: PhotoAssetMaterializing?) async throws -> URL {

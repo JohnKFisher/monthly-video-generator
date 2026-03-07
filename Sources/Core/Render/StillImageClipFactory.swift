@@ -73,6 +73,64 @@ public final class StillImageClipFactory {
         let colorConfiguration: IntermediateColorConfiguration
     }
 
+    public struct TitleCardPreviewAsset: Equatable, Sendable {
+        public let url: URL
+        public let mediaType: MediaType
+        public let filename: String
+
+        public init(url: URL, mediaType: MediaType, filename: String) {
+            self.url = url
+            self.mediaType = mediaType
+            self.filename = filename
+        }
+    }
+
+    private struct AnimatedTitleCardPalette {
+        let start: CGColor
+        let end: CGColor
+        let accent: CGColor
+    }
+
+    private struct TitleCardPreviewImage {
+        let image: CGImage
+        let filename: String
+    }
+
+    private struct AnimatedTitleCardTile {
+        let preview: TitleCardPreviewImage
+        let normalizedRect: CGRect
+        let baseRotation: CGFloat
+        let drift: CGPoint
+        let scaleAmplitude: CGFloat
+        let opacity: CGFloat
+        let delay: CGFloat
+        let phase: CGFloat
+    }
+
+    private struct AnimatedTitleCardFrameSet {
+        let backgroundImage: CGImage?
+        let palette: AnimatedTitleCardPalette
+        let tiles: [AnimatedTitleCardTile]
+        let title: String
+        let contextLine: String?
+    }
+
+    private struct SeededRandomNumberGenerator: RandomNumberGenerator {
+        private var state: UInt64
+
+        init(seed: UInt64) {
+            state = seed == 0 ? 0xA0761D6478BD642F : seed
+        }
+
+        mutating func next() -> UInt64 {
+            state &+= 0x9E3779B97F4A7C15
+            var value = state
+            value = (value ^ (value >> 30)) &* 0xBF58476D1CE4E5B9
+            value = (value ^ (value >> 27)) &* 0x94D049BB133111EB
+            return value ^ (value >> 31)
+        }
+    }
+
     public init() {}
 
     public func makeVideoClip(
@@ -102,14 +160,74 @@ public final class StillImageClipFactory {
         renderSize: CGSize,
         frameRate: Int = 30
     ) async throws -> URL {
+        let descriptor = OpeningTitleCardDescriptor(
+            title: title,
+            contextLine: nil,
+            previewItems: [],
+            dateSpanText: nil,
+            variationSeed: 0
+        )
+        return try await makeTitleCardClip(
+            descriptor: descriptor,
+            previewAssets: [],
+            duration: duration,
+            renderSize: renderSize,
+            frameRate: frameRate
+        )
+    }
+
+    public func makeTitleCardClip(
+        descriptor: OpeningTitleCardDescriptor,
+        previewAssets: [TitleCardPreviewAsset],
+        duration: CMTime,
+        renderSize: CGSize,
+        frameRate: Int = 30
+    ) async throws -> URL {
         #if canImport(AppKit)
+        let resolvedTitle = descriptor.resolvedTitle
+        let resolvedContextLine = descriptor.resolvedContextLine
+
+        if !previewAssets.isEmpty {
+            do {
+                let animatedFrameSet = try await makeAnimatedTitleCardFrameSet(
+                    descriptor: descriptor,
+                    previewAssets: previewAssets,
+                    renderSize: renderSize
+                )
+                return try await makeVideoClip(
+                    duration: duration,
+                    renderSize: renderSize,
+                    frameRate: frameRate,
+                    colorConfiguration: .bt709()
+                ) { [animatedFrameSet] frameIndex, totalFrames in
+                    let denominator = max(totalFrames - 1, 1)
+                    let progress = CGFloat(frameIndex) / CGFloat(denominator)
+                    return try self.makeAnimatedTitleCardFrame(
+                        frameSet: animatedFrameSet,
+                        progress: progress,
+                        renderSize: renderSize
+                    )
+                }
+            } catch {
+                // Fall back to the static card if previews fail to load or animate.
+            }
+        }
+
         let titleImage: CGImage
         do {
-            titleImage = try await MainActor.run { [renderSize, title] in
-                try Self.makeTitleCardRasterizedImage(title: title, renderSize: renderSize)
+            titleImage = try await MainActor.run { [renderSize, resolvedTitle, resolvedContextLine] in
+                try Self.makeStaticTitleCardRasterizedImage(
+                    title: resolvedTitle,
+                    contextLine: resolvedContextLine,
+                    renderSize: renderSize
+                )
             }
         } catch {
-            titleImage = try makeFallbackTitleCardImage(renderSize: renderSize, title: title)
+            titleImage = try makeFallbackTitleCardImage(
+                renderSize: renderSize,
+                title: resolvedTitle,
+                contextLine: resolvedContextLine
+            )
         }
         return try await makeVideoClip(
             fromRasterizedImage: CIImage(cgImage: titleImage),
@@ -130,6 +248,23 @@ public final class StillImageClipFactory {
         renderSize: CGSize,
         frameRate: Int,
         colorConfiguration: IntermediateColorConfiguration
+    ) async throws -> URL {
+        try await makeVideoClip(
+            duration: duration,
+            renderSize: renderSize,
+            frameRate: frameRate,
+            colorConfiguration: colorConfiguration
+        ) { _, _ in
+            image
+        }
+    }
+
+    private func makeVideoClip(
+        duration: CMTime,
+        renderSize: CGSize,
+        frameRate: Int,
+        colorConfiguration: IntermediateColorConfiguration,
+        imageProvider: (Int, Int) throws -> CIImage
     ) async throws -> URL {
         let totalFrames = max(Int(ceil(duration.seconds * Double(frameRate))), 1)
         let frameDuration = CMTime(value: 1, timescale: CMTimeScale(frameRate))
@@ -185,8 +320,9 @@ public final class StillImageClipFactory {
             guard creationStatus == kCVReturnSuccess, let destinationBuffer else {
                 throw RenderError.exportFailed("Failed to create pixel buffer")
             }
+            let frameImage = try imageProvider(frame, totalFrames)
             render(
-                image: image,
+                image: frameImage,
                 to: destinationBuffer,
                 renderSize: renderSize,
                 colorConfiguration: colorConfiguration,
@@ -310,8 +446,432 @@ public final class StillImageClipFactory {
         return RasterizedImagePayload(image: fittedImage, colorConfiguration: colorConfiguration)
     }
 
+    private func makeAnimatedTitleCardFrameSet(
+        descriptor: OpeningTitleCardDescriptor,
+        previewAssets: [TitleCardPreviewAsset],
+        renderSize: CGSize
+    ) async throws -> AnimatedTitleCardFrameSet {
+        let previewImages = try await loadAnimatedPreviewImages(
+            from: previewAssets,
+            targetDimension: Int(max(renderSize.width, renderSize.height).rounded())
+        )
+        guard !previewImages.isEmpty else {
+            throw RenderError.exportFailed("Animated title card previews unavailable")
+        }
+
+        var generator = SeededRandomNumberGenerator(seed: descriptor.variationSeed ^ 0xC6A4A7935BD1E995)
+        var shuffledPreviews = previewImages
+        shuffledPreviews.shuffle(using: &generator)
+        let palette = animatedPalette(using: &generator)
+
+        return AnimatedTitleCardFrameSet(
+            backgroundImage: makeBlurredBackgroundImage(from: shuffledPreviews[0].image, renderSize: renderSize),
+            palette: palette,
+            tiles: makeAnimatedTiles(
+                previews: shuffledPreviews,
+                renderSize: renderSize,
+                generator: &generator
+            ),
+            title: descriptor.resolvedTitle,
+            contextLine: descriptor.resolvedContextLine
+        )
+    }
+
+    private func loadAnimatedPreviewImages(
+        from previewAssets: [TitleCardPreviewAsset],
+        targetDimension: Int
+    ) async throws -> [TitleCardPreviewImage] {
+        var previews: [TitleCardPreviewImage] = []
+        previews.reserveCapacity(previewAssets.count)
+
+        for previewAsset in previewAssets {
+            do {
+                let image = try await loadPreviewImage(from: previewAsset, targetDimension: targetDimension)
+                previews.append(TitleCardPreviewImage(image: image, filename: previewAsset.filename))
+            } catch {
+                continue
+            }
+        }
+
+        return previews
+    }
+
+    private func loadPreviewImage(
+        from previewAsset: TitleCardPreviewAsset,
+        targetDimension: Int
+    ) async throws -> CGImage {
+        switch previewAsset.mediaType {
+        case .image:
+            return try loadImageThumbnail(from: previewAsset.url, targetDimension: targetDimension)
+        case .video:
+            return try await loadVideoPosterFrame(from: previewAsset.url, targetDimension: targetDimension)
+        }
+    }
+
+    private func loadImageThumbnail(from url: URL, targetDimension: Int) throws -> CGImage {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+            throw RenderError.exportFailed("Unable to load title preview image at \(url.path)")
+        }
+
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: max(targetDimension, 1)
+        ]
+
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+            ?? CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary) else {
+            throw RenderError.exportFailed("Unable to decode title preview image at \(url.path)")
+        }
+
+        return image
+    }
+
+    private func loadVideoPosterFrame(from url: URL, targetDimension: Int) async throws -> CGImage {
+        let asset = AVURLAsset(url: url)
+        let imageGenerator = AVAssetImageGenerator(asset: asset)
+        imageGenerator.appliesPreferredTrackTransform = true
+        imageGenerator.maximumSize = CGSize(width: targetDimension, height: targetDimension)
+        imageGenerator.requestedTimeToleranceBefore = CMTime(seconds: 0.5, preferredTimescale: 600)
+        imageGenerator.requestedTimeToleranceAfter = CMTime(seconds: 0.5, preferredTimescale: 600)
+
+        do {
+            return try await imageGenerator.image(at: CMTime(seconds: 0.5, preferredTimescale: 600)).image
+        } catch {
+            return try await imageGenerator.image(at: .zero).image
+        }
+    }
+
+    private func animatedPalette(using generator: inout SeededRandomNumberGenerator) -> AnimatedTitleCardPalette {
+        let palettes: [AnimatedTitleCardPalette] = [
+            AnimatedTitleCardPalette(
+                start: CGColor(red: 0.05, green: 0.11, blue: 0.19, alpha: 1.0),
+                end: CGColor(red: 0.07, green: 0.05, blue: 0.16, alpha: 1.0),
+                accent: CGColor(red: 0.25, green: 0.83, blue: 0.78, alpha: 1.0)
+            ),
+            AnimatedTitleCardPalette(
+                start: CGColor(red: 0.12, green: 0.08, blue: 0.05, alpha: 1.0),
+                end: CGColor(red: 0.07, green: 0.06, blue: 0.16, alpha: 1.0),
+                accent: CGColor(red: 0.97, green: 0.69, blue: 0.28, alpha: 1.0)
+            ),
+            AnimatedTitleCardPalette(
+                start: CGColor(red: 0.08, green: 0.05, blue: 0.11, alpha: 1.0),
+                end: CGColor(red: 0.04, green: 0.10, blue: 0.14, alpha: 1.0),
+                accent: CGColor(red: 0.94, green: 0.52, blue: 0.62, alpha: 1.0)
+            ),
+            AnimatedTitleCardPalette(
+                start: CGColor(red: 0.06, green: 0.10, blue: 0.08, alpha: 1.0),
+                end: CGColor(red: 0.04, green: 0.06, blue: 0.12, alpha: 1.0),
+                accent: CGColor(red: 0.53, green: 0.88, blue: 0.43, alpha: 1.0)
+            )
+        ]
+
+        return palettes[Int.random(in: 0..<palettes.count, using: &generator)]
+    }
+
+    private func makeAnimatedTiles(
+        previews: [TitleCardPreviewImage],
+        renderSize: CGSize,
+        generator: inout SeededRandomNumberGenerator
+    ) -> [AnimatedTitleCardTile] {
+        let normalizedRects: [CGRect] = [
+            CGRect(x: 0.06, y: 0.60, width: 0.24, height: 0.22),
+            CGRect(x: 0.30, y: 0.64, width: 0.20, height: 0.18),
+            CGRect(x: 0.56, y: 0.58, width: 0.28, height: 0.24),
+            CGRect(x: 0.72, y: 0.30, width: 0.18, height: 0.18),
+            CGRect(x: 0.50, y: 0.28, width: 0.18, height: 0.16),
+            CGRect(x: 0.16, y: 0.26, width: 0.22, height: 0.20)
+        ]
+
+        var rects = normalizedRects
+        rects.shuffle(using: &generator)
+        let maxTiles = min(previews.count, rects.count)
+
+        return Array(previews.prefix(maxTiles).enumerated()).map { index, preview in
+            let xDrift = CGFloat.random(in: -(renderSize.width * 0.03)...(renderSize.width * 0.03), using: &generator)
+            let yDrift = CGFloat.random(in: -(renderSize.height * 0.025)...(renderSize.height * 0.025), using: &generator)
+            let phase = CGFloat.random(in: 0...(CGFloat.pi * 2), using: &generator)
+
+            return AnimatedTitleCardTile(
+                preview: preview,
+                normalizedRect: rects[index],
+                baseRotation: CGFloat.random(in: -7...7, using: &generator),
+                drift: CGPoint(x: xDrift, y: yDrift),
+                scaleAmplitude: CGFloat.random(in: 0.02...0.05, using: &generator),
+                opacity: CGFloat.random(in: 0.78...0.95, using: &generator),
+                delay: CGFloat(index) * 0.06,
+                phase: phase
+            )
+        }
+    }
+
+    private func makeAnimatedTitleCardFrame(
+        frameSet: AnimatedTitleCardFrameSet,
+        progress: CGFloat,
+        renderSize: CGSize
+    ) throws -> CIImage {
+        let width = max(1, Int(renderSize.width.rounded()))
+        let height = max(1, Int(renderSize.height.rounded()))
+
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: IntermediateColorConfiguration.bt709().cgColorSpace,
+            bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
+        ) else {
+            throw RenderError.exportFailed("Unable to allocate animated title card frame")
+        }
+
+        let fullRect = CGRect(origin: .zero, size: renderSize)
+        context.setFillColor(frameSet.palette.start)
+        context.fill(fullRect)
+
+        if let backgroundImage = frameSet.backgroundImage {
+            let baseRect = Self.aspectFillRect(
+                imageSize: CGSize(width: backgroundImage.width, height: backgroundImage.height),
+                into: renderSize
+            )
+            let zoom = 1.04 + 0.03 * sin(progress * .pi * 2)
+            let backgroundRect = scaled(rect: baseRect, scale: zoom)
+
+            context.saveGState()
+            context.setAlpha(0.36)
+            context.draw(backgroundImage, in: backgroundRect)
+            context.restoreGState()
+        }
+
+        drawFullCanvasGradient(
+            colors: [
+                frameSet.palette.start.copy(alpha: 0.18) ?? frameSet.palette.start,
+                frameSet.palette.end.copy(alpha: 0.82) ?? frameSet.palette.end
+            ],
+            start: CGPoint(x: 0, y: renderSize.height),
+            end: CGPoint(x: renderSize.width, y: 0),
+            context: context,
+            rect: fullRect
+        )
+
+        for tile in frameSet.tiles {
+            drawAnimatedTile(tile, progress: progress, renderSize: renderSize, context: context, accentColor: frameSet.palette.accent)
+        }
+
+        drawTitleBackdrop(renderSize: renderSize, context: context)
+        drawTitleBlock(
+            title: frameSet.title,
+            contextLine: frameSet.contextLine,
+            accentColor: frameSet.palette.accent,
+            renderSize: renderSize,
+            context: context
+        )
+
+        guard let image = context.makeImage() else {
+            throw RenderError.exportFailed("Unable to create animated title card frame")
+        }
+
+        return CIImage(cgImage: image)
+    }
+
+    private func drawAnimatedTile(
+        _ tile: AnimatedTitleCardTile,
+        progress: CGFloat,
+        renderSize: CGSize,
+        context: CGContext,
+        accentColor: CGColor
+    ) {
+        var rect = CGRect(
+            x: tile.normalizedRect.minX * renderSize.width,
+            y: tile.normalizedRect.minY * renderSize.height,
+            width: tile.normalizedRect.width * renderSize.width,
+            height: tile.normalizedRect.height * renderSize.height
+        )
+
+        let easedProgress = max(0, min(1, (progress - tile.delay) / max(1 - tile.delay, 0.2)))
+        let oscillation = sin((progress + tile.phase) * .pi * 2)
+        rect.origin.x += tile.drift.x * oscillation
+        rect.origin.y += tile.drift.y * cos((progress + tile.phase) * .pi * 2)
+        rect = scaled(rect: rect, scale: 1.0 + (tile.scaleAmplitude * easedProgress))
+
+        context.saveGState()
+        context.translateBy(x: rect.midX, y: rect.midY)
+        context.rotate(by: tile.baseRotation * (.pi / 180))
+        context.translateBy(x: -rect.midX, y: -rect.midY)
+        context.setAlpha(tile.opacity * min(max(easedProgress * 1.3, 0.15), 1))
+        context.setShadow(offset: CGSize(width: 0, height: -10), blur: max(rect.width * 0.035, 12), color: CGColor(gray: 0, alpha: 0.35))
+
+        let clipPath = CGPath(roundedRect: rect, cornerWidth: rect.width * 0.06, cornerHeight: rect.width * 0.06, transform: nil)
+        context.addPath(clipPath)
+        context.clip()
+        let imageRect = Self.aspectFillRect(
+            imageSize: CGSize(width: tile.preview.image.width, height: tile.preview.image.height),
+            into: rect.size
+        ).offsetBy(dx: rect.minX, dy: rect.minY)
+        context.draw(tile.preview.image, in: imageRect)
+        context.restoreGState()
+
+        context.saveGState()
+        let strokePath = CGPath(roundedRect: rect, cornerWidth: rect.width * 0.06, cornerHeight: rect.width * 0.06, transform: nil)
+        context.addPath(strokePath)
+        context.setStrokeColor(accentColor.copy(alpha: 0.28) ?? accentColor)
+        context.setLineWidth(max(rect.width * 0.006, 2))
+        context.strokePath()
+        context.restoreGState()
+    }
+
+    private func drawTitleBackdrop(renderSize: CGSize, context: CGContext) {
+        let rect = CGRect(
+            x: renderSize.width * 0.04,
+            y: renderSize.height * 0.07,
+            width: renderSize.width * 0.54,
+            height: renderSize.height * 0.30
+        )
+
+        context.saveGState()
+        context.setFillColor(CGColor(gray: 0, alpha: 0.28))
+        context.addPath(CGPath(roundedRect: rect, cornerWidth: 28, cornerHeight: 28, transform: nil))
+        context.fillPath()
+        context.restoreGState()
+    }
+
+    private func drawTitleBlock(
+        title: String,
+        contextLine: String?,
+        accentColor: CGColor,
+        renderSize: CGSize,
+        context: CGContext
+    ) {
+        let originX = renderSize.width * 0.08
+        let lineY = renderSize.height * 0.30
+        let titleRect = CGRect(
+            x: originX,
+            y: renderSize.height * 0.12,
+            width: renderSize.width * 0.48,
+            height: renderSize.height * 0.18
+        )
+        let contextRect = CGRect(
+            x: originX,
+            y: renderSize.height * 0.31,
+            width: renderSize.width * 0.44,
+            height: renderSize.height * 0.05
+        )
+
+        context.saveGState()
+        context.setFillColor(accentColor)
+        context.fill(CGRect(x: originX, y: lineY, width: max(renderSize.width * 0.11, 96), height: max(renderSize.height * 0.008, 6)))
+        context.restoreGState()
+
+        if let contextLine, !contextLine.isEmpty {
+            let contextStyle = paragraphStyle(alignment: .left, lineBreakMode: .byTruncatingTail)
+            let contextAttributes: [NSAttributedString.Key: Any] = [
+                NSAttributedString.Key(rawValue: kCTFontAttributeName as String): CTFontCreateWithName("AvenirNext-DemiBold" as CFString, max(renderSize.width * 0.02, 18), nil),
+                NSAttributedString.Key(rawValue: kCTForegroundColorAttributeName as String): CGColor(gray: 1, alpha: 0.85),
+                NSAttributedString.Key(rawValue: kCTParagraphStyleAttributeName as String): contextStyle,
+                NSAttributedString.Key(rawValue: kCTKernAttributeName as String): 1.6
+            ]
+            drawAttributedString(
+                NSAttributedString(string: contextLine.uppercased(), attributes: contextAttributes),
+                in: contextRect,
+                context: context
+            )
+        }
+
+        let titleStyle = paragraphStyle(alignment: .left, lineBreakMode: .byWordWrapping)
+        let titleAttributes: [NSAttributedString.Key: Any] = [
+            NSAttributedString.Key(rawValue: kCTFontAttributeName as String): CTFontCreateWithName("AvenirNext-Bold" as CFString, max(renderSize.width * 0.055, 42), nil),
+            NSAttributedString.Key(rawValue: kCTForegroundColorAttributeName as String): CGColor(gray: 1, alpha: 0.98),
+            NSAttributedString.Key(rawValue: kCTParagraphStyleAttributeName as String): titleStyle
+        ]
+        drawAttributedString(
+            NSAttributedString(string: title, attributes: titleAttributes),
+            in: titleRect,
+            context: context
+        )
+    }
+
+    private func drawAttributedString(
+        _ attributedString: NSAttributedString,
+        in rect: CGRect,
+        context: CGContext
+    ) {
+        let framesetter = CTFramesetterCreateWithAttributedString(attributedString as CFAttributedString)
+        let path = CGMutablePath()
+        path.addRect(rect)
+        let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: attributedString.length), path, nil)
+        context.saveGState()
+        context.textMatrix = .identity
+        CTFrameDraw(frame, context)
+        context.restoreGState()
+    }
+
+    private func paragraphStyle(alignment: CTTextAlignment, lineBreakMode: CTLineBreakMode) -> CTParagraphStyle {
+        var alignmentValue = alignment
+        var lineBreakValue = lineBreakMode
+        return withUnsafePointer(to: &alignmentValue) { alignmentPointer in
+            withUnsafePointer(to: &lineBreakValue) { lineBreakPointer in
+                let settings = [
+                    CTParagraphStyleSetting(
+                        spec: .alignment,
+                        valueSize: MemoryLayout<CTTextAlignment>.size,
+                        value: alignmentPointer
+                    ),
+                    CTParagraphStyleSetting(
+                        spec: .lineBreakMode,
+                        valueSize: MemoryLayout<CTLineBreakMode>.size,
+                        value: lineBreakPointer
+                    )
+                ]
+                return CTParagraphStyleCreate(settings, settings.count)
+            }
+        }
+    }
+
+    private func drawFullCanvasGradient(
+        colors: [CGColor],
+        start: CGPoint,
+        end: CGPoint,
+        context: CGContext,
+        rect: CGRect
+    ) {
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let gradient = CGGradient(colorsSpace: colorSpace, colors: colors as CFArray, locations: [0, 1]) else {
+            return
+        }
+
+        context.saveGState()
+        context.addRect(rect)
+        context.clip()
+        context.drawLinearGradient(gradient, start: start, end: end, options: [])
+        context.restoreGState()
+    }
+
+    private func makeBlurredBackgroundImage(from image: CGImage, renderSize: CGSize) -> CGImage? {
+        let canvasRect = CGRect(origin: .zero, size: renderSize)
+        let baseImage = CIImage(cgImage: image)
+        let backgroundImage = Self.aspectFillImage(baseImage, renderSize: renderSize)
+        let clamped = backgroundImage.clampedToExtent()
+        let blurred = clamped.applyingFilter(
+            "CIGaussianBlur",
+            parameters: [kCIInputRadiusKey: max(renderSize.width, renderSize.height) * 0.015]
+        ).cropped(to: canvasRect)
+
+        let context = CIContext(options: [CIContextOption.cacheIntermediates: false])
+        return context.createCGImage(
+            blurred,
+            from: canvasRect,
+            format: .RGBA8,
+            colorSpace: IntermediateColorConfiguration.bt709().cgColorSpace
+        )
+    }
+
     @MainActor
-    private static func makeTitleCardRasterizedImage(title: String, renderSize: CGSize) throws -> CGImage {
+    private static func makeStaticTitleCardRasterizedImage(
+        title: String,
+        contextLine: String?,
+        renderSize: CGSize
+    ) throws -> CGImage {
         let size = NSSize(width: renderSize.width, height: renderSize.height)
         let image = NSImage(size: size)
 
@@ -321,6 +881,19 @@ public final class StillImageClipFactory {
         let background = NSColor(calibratedRed: 0.08, green: 0.10, blue: 0.14, alpha: 1.0)
         background.setFill()
         NSBezierPath(rect: NSRect(origin: .zero, size: size)).fill()
+
+        if let contextLine, !contextLine.isEmpty {
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.alignment = .center
+            let contextAttributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: max(renderSize.width * 0.018, 16), weight: .medium),
+                .foregroundColor: NSColor(calibratedWhite: 1.0, alpha: 0.78),
+                .paragraphStyle: paragraph
+            ]
+            let attributedContext = NSAttributedString(string: contextLine.uppercased(), attributes: contextAttributes)
+            let contextRect = NSRect(x: renderSize.width * 0.14, y: renderSize.height * 0.56, width: renderSize.width * 0.72, height: renderSize.height * 0.05)
+            attributedContext.draw(in: contextRect)
+        }
 
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .center
@@ -332,7 +905,7 @@ public final class StillImageClipFactory {
         ]
 
         let attributed = NSAttributedString(string: title, attributes: attributes)
-        let textRect = NSRect(x: renderSize.width * 0.1, y: renderSize.height * 0.4, width: renderSize.width * 0.8, height: renderSize.height * 0.2)
+        let textRect = NSRect(x: renderSize.width * 0.1, y: renderSize.height * 0.38, width: renderSize.width * 0.8, height: renderSize.height * 0.2)
         attributed.draw(in: textRect)
 
         var proposedRect = CGRect(origin: .zero, size: size)
@@ -344,7 +917,11 @@ public final class StillImageClipFactory {
         return safeImage
     }
 
-    private func makeFallbackTitleCardImage(renderSize: CGSize, title: String) throws -> CGImage {
+    private func makeFallbackTitleCardImage(
+        renderSize: CGSize,
+        title: String,
+        contextLine: String?
+    ) throws -> CGImage {
         let width = max(1, Int(renderSize.width.rounded()))
         let height = max(1, Int(renderSize.height.rounded()))
 
@@ -365,6 +942,7 @@ public final class StillImageClipFactory {
 
         drawFallbackTitle(
             text: resolvedFallbackTitleText(from: title),
+            contextLine: contextLine,
             context: context,
             renderSize: CGSize(width: width, height: height)
         )
@@ -380,7 +958,35 @@ public final class StillImageClipFactory {
         return trimmed.isEmpty ? "Monthly Video" : trimmed
     }
 
-    private func drawFallbackTitle(text: String, context: CGContext, renderSize: CGSize) {
+    private func drawFallbackTitle(
+        text: String,
+        contextLine: String?,
+        context: CGContext,
+        renderSize: CGSize
+    ) {
+        if let contextLine = contextLine?.trimmingCharacters(in: .whitespacesAndNewlines), !contextLine.isEmpty {
+            let contextFont = CTFontCreateWithName("Helvetica" as CFString, max(renderSize.width * 0.02, 18), nil)
+            let contextAttributes: [NSAttributedString.Key: Any] = [
+                NSAttributedString.Key(rawValue: kCTFontAttributeName as String): contextFont,
+                NSAttributedString.Key(rawValue: kCTForegroundColorAttributeName as String): CGColor(red: 1, green: 1, blue: 1, alpha: 0.78)
+            ]
+            let attributedContext = NSAttributedString(string: contextLine.uppercased(), attributes: contextAttributes)
+            let contextLineRef = CTLineCreateWithAttributedString(attributedContext as CFAttributedString)
+            var ascent: CGFloat = 0
+            var descent: CGFloat = 0
+            var leading: CGFloat = 0
+            let contextWidth = CGFloat(CTLineGetTypographicBounds(contextLineRef, &ascent, &descent, &leading))
+            let contextPosition = CGPoint(
+                x: max((renderSize.width - contextWidth) / 2, renderSize.width * 0.1),
+                y: renderSize.height * 0.57
+            )
+            context.saveGState()
+            context.textMatrix = .identity
+            context.textPosition = contextPosition
+            CTLineDraw(contextLineRef, context)
+            context.restoreGState()
+        }
+
         let fontSize = max(renderSize.width * 0.05, 42)
         let font = CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize, nil)
 
@@ -461,6 +1067,30 @@ public final class StillImageClipFactory {
         let background = CIImage(color: .black).cropped(to: canvasRect)
         let composed = transformed.composited(over: background).cropped(to: canvasRect)
         return composed
+    }
+
+    private static func aspectFillImage(
+        _ sourceImage: CIImage,
+        renderSize: CGSize
+    ) -> CIImage {
+        let canvasRect = CGRect(origin: .zero, size: renderSize)
+        let normalized = sourceImage.transformed(
+            by: CGAffineTransform(
+                translationX: -sourceImage.extent.minX,
+                y: -sourceImage.extent.minY
+            )
+        )
+        guard normalized.extent.width > 0, normalized.extent.height > 0 else {
+            return CIImage(color: .black).cropped(to: canvasRect)
+        }
+
+        let filledRect = aspectFillRect(imageSize: normalized.extent.size, into: renderSize)
+        let scaleX = filledRect.width / normalized.extent.width
+        let scaleY = filledRect.height / normalized.extent.height
+        return normalized
+            .transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+            .transformed(by: CGAffineTransform(translationX: filledRect.minX, y: filledRect.minY))
+            .cropped(to: canvasRect)
     }
 
     private func render(
@@ -574,6 +1204,33 @@ public final class StillImageClipFactory {
         let x = (canvas.width - width) / 2
         let y = (canvas.height - height) / 2
         return CGRect(x: x, y: y, width: width, height: height)
+    }
+
+    private static func aspectFillRect(imageSize: CGSize, into canvas: CGSize) -> CGRect {
+        guard imageSize.width > 0, imageSize.height > 0 else {
+            return CGRect(origin: .zero, size: canvas)
+        }
+
+        let widthRatio = canvas.width / imageSize.width
+        let heightRatio = canvas.height / imageSize.height
+        let scale = max(widthRatio, heightRatio)
+
+        let width = imageSize.width * scale
+        let height = imageSize.height * scale
+        let x = (canvas.width - width) / 2
+        let y = (canvas.height - height) / 2
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+
+    private func scaled(rect: CGRect, scale: CGFloat) -> CGRect {
+        let width = rect.width * scale
+        let height = rect.height * scale
+        return CGRect(
+            x: rect.midX - (width / 2),
+            y: rect.midY - (height / 2),
+            width: width,
+            height: height
+        )
     }
 
     private func temporaryClipURL() -> URL {

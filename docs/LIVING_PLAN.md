@@ -110,6 +110,7 @@ Operational updates after first packaged run:
 - Reworked the main window into a denser two-column layout with a vertical scroll fallback so all controls remain reachable on smaller window heights.
 - Added an `HDR HEVC Encoder` picker with `Default` and strict `VideoToolbox` modes, threaded that selection through FFmpeg capability resolution and completion summaries, and kept `Default` as the persisted Plex/Infuse baseline.
 - Mega Test now forces `VideoToolbox` for HDR HEVC combinations at execution time so large HDR test batches run faster without mutating the user’s saved single-render encoder choice.
+- 2026-03-07: Replaced the static opening title card with a seeded animated media-collage opener that samples preview assets across the run, adds light source/date context, and falls back to the legacy static card if preview loading or animation fails.
 
 ## Decisions Log
 

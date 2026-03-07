@@ -161,7 +161,7 @@ struct MainWindowView: View {
 
                 if viewModel.includeOpeningTitle {
                     TextField("Title text", text: $viewModel.openingTitleText)
-                    caption("If left blank, uses the selected month/year label.")
+                    caption("If left blank, uses the selected month/year label. The opener now animates a small collage from upcoming media and may modestly increase export time.")
                 }
 
                 sliderRow(

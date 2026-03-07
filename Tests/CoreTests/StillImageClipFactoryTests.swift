@@ -141,6 +141,104 @@ final class StillImageClipFactoryTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(Double(nominalFrameRate), 50)
     }
 
+    func testAnimatedTitleCardClipMatchesRequestedRenderSize() async throws {
+        let factory = StillImageClipFactory()
+        let previewURL = try makeFixtureImage()
+        let descriptor = OpeningTitleCardDescriptor(
+            title: "Animated",
+            contextLine: "Cape Cod",
+            previewItems: [],
+            dateSpanText: "June 2026",
+            variationSeed: 123
+        )
+        let previewAssets = [
+            StillImageClipFactory.TitleCardPreviewAsset(url: previewURL, mediaType: .image, filename: "preview-a.jpg"),
+            StillImageClipFactory.TitleCardPreviewAsset(url: previewURL, mediaType: .image, filename: "preview-b.jpg"),
+            StillImageClipFactory.TitleCardPreviewAsset(url: previewURL, mediaType: .image, filename: "preview-c.jpg")
+        ]
+
+        let clipURL = try await factory.makeTitleCardClip(
+            descriptor: descriptor,
+            previewAssets: previewAssets,
+            duration: CMTime(seconds: 1, preferredTimescale: 600),
+            renderSize: CGSize(width: 1280, height: 720)
+        )
+
+        defer {
+            try? FileManager.default.removeItem(at: previewURL)
+            try? FileManager.default.removeItem(at: clipURL)
+        }
+
+        let videoSize = try await loadedVideoSize(url: clipURL)
+        XCTAssertEqual(videoSize.width, 1280, accuracy: 0.001)
+        XCTAssertEqual(videoSize.height, 720, accuracy: 0.001)
+    }
+
+    func testAnimatedTitleCardClipIsNotStaticAcrossFrames() async throws {
+        let factory = StillImageClipFactory()
+        let previewURL = try makeFixtureImage()
+        let descriptor = OpeningTitleCardDescriptor(
+            title: "Animated",
+            contextLine: "Cape Cod",
+            previewItems: [],
+            dateSpanText: "June 2026",
+            variationSeed: 456
+        )
+        let previewAssets = [
+            StillImageClipFactory.TitleCardPreviewAsset(url: previewURL, mediaType: .image, filename: "preview-a.jpg"),
+            StillImageClipFactory.TitleCardPreviewAsset(url: previewURL, mediaType: .image, filename: "preview-b.jpg"),
+            StillImageClipFactory.TitleCardPreviewAsset(url: previewURL, mediaType: .image, filename: "preview-c.jpg"),
+            StillImageClipFactory.TitleCardPreviewAsset(url: previewURL, mediaType: .image, filename: "preview-d.jpg")
+        ]
+
+        let clipURL = try await factory.makeTitleCardClip(
+            descriptor: descriptor,
+            previewAssets: previewAssets,
+            duration: CMTime(seconds: 1.5, preferredTimescale: 600),
+            renderSize: CGSize(width: 1280, height: 720),
+            frameRate: 30
+        )
+
+        defer {
+            try? FileManager.default.removeItem(at: previewURL)
+            try? FileManager.default.removeItem(at: clipURL)
+        }
+
+        let firstFrame = try await renderedFrame(from: clipURL, at: CMTime(seconds: 0.1, preferredTimescale: 600))
+        let laterFrame = try await renderedFrame(from: clipURL, at: CMTime(seconds: 1.1, preferredTimescale: 600))
+
+        XCTAssertNotEqual(pixelChecksum(firstFrame), pixelChecksum(laterFrame))
+    }
+
+    func testAnimatedTitleCardFallsBackWhenPreviewCannotBeLoaded() async throws {
+        let factory = StillImageClipFactory()
+        let descriptor = OpeningTitleCardDescriptor(
+            title: "Fallback",
+            contextLine: "Cape Cod",
+            previewItems: [],
+            dateSpanText: "June 2026",
+            variationSeed: 789
+        )
+        let missingPreviewURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("missing-preview-\(UUID().uuidString)")
+            .appendingPathExtension("jpg")
+
+        let clipURL = try await factory.makeTitleCardClip(
+            descriptor: descriptor,
+            previewAssets: [StillImageClipFactory.TitleCardPreviewAsset(url: missingPreviewURL, mediaType: .image, filename: "missing.jpg")],
+            duration: CMTime(seconds: 1, preferredTimescale: 600),
+            renderSize: CGSize(width: 1280, height: 720)
+        )
+
+        defer {
+            try? FileManager.default.removeItem(at: clipURL)
+        }
+
+        let videoSize = try await loadedVideoSize(url: clipURL)
+        XCTAssertEqual(videoSize.width, 1280, accuracy: 0.001)
+        XCTAssertEqual(videoSize.height, 720, accuracy: 0.001)
+    }
+
     private func loadedVideoSize(url: URL) async throws -> CGSize {
         let asset = AVURLAsset(url: url)
         guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
@@ -154,6 +252,46 @@ final class StillImageClipFactoryTests: XCTestCase {
         let preferredTransform = try await videoTrack.load(.preferredTransform)
         let transformed = naturalSize.applying(preferredTransform)
         return CGSize(width: abs(transformed.width), height: abs(transformed.height))
+    }
+
+    private func renderedFrame(from url: URL, at time: CMTime) async throws -> CGImage {
+        let asset = AVURLAsset(url: url)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 1280, height: 720)
+        return try await generator.image(at: time).image
+    }
+
+    private func pixelChecksum(_ image: CGImage) -> UInt64 {
+        let width = image.width
+        let height = image.height
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
+        ) else {
+            return 0
+        }
+
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let data = context.data else {
+            return 0
+        }
+
+        let bytes = data.bindMemory(to: UInt8.self, capacity: width * height * 4)
+        var checksum = UInt64(1469598103934665603)
+        let sampleStride = max(((width * height) / 256) * 4, 4)
+        var index = 0
+        while index < width * height * 4 {
+            checksum ^= UInt64(bytes[index])
+            checksum &*= 1099511628211
+            index += sampleStride
+        }
+        return checksum
     }
 
     private func makeFixtureImage() throws -> URL {
