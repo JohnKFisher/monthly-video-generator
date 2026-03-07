@@ -110,6 +110,7 @@ Operational updates after first packaged run:
 - Reworked the main window into a denser two-column layout with a vertical scroll fallback so all controls remain reachable on smaller window heights.
 - Added an `HDR HEVC Encoder` picker with `Default` and strict `VideoToolbox` modes, threaded that selection through FFmpeg capability resolution and completion summaries, and kept `Default` as the persisted Plex/Infuse baseline.
 - Mega Test now forces `VideoToolbox` for HDR HEVC combinations at execution time so large HDR test batches run faster without mutating the user’s saved single-render encoder choice.
+- Promoted the current release as the new known-good rollback checkpoint (`v0.5.0`): `checkpoint/20260307-known-good-v0-5-0`.
 - 2026-03-07: Replaced the static opening title card with a seeded animated media-collage opener that samples preview assets across the run, adds light source/date context, and falls back to the legacy static card if preview loading or animation fails.
 - 2026-03-07: Added a default-on Style toggle for per-clip capture-date stamps, rendering transparent bottom-right overlay plates for dated photos/videos and compositing them in the FFmpeg path before crossfades.
 - 2026-03-07: Added an automatic final-delivery FFmpeg fade-to-black on the last `2 x` crossfade seconds of video output, while leaving audio unchanged and skipping the fade on intermediate HDR chunk renders.
@@ -239,6 +240,7 @@ Operational updates after first packaged run:
 - 2026-03-07: Added persisted title-card duration and caption controls, including an `Automatic / Custom` small-caption mode that preserves typed casing for custom captions while keeping automatic source captions styled as before.
 - 2026-03-07: Shrunk capture-date overlay plates from full-frame transparent PNGs to tightly cropped badge rasters and moved final placement into FFmpeg overlay expressions, preventing 4K HDR exports from constructing dozens of extra full-screen RGBA streams.
 - 2026-03-07: Added a chunked HDR FFmpeg execution path for complex HEVC/HDR renders, using bounded intermediate `.mov` chunks with a dedicated Main10 temp profile and preserving the user-selected final encoder for the delivered output.
+- 2026-03-07: Bumped the shipped app version to `0.5.0` and promoted the current state as known-good rollback tag `checkpoint/20260307-known-good-v0-5-0`.
 
 ## Risks/Blockers
 
@@ -256,11 +258,15 @@ Operational updates after first packaged run:
 
 ## Rollback Procedure
 
-To return to the current known-good rollback (`Post-ffmpeg HDR`):
+To return to the current known-good rollback (`v0.5.0`):
 
 1. `git fetch --tags`
-2. `git checkout checkpoint/20260305-known-good-post-ffmpeg-hdr`
+2. `git checkout checkpoint/20260307-known-good-v0-5-0`
 3. Optional working branch from checkpoint: `git checkout -b codex/recover-known-good`
+
+For the prior FFmpeg-stable checkpoint, use:
+
+- `git checkout checkpoint/20260305-known-good-post-ffmpeg-hdr`
 
 For the pre-FFmpeg-pivot baseline, use:
 
@@ -268,4 +274,4 @@ For the pre-FFmpeg-pivot baseline, use:
 
 ## Last Updated
 
-2026-03-07 10:00 America/New_York by Codex
+2026-03-07 14:03 America/New_York by Codex
