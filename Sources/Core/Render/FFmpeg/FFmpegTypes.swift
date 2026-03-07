@@ -414,7 +414,7 @@ struct FFmpegRenderPlan: Equatable, Sendable {
             hdrHEVCEncoderMode: hdrHEVCEncoderMode,
             renderIntent: renderIntent,
             requiresHDRToSDRToneMapping: requiresHDRToSDRToneMapping,
-            requiresOverlay: requiresCaptureDateOverlay
+            requiresOverlay: requiresGeneratedBackgroundComposite || requiresCaptureDateOverlay
         )
     }
 
@@ -439,6 +439,10 @@ struct FFmpegRenderPlan: Equatable, Sendable {
 
     var requiresCaptureDateOverlay: Bool {
         clips.contains { $0.captureDateOverlayURL != nil }
+    }
+
+    var requiresGeneratedBackgroundComposite: Bool {
+        true
     }
 }
 

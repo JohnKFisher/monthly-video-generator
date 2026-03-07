@@ -9,6 +9,40 @@ import VideoToolbox
 import AppKit
 #endif
 
+enum MediaDerivedBackgroundStyle {
+    struct Metrics {
+        let zoomedRenderSize: CGSize
+        let downsampledSize: CGSize
+        let blurRadius: CGFloat
+        let saturation: CGFloat
+        let dimMultiplier: CGFloat
+    }
+
+    private static let zoomScale: CGFloat = 1.08
+    private static let downsampleFactor: CGFloat = 0.25
+    private static let blurRadiusFactor: CGFloat = 0.015
+    private static let saturationAmount: CGFloat = 0.65
+    private static let blackOverlayOpacity: CGFloat = 0.4
+
+    static func metrics(for renderSize: CGSize) -> Metrics {
+        let zoomedRenderSize = CGSize(
+            width: max(1, ceil(renderSize.width * zoomScale)),
+            height: max(1, ceil(renderSize.height * zoomScale))
+        )
+        let downsampledSize = CGSize(
+            width: max(1, CGFloat(Int((renderSize.width * downsampleFactor).rounded()))),
+            height: max(1, CGFloat(Int((renderSize.height * downsampleFactor).rounded())))
+        )
+        return Metrics(
+            zoomedRenderSize: zoomedRenderSize,
+            downsampledSize: downsampledSize,
+            blurRadius: max(downsampledSize.width, downsampledSize.height) * blurRadiusFactor,
+            saturation: saturationAmount,
+            dimMultiplier: 1 - blackOverlayOpacity
+        )
+    }
+}
+
 public final class StillImageClipFactory {
     private struct IntermediateColorConfiguration {
         let avColorPrimaries: String
@@ -1049,12 +1083,7 @@ public final class StillImageClipFactory {
         renderSize: CGSize
     ) -> CIImage {
         let canvasRect = CGRect(origin: .zero, size: renderSize)
-        let normalized = sourceImage.transformed(
-            by: CGAffineTransform(
-                translationX: -sourceImage.extent.minX,
-                y: -sourceImage.extent.minY
-            )
-        )
+        let normalized = normalizedImage(sourceImage)
         guard normalized.extent.width > 0, normalized.extent.height > 0 else {
             return CIImage(color: .black).cropped(to: canvasRect)
         }
@@ -1065,7 +1094,7 @@ public final class StillImageClipFactory {
         let transformed = normalized
             .transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
             .transformed(by: CGAffineTransform(translationX: fittedRect.minX, y: fittedRect.minY))
-        let background = CIImage(color: .black).cropped(to: canvasRect)
+        let background = mediaDerivedBackgroundImage(fromNormalizedImage: normalized, renderSize: renderSize)
         let composed = transformed.composited(over: background).cropped(to: canvasRect)
         return composed
     }
@@ -1075,12 +1104,7 @@ public final class StillImageClipFactory {
         renderSize: CGSize
     ) -> CIImage {
         let canvasRect = CGRect(origin: .zero, size: renderSize)
-        let normalized = sourceImage.transformed(
-            by: CGAffineTransform(
-                translationX: -sourceImage.extent.minX,
-                y: -sourceImage.extent.minY
-            )
-        )
+        let normalized = normalizedImage(sourceImage)
         guard normalized.extent.width > 0, normalized.extent.height > 0 else {
             return CIImage(color: .black).cropped(to: canvasRect)
         }
@@ -1091,6 +1115,54 @@ public final class StillImageClipFactory {
         return normalized
             .transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
             .transformed(by: CGAffineTransform(translationX: filledRect.minX, y: filledRect.minY))
+            .cropped(to: canvasRect)
+    }
+
+    private static func normalizedImage(_ sourceImage: CIImage) -> CIImage {
+        sourceImage.transformed(
+            by: CGAffineTransform(
+                translationX: -sourceImage.extent.minX,
+                y: -sourceImage.extent.minY
+            )
+        )
+    }
+
+    private static func mediaDerivedBackgroundImage(
+        fromNormalizedImage normalizedImage: CIImage,
+        renderSize: CGSize
+    ) -> CIImage {
+        let canvasRect = CGRect(origin: .zero, size: renderSize)
+        let metrics = MediaDerivedBackgroundStyle.metrics(for: renderSize)
+        let downsampleRect = CGRect(origin: .zero, size: metrics.downsampledSize)
+        let zoomedBackground = aspectFillImage(normalizedImage, renderSize: metrics.zoomedRenderSize)
+        let downsampleScaleX = metrics.downsampledSize.width / metrics.zoomedRenderSize.width
+        let downsampleScaleY = metrics.downsampledSize.height / metrics.zoomedRenderSize.height
+        let downsampled = zoomedBackground
+            .transformed(by: CGAffineTransform(scaleX: downsampleScaleX, y: downsampleScaleY))
+            .cropped(to: downsampleRect)
+        let blurred = downsampled.clampedToExtent()
+            .applyingFilter(
+                "CIGaussianBlur",
+                parameters: [kCIInputRadiusKey: metrics.blurRadius]
+            )
+            .cropped(to: downsampleRect)
+        let desaturated = blurred.applyingFilter(
+            "CIColorControls",
+            parameters: [kCIInputSaturationKey: metrics.saturation]
+        )
+        let dimmed = desaturated.applyingFilter(
+            "CIColorMatrix",
+            parameters: [
+                "inputRVector": CIVector(x: metrics.dimMultiplier, y: 0, z: 0, w: 0),
+                "inputGVector": CIVector(x: 0, y: metrics.dimMultiplier, z: 0, w: 0),
+                "inputBVector": CIVector(x: 0, y: 0, z: metrics.dimMultiplier, w: 0),
+                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1)
+            ]
+        )
+        let upsampleScaleX = renderSize.width / metrics.downsampledSize.width
+        let upsampleScaleY = renderSize.height / metrics.downsampledSize.height
+        return dimmed
+            .transformed(by: CGAffineTransform(scaleX: upsampleScaleX, y: upsampleScaleY))
             .cropped(to: canvasRect)
     }
 

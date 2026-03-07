@@ -37,9 +37,9 @@ struct FFmpegCommandBuilder {
                 "FFmpeg command build failed: selected binary does not support the tonemap filter required for SDR export with HDR source clips."
             )
         }
-        if plan.requiresCaptureDateOverlay && !resolution.selectedCapabilities.hasOverlay {
+        if plan.capabilityRequirements.requiresOverlay && !resolution.selectedCapabilities.hasOverlay {
             throw RenderError.exportFailed(
-                "FFmpeg command build failed: selected binary does not support the overlay filter required for capture-date overlays."
+                "FFmpeg command build failed: selected binary does not support the overlay filter required for media-derived backgrounds."
             )
         }
         guard let selectedEncoder = resolution.selectedCapabilities.preferredEncoder(
@@ -103,6 +103,13 @@ struct FFmpegCommandBuilder {
         }
 
         var filterParts: [String] = []
+        let renderWidth = Int(plan.renderSize.width.rounded())
+        let renderHeight = Int(plan.renderSize.height.rounded())
+        let backgroundMetrics = MediaDerivedBackgroundStyle.metrics(for: plan.renderSize)
+        let zoomedBackgroundWidth = Int(backgroundMetrics.zoomedRenderSize.width.rounded())
+        let zoomedBackgroundHeight = Int(backgroundMetrics.zoomedRenderSize.height.rounded())
+        let downsampledBackgroundWidth = Int(backgroundMetrics.downsampledSize.width.rounded())
+        let downsampledBackgroundHeight = Int(backgroundMetrics.downsampledSize.height.rounded())
         for (index, clip) in plan.clips.enumerated() {
             let clipDuration = max(clip.durationSeconds, 0.01)
             let normalizeFilter = colorNormalizeFilter(for: clip.colorInfo, outputDynamicRange: plan.dynamicRange)
@@ -110,11 +117,33 @@ struct FFmpegCommandBuilder {
                 throw RenderError.exportFailed("FFmpeg command build failed: missing video input index for clip index \(index).")
             }
             let videoOutputLabel = overlayInputIndexForClip[index] == nil ? "v\(index)" : "vbase\(index)"
+            let foregroundSourceLabel = "vfgsrc\(index)"
+            let backgroundSourceLabel = "vbgsrc\(index)"
+            let foregroundLabel = "vfg\(index)"
+            let backgroundLabel = "vbg\(index)"
             filterParts.append(
                 "[\(videoInputIndex):v]trim=duration=\(formatSeconds(clipDuration)),setpts=PTS-STARTPTS,fps=\(plan.frameRate)," +
-                "scale=w=\(Int(plan.renderSize.width)):h=\(Int(plan.renderSize.height)):force_original_aspect_ratio=decrease:flags=lanczos," +
-                "pad=\(Int(plan.renderSize.width)):\(Int(plan.renderSize.height)):(ow-iw)/2:(oh-ih)/2:color=black," +
-                "\(normalizeFilter),format=\(intermediatePixelFormat(for: plan.dynamicRange))[\(videoOutputLabel)]"
+                "\(normalizeFilter),split=2[\(foregroundSourceLabel)][\(backgroundSourceLabel)]"
+            )
+            filterParts.append(
+                "[\(foregroundSourceLabel)]scale=w=\(renderWidth):h=\(renderHeight):force_original_aspect_ratio=decrease:flags=lanczos," +
+                "setsar=1[\(foregroundLabel)]"
+            )
+            filterParts.append(
+                "[\(backgroundSourceLabel)]scale=w=\(zoomedBackgroundWidth):h=\(zoomedBackgroundHeight):" +
+                "force_original_aspect_ratio=increase:flags=lanczos," +
+                "crop=\(zoomedBackgroundWidth):\(zoomedBackgroundHeight)," +
+                "scale=w=\(downsampledBackgroundWidth):h=\(downsampledBackgroundHeight):flags=bilinear," +
+                "setsar=1," +
+                "gblur=sigma=\(formatScalar(Double(backgroundMetrics.blurRadius))):steps=1," +
+                "eq=saturation=\(formatScalar(Double(backgroundMetrics.saturation)))," +
+                "lutyuv=y=val*\(formatScalar(Double(backgroundMetrics.dimMultiplier)))," +
+                "scale=w=\(renderWidth):h=\(renderHeight):flags=lanczos," +
+                "setsar=1[\(backgroundLabel)]"
+            )
+            filterParts.append(
+                "[\(backgroundLabel)][\(foregroundLabel)]overlay=x=(main_w-overlay_w)/2:y=(main_h-overlay_h)/2:shortest=1:format=auto," +
+                "format=\(intermediatePixelFormat(for: plan.dynamicRange))[\(videoOutputLabel)]"
             )
 
             if let overlayInputIndex = overlayInputIndexForClip[index] {
@@ -317,6 +346,10 @@ struct FFmpegCommandBuilder {
     }
 
     private func formatSeconds(_ value: Double) -> String {
+        String(format: "%.6f", value)
+    }
+
+    private func formatScalar(_ value: Double) -> String {
         String(format: "%.6f", value)
     }
 

@@ -386,8 +386,18 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("fade=t=out:st=4.750000:d=1.500000:color=black"))
         XCTAssertTrue(joined.contains(":a:0]atrim"))
         XCTAssertTrue(joined.contains("fps=60"))
+        XCTAssertTrue(joined.contains("split=2[vfgsrc0][vbgsrc0]"))
+        XCTAssertTrue(joined.contains("force_original_aspect_ratio=decrease"))
+        XCTAssertTrue(joined.contains("force_original_aspect_ratio=increase"))
+        XCTAssertTrue(joined.contains("crop=2074:1167"))
+        XCTAssertTrue(joined.contains("scale=w=480:h=270:flags=bilinear"))
+        XCTAssertTrue(joined.contains("gblur=sigma=7.200000:steps=1"))
+        XCTAssertTrue(joined.contains("eq=saturation=0.650000"))
+        XCTAssertTrue(joined.contains("lutyuv=y=val*0.600000"))
+        XCTAssertTrue(joined.contains("overlay=x=(main_w-overlay_w)/2:y=(main_h-overlay_h)/2:shortest=1:format=auto"))
         XCTAssertTrue(joined.contains("zscale="))
         XCTAssertFalse(joined.contains("gbrpf32le"))
+        XCTAssertFalse(joined.contains("pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black"))
         XCTAssertTrue(joined.contains("-progress pipe:2"))
         XCTAssertTrue(joined.contains("-stats_period 0.5"))
         XCTAssertTrue(joined.contains("-nostdin"))
@@ -823,7 +833,8 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         let joined = command.arguments.joined(separator: " ")
 
         XCTAssertFalse(joined.contains("overlay=x=main_w-overlay_w-"))
-        XCTAssertFalse(plan.capabilityRequirements.requiresOverlay)
+        XCTAssertTrue(joined.contains("overlay=x=(main_w-overlay_w)/2:y=(main_h-overlay_h)/2:shortest=1:format=auto"))
+        XCTAssertTrue(plan.capabilityRequirements.requiresOverlay)
     }
 
     func testCommandBuilderFailsWhenOverlayFilterIsMissing() {

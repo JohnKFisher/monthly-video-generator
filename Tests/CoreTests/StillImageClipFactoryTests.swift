@@ -6,6 +6,17 @@ import XCTest
 @testable import Core
 
 final class StillImageClipFactoryTests: XCTestCase {
+    private struct PixelSample: Equatable {
+        let red: UInt8
+        let green: UInt8
+        let blue: UInt8
+        let alpha: UInt8
+
+        var brightnessSum: Int {
+            Int(red) + Int(green) + Int(blue)
+        }
+    }
+
     func testLargeStillClipCanBeInsertedIntoCompositionTrack() async throws {
         let renderSize = CGSize(width: 5712, height: 4284)
         let duration = CMTime(value: 1, timescale: 30)
@@ -139,6 +150,31 @@ final class StillImageClipFactoryTests: XCTestCase {
 
         let nominalFrameRate = try await videoTrack.load(.nominalFrameRate)
         XCTAssertGreaterThanOrEqual(Double(nominalFrameRate), 50)
+    }
+
+    func testPortraitStillUsesMediaDerivedBackgroundInsteadOfBlackBars() async throws {
+        let factory = StillImageClipFactory()
+        let imageURL = try makePortraitFixtureImage()
+        let clipURL = try await factory.makeVideoClip(
+            fromImageURL: imageURL,
+            duration: CMTime(seconds: 0.75, preferredTimescale: 600),
+            renderSize: CGSize(width: 1280, height: 720)
+        )
+
+        defer {
+            try? FileManager.default.removeItem(at: imageURL)
+            try? FileManager.default.removeItem(at: clipURL)
+        }
+
+        let frame = try await renderedFrame(from: clipURL, at: CMTime(seconds: 0.1, preferredTimescale: 600))
+        let leftBarSample = samplePixel(in: frame, x: 40, y: frame.height / 2)
+        let centerSample = samplePixel(in: frame, x: frame.width / 2, y: frame.height / 2)
+
+        XCTAssertGreaterThan(leftBarSample.brightnessSum, 20)
+        XCTAssertGreaterThan(centerSample.red, 180)
+        XCTAssertGreaterThan(centerSample.green, 150)
+        XCTAssertLessThan(centerSample.blue, 120)
+        XCTAssertGreaterThan(centerSample.brightnessSum, leftBarSample.brightnessSum + 150)
     }
 
     func testCustomTitleCardCaptionPreservesTypedCase() async throws {
@@ -423,6 +459,38 @@ final class StillImageClipFactoryTests: XCTestCase {
         return checksum
     }
 
+    private func samplePixel(in image: CGImage, x: Int, y: Int) -> PixelSample {
+        let width = image.width
+        let height = image.height
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
+        ) else {
+            return PixelSample(red: 0, green: 0, blue: 0, alpha: 0)
+        }
+
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let data = context.data else {
+            return PixelSample(red: 0, green: 0, blue: 0, alpha: 0)
+        }
+
+        let clampedX = min(max(x, 0), width - 1)
+        let clampedY = min(max(y, 0), height - 1)
+        let bytes = data.bindMemory(to: UInt8.self, capacity: width * height * 4)
+        let index = (clampedY * width + clampedX) * 4
+        return PixelSample(
+            red: bytes[index + 2],
+            green: bytes[index + 1],
+            blue: bytes[index],
+            alpha: bytes[index + 3]
+        )
+    }
+
     private func makeFixtureImage() throws -> URL {
         let width = 1200
         let height = 800
@@ -463,6 +531,51 @@ final class StillImageClipFactoryTests: XCTestCase {
         CGImageDestinationAddImage(destination, image, nil)
         guard CGImageDestinationFinalize(destination) else {
             throw NSError(domain: "StillImageClipFactoryTests", code: 4, userInfo: [NSLocalizedDescriptionKey: "Failed to finalize fixture image"])
+        }
+
+        return outputURL
+    }
+
+    private func makePortraitFixtureImage() throws -> URL {
+        let width = 720
+        let height = 1280
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
+        ) else {
+            throw NSError(domain: "StillImageClipFactoryTests", code: 5, userInfo: [NSLocalizedDescriptionKey: "Failed to allocate portrait fixture image context"])
+        }
+
+        context.setFillColor(CGColor(red: 0.10, green: 0.14, blue: 0.24, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        context.setFillColor(CGColor(red: 0.94, green: 0.79, blue: 0.20, alpha: 1))
+        context.fill(CGRect(x: 160, y: 420, width: 400, height: 440))
+
+        guard let image = context.makeImage() else {
+            throw NSError(domain: "StillImageClipFactoryTests", code: 6, userInfo: [NSLocalizedDescriptionKey: "Failed to create portrait fixture CGImage"])
+        }
+
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StillImageClipFactoryTests-Portrait-\(UUID().uuidString)")
+            .appendingPathExtension("png")
+
+        guard let destination = CGImageDestinationCreateWithURL(
+            outputURL as CFURL,
+            UTType.png.identifier as CFString,
+            1,
+            nil
+        ) else {
+            throw NSError(domain: "StillImageClipFactoryTests", code: 7, userInfo: [NSLocalizedDescriptionKey: "Failed to create portrait image destination"])
+        }
+
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            throw NSError(domain: "StillImageClipFactoryTests", code: 8, userInfo: [NSLocalizedDescriptionKey: "Failed to finalize portrait fixture image"])
         }
 
         return outputURL
