@@ -36,7 +36,8 @@ struct FFmpegCommandBuilder {
         }
         guard let selectedEncoder = resolution.selectedCapabilities.preferredEncoder(
             for: plan.videoCodec,
-            dynamicRange: plan.dynamicRange
+            dynamicRange: plan.dynamicRange,
+            hdrHEVCEncoderMode: plan.hdrHEVCEncoderMode
         ) else {
             throw RenderError.exportFailed(
                 "FFmpeg command build failed: no compatible encoder is available for \(plan.dynamicRange.rawValue.uppercased()) \(plan.videoCodec.rawValue.uppercased())."

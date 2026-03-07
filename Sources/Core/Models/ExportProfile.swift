@@ -81,6 +81,20 @@ public enum HDRFFmpegBinaryMode: String, CaseIterable, Codable, Sendable {
     case bundledOnly
 }
 
+public enum HDRHEVCEncoderMode: String, CaseIterable, Codable, Sendable {
+    case automatic
+    case videoToolbox
+
+    public var displayLabel: String {
+        switch self {
+        case .automatic:
+            return "Default"
+        case .videoToolbox:
+            return "VideoToolbox"
+        }
+    }
+}
+
 public enum AudioLayout: String, CaseIterable, Codable, Sendable {
     case mono
     case stereo
@@ -166,6 +180,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
     public let resolution: ResolutionPolicy
     public let dynamicRange: DynamicRange
     public let hdrFFmpegBinaryMode: HDRFFmpegBinaryMode
+    public let hdrHEVCEncoderMode: HDRHEVCEncoderMode
     public let audioLayout: AudioLayout
     public let bitrateMode: BitrateMode
 
@@ -177,6 +192,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         resolution: ResolutionPolicy,
         dynamicRange: DynamicRange,
         hdrFFmpegBinaryMode: HDRFFmpegBinaryMode = .autoSystemThenBundled,
+        hdrHEVCEncoderMode: HDRHEVCEncoderMode = .automatic,
         audioLayout: AudioLayout,
         bitrateMode: BitrateMode
     ) {
@@ -187,6 +203,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         self.resolution = resolution
         self.dynamicRange = dynamicRange
         self.hdrFFmpegBinaryMode = hdrFFmpegBinaryMode
+        self.hdrHEVCEncoderMode = hdrHEVCEncoderMode
         self.audioLayout = audioLayout
         self.bitrateMode = bitrateMode
     }
@@ -199,6 +216,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         resolution: .smart,
         dynamicRange: .sdr,
         hdrFFmpegBinaryMode: .autoSystemThenBundled,
+        hdrHEVCEncoderMode: .automatic,
         audioLayout: .smart,
         bitrateMode: .balanced
     )
@@ -211,6 +229,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         resolution: .smart,
         dynamicRange: .hdr,
         hdrFFmpegBinaryMode: .autoSystemThenBundled,
+        hdrHEVCEncoderMode: .automatic,
         audioLayout: .smart,
         bitrateMode: .balanced
     )
@@ -223,6 +242,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         case resolution
         case dynamicRange
         case hdrFFmpegBinaryMode
+        case hdrHEVCEncoderMode
         case audioLayout
         case bitrateMode
     }
@@ -236,6 +256,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         self.resolution = try container.decode(ResolutionPolicy.self, forKey: .resolution)
         self.dynamicRange = try container.decode(DynamicRange.self, forKey: .dynamicRange)
         self.hdrFFmpegBinaryMode = try container.decodeIfPresent(HDRFFmpegBinaryMode.self, forKey: .hdrFFmpegBinaryMode) ?? .autoSystemThenBundled
+        self.hdrHEVCEncoderMode = try container.decodeIfPresent(HDRHEVCEncoderMode.self, forKey: .hdrHEVCEncoderMode) ?? .automatic
         self.audioLayout = try container.decode(AudioLayout.self, forKey: .audioLayout)
         self.bitrateMode = try container.decode(BitrateMode.self, forKey: .bitrateMode)
     }
@@ -249,6 +270,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         try container.encode(self.resolution, forKey: .resolution)
         try container.encode(self.dynamicRange, forKey: .dynamicRange)
         try container.encode(self.hdrFFmpegBinaryMode, forKey: .hdrFFmpegBinaryMode)
+        try container.encode(self.hdrHEVCEncoderMode, forKey: .hdrHEVCEncoderMode)
         try container.encode(self.audioLayout, forKey: .audioLayout)
         try container.encode(self.bitrateMode, forKey: .bitrateMode)
     }

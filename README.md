@@ -77,10 +77,12 @@ New default export profile for fresh installs (existing saved preferences are pr
 - Audio: `AAC Smart` (`Mono` unless any selected video needs `Stereo` or `5.1`)
 - Bitrate mode: `Balanced`
 - FFmpeg engine: `Auto (System then Bundled)`
+- HDR HEVC Encoder: `Default` (`libx265` first, then `hevc_videotoolbox` if required)
 
 Notes:
 
 - In HDR mode, codec selection is constrained to effective renderer behavior (`HEVC`), but audio remains selectable (`Mono`, `Stereo`, `5.1`, `Smart`).
+- In HDR mode, `HDR HEVC Encoder` can stay on `Default` for the current quality-first order or switch to `VideoToolbox` for faster hardware HEVC; explicit `VideoToolbox` selection fails if the chosen FFmpeg binary does not provide `hevc_videotoolbox`.
 - SDR and HDR final exports both use the FFmpeg backend; still/title intermediate clips are still generated locally with AVFoundation.
 - SDR exports that include HDR source videos now apply FFmpeg HDR-to-SDR tone mapping per affected video clip; HLG source videos use a retuned high-nominal-peak SDR conversion path before `BT.709` output so bright iPhone highlights land closer to the source look instead of clipping or washing out.
 - In Apple Photos mode, Smart fps may inspect/download selected videos during render prep to decide between `30 fps` and `60 fps`, then reuse that materialized asset during export.
@@ -96,6 +98,7 @@ Current temporary test-only app behavior:
   `Testing - S2026E<unix epoch> - <Resolution> - <FPS>fps - <Range> - <Audio>`
 - The field stays auto-managed until edited manually. `Use Auto Name` / `Regenerate` restores the temporary generated format.
 - The `Mega Test` section can batch sequential renders across checked `Resolution`, `FPS`, `Range`, and `Audio` axes while reusing one preparation pass.
+- Mega Test forces `VideoToolbox` for HDR HEVC combinations so the batch path stays faster, without changing the saved single-render picker state.
 - Mega test filenames always use the generated testing format for each combination and ignore the single-render Output name field.
 
 ## Known-Good Rollback

@@ -248,9 +248,17 @@ struct MainWindowView: View {
                     Text("Bundled Only").tag(HDRFFmpegBinaryMode.bundledOnly)
                 }
 
+                Picker("HDR HEVC Encoder", selection: $viewModel.selectedHDRHEVCEncoderMode) {
+                    ForEach(HDRHEVCEncoderMode.allCases, id: \.self) { mode in
+                        Text(mode.displayLabel).tag(mode)
+                    }
+                }
+                .disabled(viewModel.selectedDynamicRange != .hdr)
+
                 if viewModel.isHDRSelectionLocked {
                     caption(viewModel.hdrSelectionLockReason)
                 }
+                caption(viewModel.hdrHEVCEncoderDescription)
 
                 VStack(alignment: .leading, spacing: 4) {
                     caption(viewModel.bitrateModeDescription)
@@ -349,6 +357,9 @@ struct MainWindowView: View {
 
                 caption("\(viewModel.megaTestCombinationCountDescription) will be rendered sequentially.")
                 caption("Mega test always uses the temporary generated testing filename for each combination and ignores the single-render Output name field.")
+                if let megaTestHDRHEVCEncoderDescription = viewModel.megaTestHDRHEVCEncoderDescription {
+                    caption(megaTestHDRHEVCEncoderDescription)
+                }
                 if let megaTestPhotosSmartAudioDescription = viewModel.megaTestPhotosSmartAudioDescription {
                     caption(megaTestPhotosSmartAudioDescription)
                 }

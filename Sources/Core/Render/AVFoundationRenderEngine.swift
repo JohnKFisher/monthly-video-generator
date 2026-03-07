@@ -48,6 +48,7 @@ public final class AVFoundationRenderEngine {
             "frameRate=\(exportProfile.frameRate.rawValue), " +
             "resolution=\(exportProfile.resolution.normalized.rawValue), dynamicRange=\(exportProfile.dynamicRange.rawValue), " +
             "hdrFFmpegBinaryMode=\(exportProfile.hdrFFmpegBinaryMode.rawValue), " +
+            "hdrHEVCEncoderMode=\(exportProfile.hdrHEVCEncoderMode.rawValue), " +
             "audioLayout=\(exportProfile.audioLayout.rawValue), bitrate=\(exportProfile.bitrateMode.rawValue)"
         )
 
@@ -116,7 +117,8 @@ public final class AVFoundationRenderEngine {
                 bitrateMode: exportProfile.bitrateMode,
                 container: exportProfile.container,
                 videoCodec: exportProfile.videoCodec,
-                dynamicRange: exportProfile.dynamicRange
+                dynamicRange: exportProfile.dynamicRange,
+                hdrHEVCEncoderMode: exportProfile.hdrHEVCEncoderMode
             )
 
             let binaryResolution = try await ffmpegHDRRenderer.render(
@@ -150,11 +152,13 @@ public final class AVFoundationRenderEngine {
                 diagnosticsLogURL: diagnosticsLogURL,
                 backendSummary: binaryResolution.backendSummary(
                     codec: exportProfile.videoCodec,
-                    dynamicRange: exportProfile.dynamicRange
+                    dynamicRange: exportProfile.dynamicRange,
+                    hdrHEVCEncoderMode: exportProfile.hdrHEVCEncoderMode
                 ),
                 backendInfo: binaryResolution.backendInfo(
                     codec: exportProfile.videoCodec,
-                    dynamicRange: exportProfile.dynamicRange
+                    dynamicRange: exportProfile.dynamicRange,
+                    hdrHEVCEncoderMode: exportProfile.hdrHEVCEncoderMode
                 ),
                 resolvedVideoInfo: ResolvedRenderVideoInfo(
                     width: Int(renderSize.width.rounded()),

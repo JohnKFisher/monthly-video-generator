@@ -101,6 +101,20 @@ public final class ExportProfileManager {
                     "HDR output requires an HDR-capable display/player. SDR playback may appear tone-mapped or dimmer."
                 )
             )
+            switch profile.hdrHEVCEncoderMode {
+            case .automatic:
+                warnings.append(
+                    ExportCompatibilityWarning(
+                        "HDR HEVC encoder Default mode preserves the current quality-first order: libx265 first, then VideoToolbox if required."
+                    )
+                )
+            case .videoToolbox:
+                warnings.append(
+                    ExportCompatibilityWarning(
+                        "HDR HEVC encoder VideoToolbox mode prioritizes faster hardware encoding and fails explicitly if hevc_videotoolbox is unavailable for the selected FFmpeg engine."
+                    )
+                )
+            }
 
         }
 
@@ -170,6 +184,7 @@ public final class ExportProfileManager {
             resolution: profile.resolution,
             dynamicRange: profile.dynamicRange,
             hdrFFmpegBinaryMode: profile.hdrFFmpegBinaryMode,
+            hdrHEVCEncoderMode: profile.hdrHEVCEncoderMode,
             audioLayout: profile.audioLayout,
             bitrateMode: profile.bitrateMode
         )
@@ -184,6 +199,7 @@ public final class ExportProfileManager {
             resolution: resolution,
             dynamicRange: profile.dynamicRange,
             hdrFFmpegBinaryMode: profile.hdrFFmpegBinaryMode,
+            hdrHEVCEncoderMode: profile.hdrHEVCEncoderMode,
             audioLayout: profile.audioLayout,
             bitrateMode: profile.bitrateMode
         )
@@ -198,6 +214,7 @@ public final class ExportProfileManager {
             resolution: profile.resolution,
             dynamicRange: profile.dynamicRange,
             hdrFFmpegBinaryMode: profile.hdrFFmpegBinaryMode,
+            hdrHEVCEncoderMode: profile.hdrHEVCEncoderMode,
             audioLayout: audioLayout,
             bitrateMode: profile.bitrateMode
         )

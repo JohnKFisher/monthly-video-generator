@@ -33,6 +33,7 @@ final class RenderPipelineTests: XCTestCase {
         XCTAssertEqual(profile.resolution, .smart)
         XCTAssertEqual(profile.dynamicRange, .hdr)
         XCTAssertEqual(profile.hdrFFmpegBinaryMode, .autoSystemThenBundled)
+        XCTAssertEqual(profile.hdrHEVCEncoderMode, .automatic)
         XCTAssertEqual(profile.audioLayout, .smart)
         XCTAssertEqual(profile.bitrateMode, .balanced)
     }
@@ -215,6 +216,26 @@ final class RenderPipelineTests: XCTestCase {
         let decoded = try JSONDecoder().decode(ExportProfile.self, from: Data(json.utf8))
 
         XCTAssertEqual(decoded.frameRate, .smart)
+    }
+
+    func testExportProfileDecodesMissingHDRHEVCEncoderModeAsAutomatic() throws {
+        let json = """
+        {
+          "audioCodec": "aac",
+          "audioLayout": "stereo",
+          "bitrateMode": "balanced",
+          "container": "mp4",
+          "dynamicRange": "hdr",
+          "frameRate": "smart",
+          "hdrFFmpegBinaryMode": "autoSystemThenBundled",
+          "resolution": "smart",
+          "videoCodec": "hevc"
+        }
+        """
+
+        let decoded = try JSONDecoder().decode(ExportProfile.self, from: Data(json.utf8))
+
+        XCTAssertEqual(decoded.hdrHEVCEncoderMode, .automatic)
     }
 
     func testSmartRenderSizeChooses720p() {

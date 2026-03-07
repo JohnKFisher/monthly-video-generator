@@ -36,6 +36,52 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertEqual(capabilities.preferredEncoder(for: .h264, dynamicRange: .sdr), .h264VideoToolbox)
     }
 
+    func testHDRAutomaticFallsBackToVideoToolboxWhenLibx265IsUnavailable() {
+        let capabilities = FFmpegCapabilities(
+            versionDescription: "vt-only",
+            hasZscale: true,
+            hasTonemap: true,
+            hasXfade: true,
+            hasAcrossfade: true,
+            hasLibx264: true,
+            hasH264VideoToolbox: true,
+            hasLibx265: false,
+            hasHEVCVideoToolbox: true
+        )
+
+        XCTAssertEqual(
+            capabilities.preferredEncoder(
+                for: .hevc,
+                dynamicRange: .hdr,
+                hdrHEVCEncoderMode: .automatic
+            ),
+            .hevcVideoToolbox
+        )
+    }
+
+    func testHDRVideoToolboxModeRequiresVideoToolboxEncoder() {
+        let capabilities = FFmpegCapabilities(
+            versionDescription: "dual-encoder",
+            hasZscale: true,
+            hasTonemap: true,
+            hasXfade: true,
+            hasAcrossfade: true,
+            hasLibx264: true,
+            hasH264VideoToolbox: true,
+            hasLibx265: true,
+            hasHEVCVideoToolbox: true
+        )
+
+        XCTAssertEqual(
+            capabilities.preferredEncoder(
+                for: .hevc,
+                dynamicRange: .hdr,
+                hdrHEVCEncoderMode: .videoToolbox
+            ),
+            .hevcVideoToolbox
+        )
+    }
+
     func testBinaryResolverAutoFallsBackToBundledWhenSystemIsMissingZscale() throws {
         let systemBinary = FFmpegBinary(
             ffmpegURL: URL(fileURLWithPath: "/tmp/system/ffmpeg"),
@@ -127,6 +173,88 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertNil(resolution.fallbackReason)
     }
 
+    func testBinaryResolverSystemOnlyFailsWhenHDRVideoToolboxModeIsUnavailable() {
+        let systemBinary = FFmpegBinary(
+            ffmpegURL: URL(fileURLWithPath: "/tmp/system/ffmpeg"),
+            ffprobeURL: URL(fileURLWithPath: "/tmp/system/ffprobe"),
+            source: .system
+        )
+
+        let resolver = FFmpegBinaryResolver(
+            systemBinaryOverride: systemBinary,
+            bundledBinaryOverride: nil,
+            probeOverride: { _ in
+                FFmpegCapabilities(
+                    versionDescription: "system",
+                    hasZscale: true,
+                    hasTonemap: true,
+                    hasXfade: true,
+                    hasAcrossfade: true,
+                    hasLibx264: true,
+                    hasH264VideoToolbox: true,
+                    hasLibx265: true,
+                    hasHEVCVideoToolbox: false
+                )
+            }
+        )
+
+        XCTAssertThrowsError(
+            try resolver.resolve(
+                mode: .systemOnly,
+                codec: .hevc,
+                dynamicRange: .hdr,
+                hdrHEVCEncoderMode: .videoToolbox,
+                diagnostics: { _ in }
+            )
+        ) { error in
+            guard case let RenderError.exportFailed(message) = error else {
+                return XCTFail("Expected exportFailed, got \(error)")
+            }
+            XCTAssertTrue(message.contains("hevc_videotoolbox"))
+        }
+    }
+
+    func testBinaryResolverBundledOnlyFailsWhenHDRVideoToolboxModeIsUnavailable() {
+        let bundledBinary = FFmpegBinary(
+            ffmpegURL: URL(fileURLWithPath: "/tmp/bundled/ffmpeg"),
+            ffprobeURL: URL(fileURLWithPath: "/tmp/bundled/ffprobe"),
+            source: .bundled
+        )
+
+        let resolver = FFmpegBinaryResolver(
+            systemBinaryOverride: nil,
+            bundledBinaryOverride: bundledBinary,
+            probeOverride: { _ in
+                FFmpegCapabilities(
+                    versionDescription: "bundled",
+                    hasZscale: true,
+                    hasTonemap: true,
+                    hasXfade: true,
+                    hasAcrossfade: true,
+                    hasLibx264: true,
+                    hasH264VideoToolbox: true,
+                    hasLibx265: true,
+                    hasHEVCVideoToolbox: false
+                )
+            }
+        )
+
+        XCTAssertThrowsError(
+            try resolver.resolve(
+                mode: .bundledOnly,
+                codec: .hevc,
+                dynamicRange: .hdr,
+                hdrHEVCEncoderMode: .videoToolbox,
+                diagnostics: { _ in }
+            )
+        ) { error in
+            guard case let RenderError.exportFailed(message) = error else {
+                return XCTFail("Expected exportFailed, got \(error)")
+            }
+            XCTAssertTrue(message.contains("hevc_videotoolbox"))
+        }
+    }
+
     func testCommandBuilderIncludesHLGMetadataAndTransitions() throws {
         let builder = FFmpegCommandBuilder()
         let resolution = FFmpegBinaryResolution(
@@ -200,6 +328,39 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("-colorspace bt2020nc"))
         XCTAssertTrue(joined.contains("libx265"))
         XCTAssertFalse(joined.contains("hdr-opt=1"))
+    }
+
+    func testCommandBuilderUsesVideoToolboxForHDRWhenRequested() throws {
+        let builder = FFmpegCommandBuilder()
+        let resolution = makeCapableResolution()
+        let plan = FFmpegRenderPlan(
+            clips: [
+                FFmpegRenderClip(
+                    url: URL(fileURLWithPath: "/tmp/a.mov"),
+                    durationSeconds: 2,
+                    includeAudio: true,
+                    hasAudioTrack: true,
+                    colorInfo: ColorInfo(isHDR: true, colorPrimaries: "ITU_R_2020", transferFunction: "ITU_R_2100_HLG"),
+                    sourceDescription: "clip-a"
+                )
+            ],
+            transitionDurationSeconds: 0,
+            outputURL: URL(fileURLWithPath: "/tmp/out.mp4"),
+            renderSize: CGSize(width: 1920, height: 1080),
+            frameRate: 30,
+            audioLayout: .stereo,
+            bitrateMode: .balanced,
+            container: .mp4,
+            videoCodec: .hevc,
+            dynamicRange: .hdr,
+            hdrHEVCEncoderMode: .videoToolbox
+        )
+
+        let command = try builder.buildCommand(plan: plan, resolution: resolution)
+        let joined = command.arguments.joined(separator: " ")
+
+        XCTAssertTrue(joined.contains("hevc_videotoolbox"))
+        XCTAssertFalse(joined.contains("libx265"))
     }
 
     func testCommandBuilderIncludesBT709MetadataForSDRH264() throws {
@@ -668,6 +829,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
             resolution: .smart,
             dynamicRange: .hdr,
             hdrFFmpegBinaryMode: .bundledOnly,
+            hdrHEVCEncoderMode: .videoToolbox,
             audioLayout: .stereo,
             bitrateMode: .qualityFirst
         )
@@ -676,6 +838,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         let decoded = try JSONDecoder().decode(ExportProfile.self, from: data)
 
         XCTAssertEqual(decoded.hdrFFmpegBinaryMode, .bundledOnly)
+        XCTAssertEqual(decoded.hdrHEVCEncoderMode, .videoToolbox)
         XCTAssertEqual(decoded.frameRate, .fps60)
     }
 

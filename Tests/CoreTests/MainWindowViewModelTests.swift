@@ -90,8 +90,8 @@ final class MainWindowViewModelTests: XCTestCase {
                 return RenderResult(
                     outputURL: outputURL,
                     diagnosticsLogURL: nil,
-                    backendSummary: "FFmpeg HDR backend [bundled] (encoder: libx265)",
-                    backendInfo: RenderBackendInfo(binarySource: .bundled, encoder: "libx265"),
+                    backendSummary: "FFmpeg HDR backend [bundled] (encoder: hevcVideoToolbox)",
+                    backendInfo: RenderBackendInfo(binarySource: .bundled, encoder: "hevcVideoToolbox"),
                     resolvedVideoInfo: ResolvedRenderVideoInfo(width: 1280, height: 720, frameRate: 60)
                 )
             }
@@ -106,12 +106,12 @@ final class MainWindowViewModelTests: XCTestCase {
 
         viewModel.selectedFolderURL = directory
         viewModel.outputDirectoryURL = directory
-        viewModel.selectedDynamicRange = .sdr
-        viewModel.selectedVideoCodec = .h264
+        viewModel.selectedDynamicRange = .hdr
         viewModel.selectedAudioLayout = .smart
         viewModel.selectedResolutionPolicy = .smart
         viewModel.selectedFrameRatePolicy = .smart
         viewModel.selectedHDRBinaryMode = .autoSystemThenBundled
+        viewModel.selectedHDRHEVCEncoderMode = .automatic
 
         viewModel.startRender()
         await waitUntil(
@@ -124,18 +124,42 @@ final class MainWindowViewModelTests: XCTestCase {
         let summary = try XCTUnwrap(viewModel.lastSingleRenderCompletionSummary)
         XCTAssertEqual(
             summary.rows.map(\.title),
-            ["Container", "Codec", "Audio", "Bitrate", "Resolution", "Frame Rate", "Range", "Engine"]
+            ["Container", "Codec", "HDR HEVC Encoder", "Audio", "Bitrate", "Resolution", "Frame Rate", "Range", "Engine"]
         )
         XCTAssertEqual(value(in: summary, forRowNamed: "Container"), "MP4")
-        XCTAssertEqual(value(in: summary, forRowNamed: "Codec"), "H.264")
+        XCTAssertEqual(value(in: summary, forRowNamed: "Codec"), "HEVC")
+        XCTAssertEqual(value(in: summary, forRowNamed: "HDR HEVC Encoder"), "Default (VideoToolbox)")
         XCTAssertEqual(value(in: summary, forRowNamed: "Audio"), "Smart (5.1)")
         XCTAssertEqual(value(in: summary, forRowNamed: "Bitrate"), "Balanced")
         XCTAssertEqual(value(in: summary, forRowNamed: "Resolution"), "Smart (720p)")
         XCTAssertEqual(value(in: summary, forRowNamed: "Frame Rate"), "Smart (60 fps)")
-        XCTAssertEqual(value(in: summary, forRowNamed: "Range"), "SDR")
+        XCTAssertEqual(value(in: summary, forRowNamed: "Range"), "HDR")
         XCTAssertEqual(value(in: summary, forRowNamed: "Engine"), "Auto (Bundled)")
         XCTAssertEqual(viewModel.renderCompleteAlertMessage, summary.alertMessage)
         XCTAssertTrue(summary.alertMessage.hasPrefix(summary.outputPath))
+    }
+
+    func testHDRHEVCEncoderSelectionPersistsAndResetRestoresDefault() {
+        let preferencesStore = makePreferencesStore()
+        let initialViewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            filenameGenerator: TemporaryTestingFilenameGenerator(now: { Date(timeIntervalSince1970: 1_700_000_050) }),
+            preferencesStore: preferencesStore
+        )
+
+        initialViewModel.selectedHDRHEVCEncoderMode = .videoToolbox
+
+        let restoredViewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            filenameGenerator: TemporaryTestingFilenameGenerator(now: { Date(timeIntervalSince1970: 1_700_000_051) }),
+            preferencesStore: preferencesStore
+        )
+
+        XCTAssertEqual(restoredViewModel.selectedHDRHEVCEncoderMode, .videoToolbox)
+
+        restoredViewModel.resetExportSettingsToPlexDefaults()
+
+        XCTAssertEqual(restoredViewModel.selectedHDRHEVCEncoderMode, .automatic)
     }
 
     func testMegaTestReusesPreparationAndIgnoresManualOutputNameField() async throws {
@@ -238,6 +262,44 @@ final class MainWindowViewModelTests: XCTestCase {
         )
     }
 
+    func testMegaTestForcesVideoToolboxForHDRHEVCWithoutChangingSelection() async {
+        let dateProvider = DateSequenceProvider([
+            Date(timeIntervalSince1970: 1_700_000_700),
+            Date(timeIntervalSince1970: 1_700_000_701),
+            Date(timeIntervalSince1970: 1_700_000_702),
+            Date(timeIntervalSince1970: 1_700_000_703),
+            Date(timeIntervalSince1970: 1_700_000_704)
+        ])
+        let coordinator = RenderCoordinatorSpy(preparation: makePreparation())
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            filenameGenerator: TemporaryTestingFilenameGenerator(now: dateProvider.next),
+            preferencesStore: makePreferencesStore()
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.selectedFolderURL = directory
+        viewModel.outputDirectoryURL = directory
+        viewModel.selectedDynamicRange = .hdr
+        viewModel.selectedHDRHEVCEncoderMode = .automatic
+        viewModel.megaTestVaryAudio = true
+
+        viewModel.startMegaTest()
+        await waitUntil(
+            timeout: 2.0,
+            message: "Timed out waiting for HDR HEVC mega test batch to finish."
+        ) {
+            coordinator.renderRequests.count == 4 && !viewModel.isRendering
+        }
+
+        XCTAssertEqual(viewModel.selectedHDRHEVCEncoderMode, .automatic)
+        XCTAssertEqual(
+            Set(coordinator.renderRequests.map(\.export.hdrHEVCEncoderMode)),
+            [.videoToolbox]
+        )
+    }
+
     func testMegaTestCanStopAfterFailure() async throws {
         let coordinator = RenderCoordinatorSpy(preparation: makePreparation(), failedRenderIndices: [0])
         let viewModel = makeViewModel(
@@ -335,12 +397,12 @@ final class MainWindowViewModelTests: XCTestCase {
 
         viewModel.selectedFolderURL = directory
         viewModel.outputDirectoryURL = directory
-        viewModel.selectedDynamicRange = .sdr
-        viewModel.selectedVideoCodec = .h264
+        viewModel.selectedDynamicRange = .hdr
         viewModel.selectedAudioLayout = .smart
         viewModel.selectedResolutionPolicy = .smart
         viewModel.selectedFrameRatePolicy = .smart
         viewModel.selectedHDRBinaryMode = .autoSystemThenBundled
+        viewModel.selectedHDRHEVCEncoderMode = .automatic
 
         viewModel.startRender()
         await waitUntil(
@@ -355,6 +417,7 @@ final class MainWindowViewModelTests: XCTestCase {
         viewModel.selectedResolutionPolicy = .fixed4K
         viewModel.selectedFrameRatePolicy = .fps30
         viewModel.selectedHDRBinaryMode = .bundledOnly
+        viewModel.selectedHDRHEVCEncoderMode = .videoToolbox
 
         coordinator.resumeRender()
         await waitUntil(
@@ -365,7 +428,8 @@ final class MainWindowViewModelTests: XCTestCase {
         }
 
         let summary = try XCTUnwrap(viewModel.lastSingleRenderCompletionSummary)
-        XCTAssertEqual(value(in: summary, forRowNamed: "Codec"), "H.264")
+        XCTAssertEqual(value(in: summary, forRowNamed: "Codec"), "HEVC")
+        XCTAssertEqual(value(in: summary, forRowNamed: "HDR HEVC Encoder"), "Default (libx265)")
         XCTAssertEqual(value(in: summary, forRowNamed: "Audio"), "Smart (Stereo)")
         XCTAssertEqual(value(in: summary, forRowNamed: "Resolution"), "Smart (1080p)")
         XCTAssertEqual(value(in: summary, forRowNamed: "Frame Rate"), "Smart (60 fps)")
@@ -555,7 +619,7 @@ private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendabl
             backendSummary: nil,
             backendInfo: RenderBackendInfo(
                 binarySource: defaultBinarySource(for: request.export.hdrFFmpegBinaryMode),
-                encoder: nil
+                encoder: defaultEncoder(for: request.export)
             ),
             resolvedVideoInfo: ResolvedRenderVideoInfo(
                 width: defaultVideoDimensions(for: request.export.resolution).width,
@@ -589,6 +653,19 @@ private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendabl
             return 30
         case .fps60:
             return 60
+        }
+    }
+
+    private func defaultEncoder(for profile: ExportProfile) -> String? {
+        switch (profile.dynamicRange, profile.videoCodec, profile.hdrHEVCEncoderMode) {
+        case (.hdr, .hevc, .videoToolbox):
+            return "hevcVideoToolbox"
+        case (.hdr, .hevc, .automatic):
+            return "libx265"
+        case (.sdr, .hevc, _):
+            return "hevcVideoToolbox"
+        case (.sdr, .h264, _), (.hdr, .h264, _):
+            return "h264VideoToolbox"
         }
     }
 

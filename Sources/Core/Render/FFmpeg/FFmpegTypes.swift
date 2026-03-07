@@ -20,6 +20,17 @@ enum FFmpegVideoEncoder: String, Codable, Sendable {
             return .hevc
         }
     }
+
+    var displayLabel: String {
+        switch self {
+        case .libx264:
+            return "libx264"
+        case .h264VideoToolbox, .hevcVideoToolbox:
+            return "VideoToolbox"
+        case .libx265:
+            return "libx265"
+        }
+    }
 }
 
 struct FFmpegBinary: Equatable, Sendable {
@@ -43,16 +54,32 @@ struct FFmpegCapabilities: Equatable, Sendable {
     let hasLibx265: Bool
     let hasHEVCVideoToolbox: Bool
 
-    func preferredEncoder(for codec: VideoCodec, dynamicRange: DynamicRange) -> FFmpegVideoEncoder? {
-        for encoder in preferredEncoders(for: codec, dynamicRange: dynamicRange) where supports(encoder) {
+    func preferredEncoder(
+        for codec: VideoCodec,
+        dynamicRange: DynamicRange,
+        hdrHEVCEncoderMode: HDRHEVCEncoderMode = .automatic
+    ) -> FFmpegVideoEncoder? {
+        for encoder in preferredEncoders(
+            for: codec,
+            dynamicRange: dynamicRange,
+            hdrHEVCEncoderMode: hdrHEVCEncoderMode
+        ) where supports(encoder) {
             return encoder
         }
         return nil
     }
 
-    func supportsRenderPipeline(codec: VideoCodec, dynamicRange: DynamicRange) -> Bool {
+    func supportsRenderPipeline(
+        codec: VideoCodec,
+        dynamicRange: DynamicRange,
+        hdrHEVCEncoderMode: HDRHEVCEncoderMode = .automatic
+    ) -> Bool {
         supportsRenderPipeline(
-            requirements: FFmpegCapabilityRequirements(codec: codec, dynamicRange: dynamicRange)
+            requirements: FFmpegCapabilityRequirements(
+                codec: codec,
+                dynamicRange: dynamicRange,
+                hdrHEVCEncoderMode: hdrHEVCEncoderMode
+            )
         )
     }
 
@@ -61,12 +88,24 @@ struct FFmpegCapabilities: Equatable, Sendable {
             (!requirements.requiresHDRToSDRToneMapping || hasTonemap) &&
             hasXfade &&
             hasAcrossfade &&
-            preferredEncoder(for: requirements.codec, dynamicRange: requirements.dynamicRange) != nil
+            preferredEncoder(
+                for: requirements.codec,
+                dynamicRange: requirements.dynamicRange,
+                hdrHEVCEncoderMode: requirements.hdrHEVCEncoderMode
+            ) != nil
     }
 
-    func missingRequiredCapabilities(codec: VideoCodec, dynamicRange: DynamicRange) -> [String] {
+    func missingRequiredCapabilities(
+        codec: VideoCodec,
+        dynamicRange: DynamicRange,
+        hdrHEVCEncoderMode: HDRHEVCEncoderMode = .automatic
+    ) -> [String] {
         missingRequiredCapabilities(
-            requirements: FFmpegCapabilityRequirements(codec: codec, dynamicRange: dynamicRange)
+            requirements: FFmpegCapabilityRequirements(
+                codec: codec,
+                dynamicRange: dynamicRange,
+                hdrHEVCEncoderMode: hdrHEVCEncoderMode
+            )
         )
     }
 
@@ -84,8 +123,18 @@ struct FFmpegCapabilities: Equatable, Sendable {
         if !hasAcrossfade {
             missing.append("acrossfade filter")
         }
-        if preferredEncoder(for: requirements.codec, dynamicRange: requirements.dynamicRange) == nil {
-            missing.append(requiredEncoderDescription(codec: requirements.codec, dynamicRange: requirements.dynamicRange))
+        if preferredEncoder(
+            for: requirements.codec,
+            dynamicRange: requirements.dynamicRange,
+            hdrHEVCEncoderMode: requirements.hdrHEVCEncoderMode
+        ) == nil {
+            missing.append(
+                requiredEncoderDescription(
+                    codec: requirements.codec,
+                    dynamicRange: requirements.dynamicRange,
+                    hdrHEVCEncoderMode: requirements.hdrHEVCEncoderMode
+                )
+            )
         }
         return missing
     }
@@ -103,28 +152,40 @@ struct FFmpegCapabilities: Equatable, Sendable {
         }
     }
 
-    private func preferredEncoders(for codec: VideoCodec, dynamicRange: DynamicRange) -> [FFmpegVideoEncoder] {
-        switch (dynamicRange, codec) {
-        case (.hdr, .hevc):
+    private func preferredEncoders(
+        for codec: VideoCodec,
+        dynamicRange: DynamicRange,
+        hdrHEVCEncoderMode: HDRHEVCEncoderMode
+    ) -> [FFmpegVideoEncoder] {
+        switch (dynamicRange, codec, hdrHEVCEncoderMode) {
+        case (.hdr, .hevc, .automatic):
             return [.libx265, .hevcVideoToolbox]
-        case (.hdr, .h264):
+        case (.hdr, .hevc, .videoToolbox):
+            return [.hevcVideoToolbox]
+        case (.hdr, .h264, _):
             return []
-        case (.sdr, .hevc):
+        case (.sdr, .hevc, _):
             return [.hevcVideoToolbox, .libx265]
-        case (.sdr, .h264):
+        case (.sdr, .h264, _):
             return [.h264VideoToolbox, .libx264]
         }
     }
 
-    private func requiredEncoderDescription(codec: VideoCodec, dynamicRange: DynamicRange) -> String {
-        switch (dynamicRange, codec) {
-        case (.hdr, .hevc):
+    private func requiredEncoderDescription(
+        codec: VideoCodec,
+        dynamicRange: DynamicRange,
+        hdrHEVCEncoderMode: HDRHEVCEncoderMode
+    ) -> String {
+        switch (dynamicRange, codec, hdrHEVCEncoderMode) {
+        case (.hdr, .hevc, .videoToolbox):
+            return "hevc_videotoolbox HEVC Main10 encoder"
+        case (.hdr, .hevc, .automatic):
             return "HEVC Main10 encoder (libx265 or hevc_videotoolbox)"
-        case (.hdr, .h264):
+        case (.hdr, .h264, _):
             return "HDR HEVC Main10 encoder (libx265 or hevc_videotoolbox)"
-        case (.sdr, .hevc):
+        case (.sdr, .hevc, _):
             return "HEVC encoder (hevc_videotoolbox or libx265)"
-        case (.sdr, .h264):
+        case (.sdr, .h264, _):
             return "H.264 encoder (h264_videotoolbox or libx264)"
         }
     }
@@ -137,18 +198,34 @@ struct FFmpegBinaryResolution: Equatable, Sendable {
     let bundledCapabilities: FFmpegCapabilities?
     let fallbackReason: String?
 
-    func backendSummary(codec: VideoCodec, dynamicRange: DynamicRange) -> String {
+    func backendSummary(
+        codec: VideoCodec,
+        dynamicRange: DynamicRange,
+        hdrHEVCEncoderMode: HDRHEVCEncoderMode = .automatic
+    ) -> String {
         var base = "FFmpeg \(dynamicRange == .hdr ? "HDR" : "SDR") backend [\(selectedBinary.source.rawValue)]"
-        if let encoder = selectedCapabilities.preferredEncoder(for: codec, dynamicRange: dynamicRange) {
+        if let encoder = selectedCapabilities.preferredEncoder(
+            for: codec,
+            dynamicRange: dynamicRange,
+            hdrHEVCEncoderMode: hdrHEVCEncoderMode
+        ) {
             base += " (encoder: \(encoder.rawValue))"
         }
         return base
     }
 
-    func backendInfo(codec: VideoCodec, dynamicRange: DynamicRange) -> RenderBackendInfo {
+    func backendInfo(
+        codec: VideoCodec,
+        dynamicRange: DynamicRange,
+        hdrHEVCEncoderMode: HDRHEVCEncoderMode = .automatic
+    ) -> RenderBackendInfo {
         RenderBackendInfo(
             binarySource: selectedBinary.source.renderBackendBinarySource,
-            encoder: selectedCapabilities.preferredEncoder(for: codec, dynamicRange: dynamicRange)?.rawValue
+            encoder: selectedCapabilities.preferredEncoder(
+                for: codec,
+                dynamicRange: dynamicRange,
+                hdrHEVCEncoderMode: hdrHEVCEncoderMode
+            )?.rawValue
         )
     }
 }
@@ -165,11 +242,18 @@ struct FFmpegRenderClip: Equatable, Sendable {
 struct FFmpegCapabilityRequirements: Equatable, Sendable {
     let codec: VideoCodec
     let dynamicRange: DynamicRange
+    let hdrHEVCEncoderMode: HDRHEVCEncoderMode
     let requiresHDRToSDRToneMapping: Bool
 
-    init(codec: VideoCodec, dynamicRange: DynamicRange, requiresHDRToSDRToneMapping: Bool = false) {
+    init(
+        codec: VideoCodec,
+        dynamicRange: DynamicRange,
+        hdrHEVCEncoderMode: HDRHEVCEncoderMode = .automatic,
+        requiresHDRToSDRToneMapping: Bool = false
+    ) {
         self.codec = codec
         self.dynamicRange = dynamicRange
+        self.hdrHEVCEncoderMode = hdrHEVCEncoderMode
         self.requiresHDRToSDRToneMapping = requiresHDRToSDRToneMapping
     }
 }
@@ -195,11 +279,39 @@ struct FFmpegRenderPlan: Equatable, Sendable {
     let container: ContainerFormat
     let videoCodec: VideoCodec
     let dynamicRange: DynamicRange
+    let hdrHEVCEncoderMode: HDRHEVCEncoderMode
+
+    init(
+        clips: [FFmpegRenderClip],
+        transitionDurationSeconds: Double,
+        outputURL: URL,
+        renderSize: CGSize,
+        frameRate: Int,
+        audioLayout: AudioLayout,
+        bitrateMode: BitrateMode,
+        container: ContainerFormat,
+        videoCodec: VideoCodec,
+        dynamicRange: DynamicRange,
+        hdrHEVCEncoderMode: HDRHEVCEncoderMode = .automatic
+    ) {
+        self.clips = clips
+        self.transitionDurationSeconds = transitionDurationSeconds
+        self.outputURL = outputURL
+        self.renderSize = renderSize
+        self.frameRate = frameRate
+        self.audioLayout = audioLayout
+        self.bitrateMode = bitrateMode
+        self.container = container
+        self.videoCodec = videoCodec
+        self.dynamicRange = dynamicRange
+        self.hdrHEVCEncoderMode = hdrHEVCEncoderMode
+    }
 
     var capabilityRequirements: FFmpegCapabilityRequirements {
         FFmpegCapabilityRequirements(
             codec: videoCodec,
             dynamicRange: dynamicRange,
+            hdrHEVCEncoderMode: hdrHEVCEncoderMode,
             requiresHDRToSDRToneMapping: requiresHDRToSDRToneMapping
         )
     }

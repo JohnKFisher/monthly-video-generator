@@ -40,7 +40,7 @@ Implemented now:
 - PhotoKit discovery/materialization for month/year library rendering.
 - PhotoKit source selection now supports both month/year filtering and album-based filtering.
 - Export UI/model for container/codec/frame rate/resolution/HDR/audio layout/bitrate mode.
-- Plex/Infuse-oriented default export preset for Apple TV 4K (`MP4 + HEVC + HDR + Smart Audio + Balanced + HDR Auto`), plus explicit UI reset action.
+- Plex/Infuse-oriented default export preset for Apple TV 4K (`MP4 + HEVC + HDR + Smart Audio + Balanced + HDR Auto + HDR HEVC Encoder Default`), plus explicit UI reset action.
 - Temporary test-only output naming and mega-test batch UI for exercising Resolution/FPS/Range/Audio combinations.
 
 Open for S4 completion:
@@ -108,6 +108,8 @@ Operational updates after first packaged run:
 - Added a temporary `Mega Test` batch mode that expands checked Resolution/FPS/Range/Audio axes into sequential renders while reusing one preparation pass and prompting after per-combination failures.
 - Switched SDR final export from `AVAssetExportSession` to the shared FFmpeg backend, added SDR H.264/HEVC encoder capability probing, and normalized SDR outputs to BT.709 with real bitrate control.
 - Reworked the main window into a denser two-column layout with a vertical scroll fallback so all controls remain reachable on smaller window heights.
+- Added an `HDR HEVC Encoder` picker with `Default` and strict `VideoToolbox` modes, threaded that selection through FFmpeg capability resolution and completion summaries, and kept `Default` as the persisted Plex/Infuse baseline.
+- Mega Test now forces `VideoToolbox` for HDR HEVC combinations at execution time so large HDR test batches run faster without mutating the user’s saved single-render encoder choice.
 
 ## Decisions Log
 

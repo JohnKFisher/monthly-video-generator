@@ -25,11 +25,16 @@ struct FFmpegBinaryResolver {
         mode: HDRFFmpegBinaryMode,
         codec: VideoCodec,
         dynamicRange: DynamicRange,
+        hdrHEVCEncoderMode: HDRHEVCEncoderMode = .automatic,
         diagnostics: (String) -> Void
     ) throws -> FFmpegBinaryResolution {
         try resolve(
             mode: mode,
-            requirements: FFmpegCapabilityRequirements(codec: codec, dynamicRange: dynamicRange),
+            requirements: FFmpegCapabilityRequirements(
+                codec: codec,
+                dynamicRange: dynamicRange,
+                hdrHEVCEncoderMode: hdrHEVCEncoderMode
+            ),
             diagnostics: diagnostics
         )
     }

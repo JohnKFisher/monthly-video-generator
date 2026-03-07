@@ -209,6 +209,9 @@ final class MainWindowViewModel: ObservableObject {
     @Published var selectedHDRBinaryMode: HDRFFmpegBinaryMode = MainWindowViewModel.defaultExportProfile.hdrFFmpegBinaryMode {
         didSet { handleRenderSettingChange() }
     }
+    @Published var selectedHDRHEVCEncoderMode: HDRHEVCEncoderMode = MainWindowViewModel.defaultExportProfile.hdrHEVCEncoderMode {
+        didSet { handleRenderSettingChange() }
+    }
     @Published var selectedAudioLayout: AudioLayout = MainWindowViewModel.defaultExportProfile.audioLayout {
         didSet {
             handleRenderSettingChange()
@@ -350,6 +353,19 @@ final class MainWindowViewModel: ObservableObject {
         "HDR currently exports as HEVC Main10 video for Plex + Infuse playback on Apple TV 4K."
     }
 
+    var hdrHEVCEncoderDescription: String {
+        guard selectedDynamicRange == .hdr else {
+            return "Applies only to HDR HEVC exports."
+        }
+
+        switch selectedHDRHEVCEncoderMode {
+        case .automatic:
+            return "Default preserves the current quality-first HDR order: libx265 first, then VideoToolbox if required."
+        case .videoToolbox:
+            return "VideoToolbox is faster for HDR HEVC on supported Macs, but may trade some compression efficiency and fails explicitly if unavailable for the selected FFmpeg engine."
+        }
+    }
+
     var bitrateModeDescription: String {
         "Bitrate mode controls FFmpeg encode quality, size, and speed tradeoffs for both SDR and HDR exports."
     }
@@ -396,6 +412,13 @@ final class MainWindowViewModel: ObservableObject {
         return "When Mega Test includes Smart audio in Apple Photos mode, preparation may inspect/download selected videos before rendering."
     }
 
+    var megaTestHDRHEVCEncoderDescription: String? {
+        guard selectedDynamicRange == .hdr || megaTestVaryRange else {
+            return nil
+        }
+        return "Mega Test uses VideoToolbox for HDR HEVC combinations to keep test runs faster."
+    }
+
     var megaTestSelection: MegaTestSelection {
         MegaTestSelection(
             varyResolution: megaTestVaryResolution,
@@ -435,6 +458,7 @@ final class MainWindowViewModel: ObservableObject {
         selectedResolutionPolicy = profile.resolution.normalized
         selectedDynamicRange = profile.dynamicRange
         selectedHDRBinaryMode = profile.hdrFFmpegBinaryMode
+        selectedHDRHEVCEncoderMode = profile.hdrHEVCEncoderMode
         selectedAudioLayout = profile.audioLayout
         selectedBitrateMode = profile.bitrateMode
         writeDiagnosticsLog = true
@@ -522,6 +546,7 @@ final class MainWindowViewModel: ObservableObject {
                 frameRate: selectedFrameRatePolicy,
                 dynamicRange: selectedDynamicRange,
                 audioLayout: selectedAudioLayout,
+                hdrHEVCEncoderMode: selectedHDRHEVCEncoderMode,
                 items: preparedSession.preparation.items
             )
 
@@ -664,7 +689,8 @@ final class MainWindowViewModel: ObservableObject {
                 resolution: selectedResolutionPolicy.normalized,
                 frameRate: selectedFrameRatePolicy,
                 dynamicRange: selectedDynamicRange,
-                audioLayout: selectedAudioLayout
+                audioLayout: selectedAudioLayout,
+                hdrHEVCEncoderMode: selectedHDRHEVCEncoderMode
             )
         )
     }
@@ -751,6 +777,7 @@ final class MainWindowViewModel: ObservableObject {
         frameRate: FrameRatePolicy,
         dynamicRange: DynamicRange,
         audioLayout: AudioLayout,
+        hdrHEVCEncoderMode: HDRHEVCEncoderMode,
         items: [MediaItem]
     ) -> ExportProfileResolution {
         exportProfileManager.resolveProfile(
@@ -758,7 +785,8 @@ final class MainWindowViewModel: ObservableObject {
                 resolution: resolution.normalized,
                 frameRate: frameRate,
                 dynamicRange: dynamicRange,
-                audioLayout: audioLayout
+                audioLayout: audioLayout,
+                hdrHEVCEncoderMode: hdrHEVCEncoderMode
             ),
             items: items
         )
@@ -770,6 +798,7 @@ final class MainWindowViewModel: ObservableObject {
             frameRate: combination.frameRate,
             dynamicRange: combination.dynamicRange,
             audioLayout: combination.audioLayout,
+            hdrHEVCEncoderMode: megaTestHDRHEVCEncoderMode(for: combination.dynamicRange),
             items: items
         )
     }
@@ -778,7 +807,8 @@ final class MainWindowViewModel: ObservableObject {
         resolution: ResolutionPolicy,
         frameRate: FrameRatePolicy,
         dynamicRange: DynamicRange,
-        audioLayout: AudioLayout
+        audioLayout: AudioLayout,
+        hdrHEVCEncoderMode: HDRHEVCEncoderMode
     ) -> ExportProfile {
         ExportProfile(
             container: selectedContainer,
@@ -788,9 +818,14 @@ final class MainWindowViewModel: ObservableObject {
             resolution: resolution.normalized,
             dynamicRange: dynamicRange,
             hdrFFmpegBinaryMode: selectedHDRBinaryMode,
+            hdrHEVCEncoderMode: hdrHEVCEncoderMode,
             audioLayout: audioLayout,
             bitrateMode: selectedBitrateMode
         )
+    }
+
+    private func megaTestHDRHEVCEncoderMode(for dynamicRange: DynamicRange) -> HDRHEVCEncoderMode {
+        dynamicRange == .hdr ? .videoToolbox : selectedHDRHEVCEncoderMode
     }
 
     private func prepareRenderSession(
@@ -985,7 +1020,7 @@ final class MainWindowViewModel: ObservableObject {
         actualProfile: ExportProfile,
         renderResult: RenderResult
     ) -> RenderCompletionSummary {
-        let rows = [
+        var rows = [
             makeRenderCompletionSummaryRow(
                 title: "Container",
                 selectedLabel: containerLabel(for: requestedProfile.container),
@@ -996,40 +1031,58 @@ final class MainWindowViewModel: ObservableObject {
                 selectedLabel: videoCodecLabel(for: requestedProfile.videoCodec),
                 actualLabel: videoCodecLabel(for: actualProfile.videoCodec)
             ),
-            makeRenderCompletionSummaryRow(
-                title: "Audio",
-                selectedLabel: requestedProfile.audioLayout.displayLabel,
-                actualLabel: actualProfile.audioLayout.displayLabel
-            ),
-            makeRenderCompletionSummaryRow(
-                title: "Bitrate",
-                selectedLabel: bitrateModeLabel(for: requestedProfile.bitrateMode),
-                actualLabel: bitrateModeLabel(for: actualProfile.bitrateMode)
-            ),
-            makeRenderCompletionSummaryRow(
-                title: "Resolution",
-                selectedLabel: resolutionPolicyLabel(for: requestedProfile.resolution),
-                actualLabel: resolvedResolutionLabel(renderResult: renderResult, fallbackPolicy: actualProfile.resolution)
-            ),
-            makeRenderCompletionSummaryRow(
-                title: "Frame Rate",
-                selectedLabel: frameRatePolicyLabel(for: requestedProfile.frameRate),
-                actualLabel: resolvedFrameRateLabel(renderResult: renderResult, fallbackPolicy: actualProfile.frameRate)
-            ),
-            makeRenderCompletionSummaryRow(
-                title: "Range",
-                selectedLabel: dynamicRangeLabel(for: requestedProfile.dynamicRange),
-                actualLabel: dynamicRangeLabel(for: actualProfile.dynamicRange)
-            ),
-            makeRenderCompletionSummaryRow(
-                title: "Engine",
-                selectedLabel: hdrBinaryModeLabel(for: requestedProfile.hdrFFmpegBinaryMode),
-                actualLabel: resolvedEngineLabel(
-                    selectedMode: actualProfile.hdrFFmpegBinaryMode,
-                    backendInfo: renderResult.backendInfo
+        ]
+
+        if actualProfile.dynamicRange == .hdr, actualProfile.videoCodec == .hevc {
+            rows.append(
+                makeRenderCompletionSummaryRow(
+                    title: "HDR HEVC Encoder",
+                    selectedLabel: hdrHEVCEncoderModeLabel(for: requestedProfile.hdrHEVCEncoderMode),
+                    actualLabel: resolvedHDRHEVCEncoderLabel(
+                        renderResult: renderResult,
+                        fallbackMode: actualProfile.hdrHEVCEncoderMode
+                    )
                 )
             )
-        ]
+        }
+
+        rows.append(
+            contentsOf: [
+                makeRenderCompletionSummaryRow(
+                    title: "Audio",
+                    selectedLabel: requestedProfile.audioLayout.displayLabel,
+                    actualLabel: actualProfile.audioLayout.displayLabel
+                ),
+                makeRenderCompletionSummaryRow(
+                    title: "Bitrate",
+                    selectedLabel: bitrateModeLabel(for: requestedProfile.bitrateMode),
+                    actualLabel: bitrateModeLabel(for: actualProfile.bitrateMode)
+                ),
+                makeRenderCompletionSummaryRow(
+                    title: "Resolution",
+                    selectedLabel: resolutionPolicyLabel(for: requestedProfile.resolution),
+                    actualLabel: resolvedResolutionLabel(renderResult: renderResult, fallbackPolicy: actualProfile.resolution)
+                ),
+                makeRenderCompletionSummaryRow(
+                    title: "Frame Rate",
+                    selectedLabel: frameRatePolicyLabel(for: requestedProfile.frameRate),
+                    actualLabel: resolvedFrameRateLabel(renderResult: renderResult, fallbackPolicy: actualProfile.frameRate)
+                ),
+                makeRenderCompletionSummaryRow(
+                    title: "Range",
+                    selectedLabel: dynamicRangeLabel(for: requestedProfile.dynamicRange),
+                    actualLabel: dynamicRangeLabel(for: actualProfile.dynamicRange)
+                ),
+                makeRenderCompletionSummaryRow(
+                    title: "Engine",
+                    selectedLabel: hdrBinaryModeLabel(for: requestedProfile.hdrFFmpegBinaryMode),
+                    actualLabel: resolvedEngineLabel(
+                        selectedMode: actualProfile.hdrFFmpegBinaryMode,
+                        backendInfo: renderResult.backendInfo
+                    )
+                )
+            ]
+        )
 
         return RenderCompletionSummary(outputPath: outputPath, rows: rows)
     }
@@ -1109,6 +1162,10 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
 
+    private func hdrHEVCEncoderModeLabel(for hdrHEVCEncoderMode: HDRHEVCEncoderMode) -> String {
+        hdrHEVCEncoderMode.displayLabel
+    }
+
     private func resolvedResolutionLabel(
         renderResult: RenderResult,
         fallbackPolicy: ResolutionPolicy
@@ -1140,6 +1197,31 @@ final class MainWindowViewModel: ObservableObject {
             return "\(resolvedVideoInfo.frameRate) fps"
         }
         return frameRatePolicyLabel(for: fallbackPolicy)
+    }
+
+    private func resolvedHDRHEVCEncoderLabel(
+        renderResult: RenderResult,
+        fallbackMode: HDRHEVCEncoderMode
+    ) -> String {
+        if let backendEncoder = renderResult.backendInfo?.encoder {
+            return hdrHEVCEncoderActualLabel(for: backendEncoder)
+        }
+        return hdrHEVCEncoderModeLabel(for: fallbackMode)
+    }
+
+    private func hdrHEVCEncoderActualLabel(for backendEncoder: String) -> String {
+        switch backendEncoder {
+        case "libx265":
+            return "libx265"
+        case "hevcVideoToolbox":
+            return "VideoToolbox"
+        default:
+            let lowered = backendEncoder.lowercased()
+            if lowered.contains("videotoolbox") {
+                return "VideoToolbox"
+            }
+            return backendEncoder
+        }
     }
 
     private func resolvedEngineLabel(
@@ -1391,6 +1473,7 @@ final class MainWindowViewModel: ObservableObject {
         selectedResolutionPolicy = settings.selectedResolutionPolicy.normalized
         selectedDynamicRange = settings.selectedDynamicRange
         selectedHDRBinaryMode = settings.selectedHDRBinaryMode ?? .autoSystemThenBundled
+        selectedHDRHEVCEncoderMode = settings.selectedHDRHEVCEncoderMode ?? .automatic
         selectedAudioLayout = settings.selectedAudioLayout
         selectedBitrateMode = settings.selectedBitrateMode
         writeDiagnosticsLog = settings.writeDiagnosticsLog ?? true
@@ -1421,6 +1504,7 @@ final class MainWindowViewModel: ObservableObject {
             selectedResolutionPolicy: selectedResolutionPolicy.normalized,
             selectedDynamicRange: selectedDynamicRange,
             selectedHDRBinaryMode: selectedHDRBinaryMode,
+            selectedHDRHEVCEncoderMode: selectedHDRHEVCEncoderMode,
             selectedAudioLayout: selectedAudioLayout,
             selectedBitrateMode: selectedBitrateMode,
             writeDiagnosticsLog: writeDiagnosticsLog
@@ -1445,6 +1529,7 @@ final class MainWindowViewModel: ObservableObject {
         let selectedResolutionPolicy: ResolutionPolicy
         let selectedDynamicRange: DynamicRange
         let selectedHDRBinaryMode: HDRFFmpegBinaryMode?
+        let selectedHDRHEVCEncoderMode: HDRHEVCEncoderMode?
         let selectedAudioLayout: AudioLayout
         let selectedBitrateMode: BitrateMode
         let writeDiagnosticsLog: Bool?
