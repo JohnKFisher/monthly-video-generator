@@ -144,9 +144,13 @@ Current temporary test-only app behavior:
 
 ## Known-Good Rollback
 
-Current known-good rollback checkpoint (`Post-ffmpeg HDR`):
+Current known-good rollback checkpoint (`v0.6.0`):
 
-- `checkpoint/20260305-known-good-post-ffmpeg-hdr`
+- `checkpoint/20260308-known-good-v0-6-0`
+
+Previous known-good release checkpoint (`v0.5.0`):
+
+- `checkpoint/20260307-known-good-v0-5-0`
 
 Pre-FFmpeg-pivot rollback checkpoint:
 
@@ -156,8 +160,20 @@ Rollback commands for current known-good:
 
 ```bash
 git fetch --tags
-git checkout checkpoint/20260305-known-good-post-ffmpeg-hdr
-git checkout -b codex/recover-known-good
+git status
+git checkout -b codex/recover-known-good-v0-6-0 checkpoint/20260308-known-good-v0-6-0
+```
+
+If you already have local changes you want to keep before rolling back, stash them first:
+
+```bash
+git stash push -u -m "pre-rollback safety stash"
+```
+
+To inspect the exact checkpoint without creating a branch:
+
+```bash
+git checkout checkpoint/20260308-known-good-v0-6-0
 ```
 
 ## Test
