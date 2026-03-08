@@ -176,6 +176,8 @@ To inspect the exact checkpoint without creating a branch:
 git checkout checkpoint/20260308-known-good-v0-6-0
 ```
 
+Checkpoint tags are kept under the repo's bounded-retention policy, so treat the current known-good tag and the previous release tag above as the supported rollback anchors.
+
 ## Test
 
 ```bash

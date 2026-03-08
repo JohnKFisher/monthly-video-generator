@@ -279,13 +279,11 @@ For the prior release checkpoint, use:
 
 - `git checkout -b codex/recover-known-good-v0-5-0 checkpoint/20260307-known-good-v0-5-0`
 
-For the prior FFmpeg-stable checkpoint, use:
-
-- `git checkout checkpoint/20260305-known-good-post-ffmpeg-hdr`
-
 For the pre-FFmpeg-pivot baseline, use:
 
 - `git checkout checkpoint/20260304-known-good-pre-ffmpeg-pivot`
+
+Checkpoint tags are retained under the repo's 30-tag policy, so the current known-good release tag and the immediately prior release tag above are the supported rollback anchors.
 
 ## Last Updated
 
