@@ -1342,6 +1342,47 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("-metadata com.jkfisher.monthlyvideogenerator.export_json={\"appName\":\"Monthly Video Generator\",\"appVersion\":\"0.5.0\",\"buildNumber\":\"20260307200552\"}"))
     }
 
+    func testCommandBuilderMapsNamedChaptersForFinalMP4() throws {
+        let builder = FFmpegCommandBuilder()
+        let chapterMetadataURL = URL(fileURLWithPath: "/tmp/chapters.ffmeta")
+        let plan = FFmpegRenderPlan(
+            clips: [
+                FFmpegRenderClip(
+                    url: URL(fileURLWithPath: "/tmp/single.mov"),
+                    durationSeconds: 3.0,
+                    includeAudio: true,
+                    hasAudioTrack: true,
+                    colorInfo: ColorInfo(isHDR: false, colorPrimaries: "ITU_R_709_2", transferFunction: "ITU_R_709_2"),
+                    sourceDescription: "single"
+                )
+            ],
+            transitionDurationSeconds: 0,
+            outputURL: URL(fileURLWithPath: "/tmp/out.mp4"),
+            renderSize: CGSize(width: 1920, height: 1080),
+            frameRate: 30,
+            audioLayout: .stereo,
+            bitrateMode: .balanced,
+            container: .mp4,
+            videoCodec: .h264,
+            dynamicRange: .sdr,
+            chapters: [
+                RenderChapter(
+                    kind: .openingTitle,
+                    title: "June 2026",
+                    startTimeSeconds: 0,
+                    endTimeSeconds: 2.5
+                )
+            ],
+            chapterMetadataURL: chapterMetadataURL
+        )
+
+        let command = try builder.buildCommand(plan: plan, resolution: makeCapableResolution())
+        let joined = command.arguments.joined(separator: " ")
+
+        XCTAssertTrue(joined.contains("-f ffmetadata -i \(chapterMetadataURL.path)"))
+        XCTAssertTrue(joined.contains("-map_chapters 1"))
+    }
+
     func testCommandBuilderOmitsEmbeddedMetadataForIntermediateChunks() throws {
         let builder = FFmpegCommandBuilder()
         let plan = FFmpegRenderPlan(
@@ -1395,6 +1436,70 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertFalse(joined.contains("use_metadata_tags"))
         XCTAssertFalse(joined.contains("-metadata title="))
         XCTAssertFalse(joined.contains("-metadata show="))
+    }
+
+    func testCommandBuilderOmitsChapterMappingForNonMP4OrIntermediatePlans() throws {
+        let builder = FFmpegCommandBuilder()
+        let chapter = RenderChapter(
+            kind: .openingTitle,
+            title: "June 2026",
+            startTimeSeconds: 0,
+            endTimeSeconds: 2.5
+        )
+        let chapterMetadataURL = URL(fileURLWithPath: "/tmp/chapters.ffmeta")
+        let movPlan = FFmpegRenderPlan(
+            clips: [
+                FFmpegRenderClip(
+                    url: URL(fileURLWithPath: "/tmp/mov.mov"),
+                    durationSeconds: 3.0,
+                    includeAudio: true,
+                    hasAudioTrack: true,
+                    colorInfo: .unknown,
+                    sourceDescription: "mov"
+                )
+            ],
+            transitionDurationSeconds: 0,
+            outputURL: URL(fileURLWithPath: "/tmp/out.mov"),
+            renderSize: CGSize(width: 1920, height: 1080),
+            frameRate: 30,
+            audioLayout: .stereo,
+            bitrateMode: .balanced,
+            container: .mov,
+            videoCodec: .h264,
+            dynamicRange: .sdr,
+            chapters: [chapter],
+            chapterMetadataURL: chapterMetadataURL
+        )
+        let intermediatePlan = FFmpegRenderPlan(
+            clips: [
+                FFmpegRenderClip(
+                    url: URL(fileURLWithPath: "/tmp/chunk.mov"),
+                    durationSeconds: 3.0,
+                    includeAudio: true,
+                    hasAudioTrack: true,
+                    colorInfo: .unknown,
+                    sourceDescription: "chunk"
+                )
+            ],
+            transitionDurationSeconds: 0,
+            outputURL: URL(fileURLWithPath: "/tmp/chunk-out.mp4"),
+            renderSize: CGSize(width: 1920, height: 1080),
+            frameRate: 30,
+            audioLayout: .stereo,
+            bitrateMode: .balanced,
+            container: .mp4,
+            videoCodec: .h264,
+            dynamicRange: .sdr,
+            chapters: [chapter],
+            chapterMetadataURL: chapterMetadataURL,
+            renderIntent: .intermediateChunk
+        )
+
+        let movCommand = try builder.buildCommand(plan: movPlan, resolution: makeCapableResolution())
+        let intermediateCommand = try builder.buildCommand(plan: intermediatePlan, resolution: makeCapableResolution())
+
+        XCTAssertFalse(movCommand.arguments.joined(separator: " ").contains("-map_chapters"))
+        XCTAssertFalse(intermediateCommand.arguments.joined(separator: " ").contains("-map_chapters"))
     }
 
     func testBundledFFmpegPreservesPlexTVTagsInMP4() throws {
@@ -1486,6 +1591,92 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertEqual(tags["com.jkfisher.monthlyvideogenerator.build_number"] as? String, "20260307200552")
         XCTAssertEqual(tags["com.jkfisher.monthlyvideogenerator.export_profile"] as? String, "container=mp4,videoCodec=h264,audioCodec=aac,dynamicRange=sdr,resolutionPolicy=fixed720p,resolvedSize=16x16,frameRatePolicy=fps30,resolvedFrameRate=30,audioLayout=stereo,bitrateMode=balanced")
         XCTAssertEqual(tags["com.jkfisher.monthlyvideogenerator.export_json"] as? String, exportJSON)
+    }
+
+    func testBundledFFmpegPreservesNamedChaptersInMP4() throws {
+        guard
+            let ffmpegURL = bundledBinaryURL(named: "ffmpeg"),
+            let ffprobeURL = bundledBinaryURL(named: "ffprobe")
+        else {
+            throw XCTSkip("Bundled FFmpeg binaries are not available in third_party/ffmpeg/bin.")
+        }
+
+        let outputDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outputDirectory) }
+
+        let sourceURL = outputDirectory.appendingPathComponent("source.mp4")
+        let chapterMetadataURL = outputDirectory.appendingPathComponent("chapters.ffmeta")
+        let outputURL = outputDirectory.appendingPathComponent("chaptered.mp4")
+        try """
+        ;FFMETADATA1
+        [CHAPTER]
+        TIMEBASE=1/1000
+        START=0
+        END=500
+        title=June 2026
+        [CHAPTER]
+        TIMEBASE=1/1000
+        START=500
+        END=1000
+        title=June 28 (1 photo)
+        """.write(to: chapterMetadataURL, atomically: true, encoding: .utf8)
+
+        _ = try runProcess(
+            executableURL: ffmpegURL,
+            arguments: [
+                "-hide_banner",
+                "-loglevel", "error",
+                "-y",
+                "-f", "lavfi",
+                "-i", "color=c=black:s=16x16:d=1",
+                "-f", "lavfi",
+                "-i", "anullsrc=r=48000:cl=stereo",
+                "-shortest",
+                "-c:v", "libx264",
+                "-pix_fmt", "yuv420p",
+                "-c:a", "aac",
+                sourceURL.path
+            ]
+        )
+
+        _ = try runProcess(
+            executableURL: ffmpegURL,
+            arguments: [
+                "-hide_banner",
+                "-loglevel", "error",
+                "-y",
+                "-i", sourceURL.path,
+                "-f", "ffmetadata",
+                "-i", chapterMetadataURL.path,
+                "-map", "0",
+                "-map_metadata", "0",
+                "-map_chapters", "1",
+                "-c", "copy",
+                "-movflags", "+use_metadata_tags",
+                outputURL.path
+            ]
+        )
+
+        let probeOutput = try runProcess(
+            executableURL: ffprobeURL,
+            arguments: [
+                "-v", "quiet",
+                "-print_format", "json",
+                "-show_chapters",
+                outputURL.path
+            ]
+        )
+        let data = try XCTUnwrap(probeOutput.data(using: .utf8))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let chapters = try XCTUnwrap(json["chapters"] as? [[String: Any]])
+        let firstTags = try XCTUnwrap(chapters[0]["tags"] as? [String: Any])
+        let secondTags = try XCTUnwrap(chapters[1]["tags"] as? [String: Any])
+
+        XCTAssertEqual(chapters.count, 2)
+        XCTAssertEqual(firstTags["title"] as? String, "June 2026")
+        XCTAssertEqual(secondTags["title"] as? String, "June 28 (1 photo)")
+        XCTAssertEqual(chapters[1]["start_time"] as? String, "0.500000")
     }
 
     private func makeCapableResolution() -> FFmpegBinaryResolution {

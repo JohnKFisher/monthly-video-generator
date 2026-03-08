@@ -145,6 +145,8 @@ struct FFmpegHDRChunkPipelineBuilder {
                 dynamicRange: .hdr,
                 hdrHEVCEncoderMode: finalPlan.hdrHEVCEncoderMode,
                 embeddedMetadata: nil,
+                chapters: [],
+                chapterMetadataURL: nil,
                 renderIntent: .intermediateChunk
             )
         }
@@ -174,6 +176,8 @@ struct FFmpegHDRChunkPipelineBuilder {
             dynamicRange: finalPlan.dynamicRange,
             hdrHEVCEncoderMode: finalPlan.hdrHEVCEncoderMode,
             embeddedMetadata: finalPlan.embeddedMetadata,
+            chapters: finalPlan.chapters,
+            chapterMetadataURL: finalPlan.chapterMetadataURL,
             renderIntent: .finalDelivery
         )
 

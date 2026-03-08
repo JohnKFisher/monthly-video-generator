@@ -72,6 +72,7 @@ These helper scripts are for the QuickTime Keys (`mdta`) metadata written by the
 Current exports write:
 
 - Plex-facing tags such as `title`, `show`, `season_number`, `episode_sort`, `episode_id`, `description`, `synopsis`, and `comment`
+- Named chapters on final `MP4` exports, including the opening title card plus one capture-date day chapter per day bucket
 - Standard provenance tags `software`, `version`, and `information`
 - App-specific custom keys under `com.jkfisher.monthlyvideogenerator.*`
 
@@ -80,6 +81,8 @@ Inspect an export:
 ```bash
 ./scripts/show_metadata.sh "/path/to/video.mp4"
 ```
+
+That default view now includes a `[Chapters]` section when the file contains embedded chapter titles.
 
 Force JSON output via `ffprobe`:
 

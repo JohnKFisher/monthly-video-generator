@@ -376,6 +376,8 @@ struct FFmpegRenderPlan: Equatable, Sendable {
     let dynamicRange: DynamicRange
     let hdrHEVCEncoderMode: HDRHEVCEncoderMode
     let embeddedMetadata: EmbeddedOutputMetadata?
+    let chapters: [RenderChapter]
+    let chapterMetadataURL: URL?
     let renderIntent: FFmpegRenderIntent
 
     init(
@@ -392,6 +394,8 @@ struct FFmpegRenderPlan: Equatable, Sendable {
         dynamicRange: DynamicRange,
         hdrHEVCEncoderMode: HDRHEVCEncoderMode = .automatic,
         embeddedMetadata: EmbeddedOutputMetadata? = nil,
+        chapters: [RenderChapter] = [],
+        chapterMetadataURL: URL? = nil,
         renderIntent: FFmpegRenderIntent = .finalDelivery
     ) {
         self.clips = clips
@@ -407,6 +411,8 @@ struct FFmpegRenderPlan: Equatable, Sendable {
         self.dynamicRange = dynamicRange
         self.hdrHEVCEncoderMode = hdrHEVCEncoderMode
         self.embeddedMetadata = embeddedMetadata
+        self.chapters = chapters
+        self.chapterMetadataURL = chapterMetadataURL
         self.renderIntent = renderIntent
     }
 

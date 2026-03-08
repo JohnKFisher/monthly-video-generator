@@ -183,7 +183,24 @@ final class PlexTVMetadataTests: XCTestCase {
             style: .stageOneDefault,
             export: .plexInfuseAppleTV4KDefault,
             output: OutputTarget(directory: outputDirectory, baseFilename: metadata.identity.filenameBase),
-            plexTVMetadata: metadata
+            plexTVMetadata: metadata,
+            chapters: [
+                RenderChapter(
+                    kind: .openingTitle,
+                    title: "June 2026",
+                    startTimeSeconds: 0,
+                    endTimeSeconds: 2.5
+                ),
+                RenderChapter(
+                    kind: .captureDay,
+                    title: "June 28 (1 photo)",
+                    startTimeSeconds: 2.5,
+                    endTimeSeconds: 5.5,
+                    photoCount: 1,
+                    videoCount: 0,
+                    captureDayStart: makeDate(year: 2026, month: 6, day: 28)
+                )
+            ]
         )
         let preparation = RenderPreparation(
             items: [makeImageItem(id: "image-1", captureDate: makeDate(year: 2026, month: 6, day: 28))],
@@ -212,6 +229,7 @@ final class PlexTVMetadataTests: XCTestCase {
         let embeddedJSON = try XCTUnwrap(plexJSON["embedded"] as? [String: Any])
         let provenanceJSON = try XCTUnwrap(embeddedJSON["provenance"] as? [String: Any])
         let customEntriesJSON = try XCTUnwrap(provenanceJSON["customEntries"] as? [String: Any])
+        let chaptersJSON = try XCTUnwrap(json?["chapters"] as? [[String: Any]])
 
         XCTAssertEqual(identityJSON["showTitle"] as? String, "Family Videos")
         XCTAssertEqual(embeddedJSON["seasonNumber"] as? Int, 2026)
@@ -221,6 +239,9 @@ final class PlexTVMetadataTests: XCTestCase {
         XCTAssertEqual(provenanceJSON["software"] as? String, "Monthly Video Generator")
         XCTAssertEqual(provenanceJSON["version"] as? String, "0.5.0 (20260307200552)")
         XCTAssertEqual(customEntriesJSON["com.jkfisher.monthlyvideogenerator.app_version"] as? String, "0.5.0")
+        XCTAssertEqual(chaptersJSON.count, 2)
+        XCTAssertEqual(chaptersJSON[0]["title"] as? String, "June 2026")
+        XCTAssertEqual(chaptersJSON[1]["title"] as? String, "June 28 (1 photo)")
     }
 
     private func makeImageItem(id: String, captureDate: Date) -> MediaItem {

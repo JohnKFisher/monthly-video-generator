@@ -102,6 +102,19 @@ struct FFmpegCommandBuilder {
             }
         }
 
+        var chapterInputIndex: Int?
+        if plan.renderIntent == .finalDelivery,
+           plan.container == .mp4,
+           !plan.chapters.isEmpty,
+           let chapterMetadataURL = plan.chapterMetadataURL {
+            chapterInputIndex = nextInputIndex
+            arguments.append(contentsOf: [
+                "-f", "ffmetadata",
+                "-i", chapterMetadataURL.path
+            ])
+            nextInputIndex += 1
+        }
+
         var filterParts: [String] = []
         let renderWidth = Int(plan.renderSize.width.rounded())
         let renderHeight = Int(plan.renderSize.height.rounded())
@@ -221,6 +234,9 @@ struct FFmpegCommandBuilder {
             "-map", "[vfinal]",
             "-map", "[afinal]"
         ])
+        if let chapterInputIndex {
+            arguments.append(contentsOf: ["-map_chapters", String(chapterInputIndex)])
+        }
 
         appendEncoderArguments(for: selectedEncoder, plan: plan, arguments: &arguments)
         appendAudioArguments(
@@ -723,6 +739,8 @@ private extension FFmpegRenderPlan {
             dynamicRange: dynamicRange,
             hdrHEVCEncoderMode: hdrHEVCEncoderMode,
             embeddedMetadata: embeddedMetadata,
+            chapters: chapters,
+            chapterMetadataURL: chapterMetadataURL,
             renderIntent: .finalDelivery
         )
     }

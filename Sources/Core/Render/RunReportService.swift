@@ -11,6 +11,7 @@ public struct RunReport: Equatable {
     public let renderBackendSummary: String?
     public let exportProfile: ExportProfile
     public let plexTVMetadata: PlexTVMetadata?
+    public let chapters: [RenderChapter]
 
     public init(
         generatedAt: Date,
@@ -22,7 +23,8 @@ public struct RunReport: Equatable {
         diagnosticsLogPath: String?,
         renderBackendSummary: String?,
         exportProfile: ExportProfile,
-        plexTVMetadata: PlexTVMetadata?
+        plexTVMetadata: PlexTVMetadata?,
+        chapters: [RenderChapter]
     ) {
         self.generatedAt = generatedAt
         self.sourceDescription = sourceDescription
@@ -34,6 +36,7 @@ public struct RunReport: Equatable {
         self.renderBackendSummary = renderBackendSummary
         self.exportProfile = exportProfile
         self.plexTVMetadata = plexTVMetadata
+        self.chapters = chapters
     }
 }
 
@@ -66,7 +69,8 @@ public final class RunReportService {
             diagnosticsLogPath: diagnosticsLogURL?.path,
             renderBackendSummary: renderBackendSummary,
             exportProfile: request.export,
-            plexTVMetadata: request.plexTVMetadata
+            plexTVMetadata: request.plexTVMetadata,
+            chapters: request.chapters
         )
     }
 
@@ -89,6 +93,7 @@ public final class RunReportService {
         let renderBackendSummary: String?
         let exportProfile: ExportProfile
         let plexTVMetadata: PlexTVMetadata?
+        let chapters: [RenderChapter]
 
         init(report: RunReport) {
             generatedAt = report.generatedAt
@@ -101,6 +106,7 @@ public final class RunReportService {
             renderBackendSummary = report.renderBackendSummary
             exportProfile = report.exportProfile
             plexTVMetadata = report.plexTVMetadata
+            chapters = report.chapters
         }
     }
 }

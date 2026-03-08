@@ -31,6 +31,7 @@ public final class AVFoundationRenderEngine {
         exportProfile: ExportProfile,
         outputTarget: OutputTarget,
         plexTVMetadata: PlexTVMetadata?,
+        chapters: [RenderChapter],
         photoMaterializer: PhotoAssetMaterializing?,
         writeDiagnosticsLog: Bool,
         progressHandler: (@MainActor @Sendable (Double) -> Void)? = nil,
@@ -71,6 +72,9 @@ public final class AVFoundationRenderEngine {
                 "episodeID=\(plexTVMetadata.identity.episodeID), title=\(plexTVMetadata.identity.episodeTitle)"
             )
         }
+        if !chapters.isEmpty {
+            diagnostics.add("Resolved output chapters: \(chapters.count)")
+        }
 
         let requestedRenderSize = resolveRenderSize(from: timeline, policy: exportProfile.resolution)
         let resolvedFrameRate = resolveFrameRate(from: timeline, policy: exportProfile.frameRate)
@@ -107,6 +111,17 @@ public final class AVFoundationRenderEngine {
 
             let transitionDuration = effectiveTransitionDuration(clips: clips, requestedSeconds: style.crossfadeDurationSeconds)
             diagnostics.add("Transition duration resolved: \(format(transitionDuration))")
+            let resolvedChapters = resolveOutputChapters(
+                requestedChapters: chapters,
+                timeline: timeline,
+                transitionDuration: transitionDuration,
+                container: exportProfile.container
+            )
+            let chapterMetadataURL = try makeChapterMetadataFileIfNeeded(
+                chapters: resolvedChapters,
+                temporaryURLs: &temporaryURLs,
+                diagnostics: diagnostics
+            )
             let outputURL = try OutputPathResolver.resolveUniqueURL(target: outputTarget, container: exportProfile.container)
             diagnostics.add("Resolved output URL: \(outputURL.path)")
             reportStatus("Configuring \(exportProfile.dynamicRange == .hdr ? "HDR" : "SDR") encode...", handler: statusHandler)
@@ -122,7 +137,9 @@ public final class AVFoundationRenderEngine {
                 renderSize: renderSize,
                 frameRate: resolvedFrameRate,
                 exportProfile: exportProfile,
-                embeddedMetadata: plexTVMetadata?.embedded
+                embeddedMetadata: plexTVMetadata?.embedded,
+                chapters: resolvedChapters,
+                chapterMetadataURL: chapterMetadataURL
             )
 
             let binaryResolution: FFmpegBinaryResolution
@@ -277,7 +294,9 @@ public final class AVFoundationRenderEngine {
         renderSize: CGSize,
         frameRate: Int,
         exportProfile: ExportProfile,
-        embeddedMetadata: EmbeddedOutputMetadata?
+        embeddedMetadata: EmbeddedOutputMetadata?,
+        chapters: [RenderChapter],
+        chapterMetadataURL: URL?
     ) -> FFmpegRenderPlan {
         FFmpegRenderPlan(
             clips: clips.map {
@@ -303,8 +322,72 @@ public final class AVFoundationRenderEngine {
             dynamicRange: exportProfile.dynamicRange,
             hdrHEVCEncoderMode: exportProfile.hdrHEVCEncoderMode,
             embeddedMetadata: embeddedMetadata,
+            chapters: chapters,
+            chapterMetadataURL: chapterMetadataURL,
             renderIntent: .finalDelivery
         )
+    }
+
+    private func resolveOutputChapters(
+        requestedChapters: [RenderChapter],
+        timeline: Timeline,
+        transitionDuration: CMTime,
+        container: ContainerFormat
+    ) -> [RenderChapter] {
+        guard container == .mp4 else {
+            return []
+        }
+        if !requestedChapters.isEmpty {
+            return requestedChapters
+        }
+        return MP4ChapterResolver.resolve(
+            timeline: timeline,
+            effectiveTransitionDurationSeconds: max(transitionDuration.seconds, 0)
+        )
+    }
+
+    private func makeChapterMetadataFileIfNeeded(
+        chapters: [RenderChapter],
+        temporaryURLs: inout [URL],
+        diagnostics: RenderDiagnostics
+    ) throws -> URL? {
+        guard !chapters.isEmpty else {
+            return nil
+        }
+
+        let metadataURL = temporaryArtifactURL(pathExtension: "ffmeta")
+        let contents = makeChapterMetadataContents(chapters: chapters)
+        do {
+            try contents.write(to: metadataURL, atomically: true, encoding: .utf8)
+            temporaryURLs.append(metadataURL)
+            diagnostics.add("Chapter metadata file prepared: \(metadataURL.path) (chapters=\(chapters.count))")
+            return metadataURL
+        } catch {
+            throw RenderError.exportFailed("Unable to write chapter metadata file. \(describe(error))")
+        }
+    }
+
+    private func makeChapterMetadataContents(chapters: [RenderChapter]) -> String {
+        var lines = [";FFMETADATA1"]
+        for chapter in chapters {
+            lines.append("[CHAPTER]")
+            lines.append("TIMEBASE=1/1000")
+            let startMilliseconds = max(Int((chapter.startTimeSeconds * 1000).rounded()), 0)
+            let endMilliseconds = max(Int((chapter.endTimeSeconds * 1000).rounded()), startMilliseconds + 1)
+            lines.append("START=\(startMilliseconds)")
+            lines.append("END=\(endMilliseconds)")
+            lines.append("title=\(escapeFFMetadataText(chapter.title))")
+        }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    private func escapeFFMetadataText(_ value: String) -> String {
+        var escaped = value.replacingOccurrences(of: "\\", with: "\\\\")
+        escaped = escaped.replacingOccurrences(of: "=", with: "\\=")
+        escaped = escaped.replacingOccurrences(of: ";", with: "\\;")
+        escaped = escaped.replacingOccurrences(of: "#", with: "\\#")
+        escaped = escaped.replacingOccurrences(of: "\n", with: "\\\n")
+        return escaped
     }
 
     private func executeFFmpegPlan(
@@ -1240,10 +1323,13 @@ public final class AVFoundationRenderEngine {
     }
 
     private func temporaryRenderURL(fileType: AVFileType) -> URL {
+        temporaryArtifactURL(pathExtension: fileType == .mp4 ? "mp4" : "mov")
+    }
+
+    private func temporaryArtifactURL(pathExtension: String) -> URL {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("MonthlyVideoGenerator", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let fileExtension = fileType == .mp4 ? "mp4" : "mov"
-        return directory.appendingPathComponent(UUID().uuidString).appendingPathExtension(fileExtension)
+        return directory.appendingPathComponent(UUID().uuidString).appendingPathExtension(pathExtension)
     }
 
     private func cleanupTemporaryFiles(_ urls: inout [URL], diagnostics: RenderDiagnostics) {

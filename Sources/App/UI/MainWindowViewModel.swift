@@ -1212,14 +1212,21 @@ final class MainWindowViewModel: ObservableObject {
         outputBaseFilename: String,
         plexTVMetadata: PlexTVMetadata
     ) -> RenderRequest {
-        RenderRequest(
+        let chapters = exportProfile.container == .mp4
+            ? MP4ChapterResolver.resolve(
+                timeline: preparedSession.preparation.timeline,
+                requestedTransitionDurationSeconds: preparedSession.style.crossfadeDurationSeconds
+            )
+            : []
+        return RenderRequest(
             source: preparedSession.source,
             monthYear: preparedSession.monthYear,
             ordering: .captureDateAscendingStable,
             style: preparedSession.style,
             export: exportProfile,
             output: OutputTarget(directory: outputDirectoryURL, baseFilename: outputBaseFilename),
-            plexTVMetadata: plexTVMetadata
+            plexTVMetadata: plexTVMetadata,
+            chapters: chapters
         )
     }
 

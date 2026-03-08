@@ -122,6 +122,8 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertEqual(request.plexTVMetadata?.identity.filenameBase, expectedOutputName(monthYear: resolvedMonthYear))
         XCTAssertEqual(request.plexTVMetadata?.embedded.description, expectedDescription(monthYear: resolvedMonthYear))
         XCTAssertEqual(request.plexTVMetadata?.embedded.creationTime, julyCaptureDate)
+        XCTAssertFalse(request.chapters.isEmpty)
+        XCTAssertEqual(request.chapters.last?.photoCount, 1)
     }
 
     func testFolderRenderMixedMonthFailureRevealsManualOverride() async throws {
