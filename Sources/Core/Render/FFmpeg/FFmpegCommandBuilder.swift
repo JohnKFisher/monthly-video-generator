@@ -19,6 +19,8 @@ struct FFmpegCommand {
 
 struct FFmpegCommandBuilder {
     static let hlgSDRNominalPeak = 1400
+    static let hdrSDRLuminanceLift = 2.0
+    static let hdrSDRNominalPeak = 1000
 
     func buildCommand(plan: FFmpegRenderPlan, resolution: FFmpegBinaryResolution) throws -> FFmpegCommand {
         guard !plan.clips.isEmpty else {
@@ -303,20 +305,14 @@ struct FFmpegCommandBuilder {
     }
 
     private func hdrColorNormalizeFilter(for colorInfo: ColorInfo) -> String {
-        if colorInfo.isHDR {
-            let transfer = (colorInfo.transferFunction ?? "").lowercased()
-            if transfer.contains("2084") || transfer.contains("pq") {
+        switch colorInfo.transferFlavor {
+        case .pq:
                 return "zscale=transferin=smpte2084:primariesin=bt2020:matrixin=bt2020nc:transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc"
-            }
+        case .hlg:
             return "zscale=transferin=arib-std-b67:primariesin=bt2020:matrixin=bt2020nc:transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc"
+        case .sdr:
+            return sdrToHLGUpliftFilter(for: colorInfo)
         }
-
-        let primaries = (colorInfo.colorPrimaries ?? "").lowercased()
-        if primaries.contains("p3") || primaries.contains("smpte432") || primaries.contains("dci") {
-            return "zscale=transferin=bt709:primariesin=smpte432:matrixin=bt709:transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc"
-        }
-
-        return "zscale=transferin=bt709:primariesin=bt709:matrixin=bt709:transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc"
     }
 
     private func sdrColorNormalizeFilter(for colorInfo: ColorInfo) -> String {
@@ -324,8 +320,7 @@ struct FFmpegCommandBuilder {
             return hdrToSDRToneMapFilter(for: transferFlavor)
         }
 
-        let primaries = (colorInfo.colorPrimaries ?? "").lowercased()
-        if primaries.contains("p3") || primaries.contains("smpte432") || primaries.contains("dci") {
+        if colorInfo.isDisplayP3Like {
             return "zscale=transferin=bt709:primariesin=smpte432:matrixin=bt709:transfer=bt709:primaries=bt709:matrix=bt709"
         }
 
@@ -333,14 +328,23 @@ struct FFmpegCommandBuilder {
     }
 
     private func hdrTransferFlavor(for colorInfo: ColorInfo) -> FFmpegHDRTransferFlavor? {
-        guard colorInfo.isHDR else {
+        switch colorInfo.transferFlavor {
+        case .pq:
+            return .pq
+        case .hlg:
+            return .hlg
+        case .sdr:
             return nil
         }
-        let transfer = (colorInfo.transferFunction ?? "").lowercased()
-        if transfer.contains("2084") || transfer.contains("pq") {
-            return .pq
-        }
-        return .hlg
+    }
+
+    private func sdrToHLGUpliftFilter(for colorInfo: ColorInfo) -> String {
+        let primariesIn = colorInfo.isDisplayP3Like ? "smpte432" : "bt709"
+        let liftExpression = "min(val*\(String(format: "%.1f", Self.hdrSDRLuminanceLift)),maxval)"
+        return "zscale=transferin=bt709:primariesin=\(primariesIn):matrixin=bt709:transfer=linear," +
+            "format=gbrpf32le," +
+            "lutrgb=r='\(liftExpression)':g='\(liftExpression)':b='\(liftExpression)'," +
+            "zscale=transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc:range=tv:npl=\(Self.hdrSDRNominalPeak)"
     }
 
     // SDR output needs explicit HDR-to-SDR tone mapping for video clips with HDR

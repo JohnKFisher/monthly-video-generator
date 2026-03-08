@@ -51,6 +51,32 @@ struct FFmpegBinaryResolver {
         )
     }
 
+    func resolveProbeBinary(mode: HDRFFmpegBinaryMode) throws -> FFmpegBinary {
+        let systemBinary = systemBinaryOverride ?? discoverSystemBinary()
+        let bundledBinary = bundledBinaryOverride ?? discoverBundledBinary()
+
+        switch mode {
+        case .autoSystemThenBundled:
+            if let systemBinary {
+                return systemBinary
+            }
+            if let bundledBinary {
+                return bundledBinary
+            }
+            throw RenderError.exportFailed("No ffprobe binary was found in PATH/common locations or bundled FFmpeg resources.")
+        case .systemOnly:
+            guard let systemBinary else {
+                throw RenderError.exportFailed("FFmpeg engine is set to System Only, but no system ffprobe was found in PATH/common locations.")
+            }
+            return systemBinary
+        case .bundledOnly:
+            guard let bundledBinary else {
+                throw RenderError.exportFailed("FFmpeg engine is set to Bundled Only, but bundled ffprobe was not found in app resources or third_party/ffmpeg.")
+            }
+            return bundledBinary
+        }
+    }
+
     private func resolve(
         mode: HDRFFmpegBinaryMode,
         requirements: FFmpegCapabilityRequirements,

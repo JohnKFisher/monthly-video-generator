@@ -167,6 +167,41 @@ public final class StillImageClipFactory {
 
     public init() {}
 
+    func sourceColorInfo(forImageURL url: URL, dynamicRange: DynamicRange) throws -> ColorInfo {
+        guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+            throw RenderError.exportFailed("Unable to load image source at \(url.path)")
+        }
+
+        let hasHDRGainMap = hasHDRGainMap(imageSource)
+        if dynamicRange == .hdr, hasHDRGainMap {
+            return ColorInfo(
+                isHDR: true,
+                colorPrimaries: AVVideoColorPrimaries_ITU_R_2020,
+                transferFunction: AVVideoTransferFunction_ITU_R_2100_HLG,
+                transferFlavor: .hlg,
+                hdrMetadataFlavor: .gainMap
+            )
+        }
+
+        let thumbnailOptions: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: 512
+        ]
+        let decodedImage = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, thumbnailOptions as CFDictionary)
+            ?? CGImageSourceCreateImageAtIndex(imageSource, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+        let colorConfiguration = intermediateColorConfiguration(
+            for: decodedImage?.colorSpace,
+            dynamicRange: dynamicRange,
+            hasHDRGainMap: hasHDRGainMap
+        )
+        return colorInfo(
+            for: colorConfiguration,
+            hdrMetadataFlavor: hasHDRGainMap ? .gainMap : .none
+        )
+    }
+
     public func makeVideoClip(
         fromImageURL url: URL,
         duration: CMTime,
@@ -1217,6 +1252,38 @@ public final class StillImageClipFactory {
         }
 
         return .bt709()
+    }
+
+    private func colorInfo(
+        for colorConfiguration: IntermediateColorConfiguration,
+        hdrMetadataFlavor: HDRMetadataFlavor
+    ) -> ColorInfo {
+        switch colorConfiguration.avTransferFunction {
+        case AVVideoTransferFunction_ITU_R_2100_HLG:
+            return ColorInfo(
+                isHDR: true,
+                colorPrimaries: colorConfiguration.avColorPrimaries,
+                transferFunction: colorConfiguration.avTransferFunction,
+                transferFlavor: .hlg,
+                hdrMetadataFlavor: hdrMetadataFlavor
+            )
+        case AVVideoTransferFunction_SMPTE_ST_2084_PQ:
+            return ColorInfo(
+                isHDR: true,
+                colorPrimaries: colorConfiguration.avColorPrimaries,
+                transferFunction: colorConfiguration.avTransferFunction,
+                transferFlavor: .pq,
+                hdrMetadataFlavor: hdrMetadataFlavor
+            )
+        default:
+            return ColorInfo(
+                isHDR: false,
+                colorPrimaries: colorConfiguration.avColorPrimaries,
+                transferFunction: colorConfiguration.avTransferFunction,
+                transferFlavor: .sdr,
+                hdrMetadataFlavor: hdrMetadataFlavor
+            )
+        }
     }
 
     private func hasHDRGainMap(_ imageSource: CGImageSource) -> Bool {

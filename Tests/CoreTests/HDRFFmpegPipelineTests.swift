@@ -396,7 +396,8 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("lutyuv=y=val*0.600000"))
         XCTAssertTrue(joined.contains("overlay=x=(main_w-overlay_w)/2:y=(main_h-overlay_h)/2:shortest=1:format=auto"))
         XCTAssertTrue(joined.contains("zscale="))
-        XCTAssertFalse(joined.contains("gbrpf32le"))
+        XCTAssertTrue(joined.contains("gbrpf32le"))
+        XCTAssertTrue(joined.contains("lutrgb=r='min(val*2.0,maxval)'"))
         XCTAssertFalse(joined.contains("pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black"))
         XCTAssertTrue(joined.contains("-progress pipe:2"))
         XCTAssertTrue(joined.contains("-stats_period 0.5"))
@@ -1137,6 +1138,150 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("zscale=primaries=bt709"))
         XCTAssertTrue(joined.contains("tonemap=mobius:desat=2"))
         XCTAssertTrue(joined.contains("zscale=transfer=bt709:matrix=bt709:range=tv"))
+    }
+
+    func testCommandBuilderUsesLinearUpliftChainForBT709SDRInHDROutput() throws {
+        let builder = FFmpegCommandBuilder()
+        let command = try builder.buildCommand(
+            plan: FFmpegRenderPlan(
+                clips: [
+                    FFmpegRenderClip(
+                        url: URL(fileURLWithPath: "/tmp/sdr.mov"),
+                        durationSeconds: 2,
+                        includeAudio: false,
+                        hasAudioTrack: false,
+                        colorInfo: ColorInfo(
+                            isHDR: false,
+                            colorPrimaries: "ITU_R_709_2",
+                            transferFunction: "ITU_R_709_2",
+                            transferFlavor: .sdr
+                        ),
+                        sourceDescription: "sdr-bt709"
+                    )
+                ],
+                transitionDurationSeconds: 0,
+                outputURL: URL(fileURLWithPath: "/tmp/out.mov"),
+                renderSize: CGSize(width: 1920, height: 1080),
+                frameRate: 30,
+                audioLayout: .stereo,
+                bitrateMode: .balanced,
+                container: .mov,
+                videoCodec: .hevc,
+                dynamicRange: .hdr
+            ),
+            resolution: makeCapableResolution()
+        )
+        let joined = command.arguments.joined(separator: " ")
+
+        XCTAssertTrue(joined.contains("transferin=bt709:primariesin=bt709:matrixin=bt709:transfer=linear"))
+        XCTAssertTrue(joined.contains("format=gbrpf32le"))
+        XCTAssertTrue(joined.contains("lutrgb=r='min(val*2.0,maxval)':g='min(val*2.0,maxval)':b='min(val*2.0,maxval)'"))
+        XCTAssertTrue(joined.contains("zscale=transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc:range=tv:npl=1000"))
+    }
+
+    func testCommandBuilderUsesLinearUpliftChainForP3SDRInHDROutput() throws {
+        let builder = FFmpegCommandBuilder()
+        let command = try builder.buildCommand(
+            plan: FFmpegRenderPlan(
+                clips: [
+                    FFmpegRenderClip(
+                        url: URL(fileURLWithPath: "/tmp/p3.mov"),
+                        durationSeconds: 2,
+                        includeAudio: false,
+                        hasAudioTrack: false,
+                        colorInfo: ColorInfo(
+                            isHDR: false,
+                            colorPrimaries: "P3_D65",
+                            transferFunction: "ITU_R_709_2",
+                            transferFlavor: .sdr
+                        ),
+                        sourceDescription: "sdr-p3"
+                    )
+                ],
+                transitionDurationSeconds: 0,
+                outputURL: URL(fileURLWithPath: "/tmp/out.mov"),
+                renderSize: CGSize(width: 1920, height: 1080),
+                frameRate: 30,
+                audioLayout: .stereo,
+                bitrateMode: .balanced,
+                container: .mov,
+                videoCodec: .hevc,
+                dynamicRange: .hdr
+            ),
+            resolution: makeCapableResolution()
+        )
+        let joined = command.arguments.joined(separator: " ")
+
+        XCTAssertTrue(joined.contains("transferin=bt709:primariesin=smpte432:matrixin=bt709:transfer=linear"))
+        XCTAssertTrue(joined.contains("lutrgb=r='min(val*2.0,maxval)':g='min(val*2.0,maxval)':b='min(val*2.0,maxval)'"))
+        XCTAssertTrue(joined.contains("npl=1000"))
+    }
+
+    func testFFprobeSourceMetadataParserDetectsDolbyVision() throws {
+        let json = """
+        {
+          "streams": [
+            {
+              "side_data_list": [
+                { "side_data_type": "DOVI configuration record" }
+              ]
+            }
+          ],
+          "frames": [
+            {
+              "side_data_list": [
+                { "side_data_type": "Dolby Vision RPU Data" }
+              ]
+            }
+          ]
+        }
+        """
+
+        let metadata = try FFprobeSourceMetadataProbe.parseVideoSourceMetadata(from: Data(json.utf8))
+
+        XCTAssertEqual(metadata.hdrMetadataFlavor, .dolbyVision)
+    }
+
+    func testFFprobeSourceMetadataParserDetectsDolbyVisionFromStreamFields() throws {
+        let json = """
+        {
+          "streams": [
+            {
+              "dv_profile": 8,
+              "dv_bl_signal_compatibility_id": 4
+            }
+          ]
+        }
+        """
+
+        let metadata = try FFprobeSourceMetadataProbe.parseVideoSourceMetadata(from: Data(json.utf8))
+
+        XCTAssertEqual(metadata.hdrMetadataFlavor, .dolbyVision)
+    }
+
+    func testFFprobeSourceMetadataParserIgnoresPlainHLG() throws {
+        let json = """
+        {
+          "streams": [
+            {
+              "side_data_list": [
+                { "side_data_type": "Ambient viewing environment" }
+              ]
+            }
+          ],
+          "frames": [
+            {
+              "side_data_list": [
+                { "side_data_type": "H.26[45] User Data Unregistered SEI message" }
+              ]
+            }
+          ]
+        }
+        """
+
+        let metadata = try FFprobeSourceMetadataProbe.parseVideoSourceMetadata(from: Data(json.utf8))
+
+        XCTAssertEqual(metadata.hdrMetadataFlavor, .none)
     }
 
     func testCommandBuilderLeavesSDRSourceOnFastSDRPath() throws {

@@ -544,6 +544,54 @@ final class RenderPipelineTests: XCTestCase {
         XCTAssertEqual(name as String, CGColorSpace.displayP3 as String)
     }
 
+    func testColorInfoInfersSDRTransferFlavorByDefault() {
+        let colorInfo = ColorInfo(
+            isHDR: false,
+            colorPrimaries: AVVideoColorPrimaries_ITU_R_709_2,
+            transferFunction: AVVideoTransferFunction_ITU_R_709_2
+        )
+
+        XCTAssertEqual(colorInfo.transferFlavor, .sdr)
+        XCTAssertEqual(colorInfo.hdrMetadataFlavor, .none)
+        XCTAssertFalse(colorInfo.isHDR)
+    }
+
+    func testColorInfoInfersHLGTransferFlavor() {
+        let colorInfo = ColorInfo(
+            isHDR: true,
+            colorPrimaries: AVVideoColorPrimaries_ITU_R_2020,
+            transferFunction: AVVideoTransferFunction_ITU_R_2100_HLG
+        )
+
+        XCTAssertEqual(colorInfo.transferFlavor, .hlg)
+        XCTAssertTrue(colorInfo.isHDR)
+    }
+
+    func testColorInfoInfersPQTransferFlavor() {
+        let colorInfo = ColorInfo(
+            isHDR: true,
+            colorPrimaries: AVVideoColorPrimaries_ITU_R_2020,
+            transferFunction: AVVideoTransferFunction_SMPTE_ST_2084_PQ
+        )
+
+        XCTAssertEqual(colorInfo.transferFlavor, .pq)
+        XCTAssertTrue(colorInfo.isHDR)
+    }
+
+    func testColorInfoPreservesDolbyVisionMetadataFlavor() {
+        let colorInfo = ColorInfo(
+            isHDR: true,
+            colorPrimaries: AVVideoColorPrimaries_ITU_R_2020,
+            transferFunction: AVVideoTransferFunction_ITU_R_2100_HLG,
+            transferFlavor: .hlg,
+            hdrMetadataFlavor: .dolbyVision
+        )
+
+        XCTAssertEqual(colorInfo.hdrMetadataFlavor, .dolbyVision)
+        XCTAssertTrue(colorInfo.usesDolbyVisionFallback)
+        XCTAssertTrue(colorInfo.isHDR)
+    }
+
     private func tryUnwrapCompressionSettings(_ settings: [String: Any]) -> [String: Any] {
         guard let compression = settings[AVVideoCompressionPropertiesKey] as? [String: Any] else {
             XCTFail("Missing AVVideoCompressionPropertiesKey in HDR writer settings.")

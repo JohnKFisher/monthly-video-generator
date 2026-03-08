@@ -98,6 +98,7 @@ public final class AVFoundationRenderEngine {
                 renderSize: renderSize,
                 frameRate: resolvedFrameRate,
                 exportDynamicRange: exportProfile.dynamicRange,
+                exportBinaryMode: exportProfile.hdrFFmpegBinaryMode,
                 photoMaterializer: photoMaterializer,
                 temporaryURLs: &temporaryURLs,
                 diagnostics: diagnostics,
@@ -107,6 +108,13 @@ public final class AVFoundationRenderEngine {
 
             guard !clips.isEmpty else {
                 throw RenderError.noRenderableMedia
+            }
+
+            if exportProfile.dynamicRange == .hdr,
+               clips.contains(where: { $0.colorInfo.usesDolbyVisionFallback }) {
+                diagnostics.add(
+                    "Dolby Vision source detected. Final export preserves HDR as plain HLG fallback and does not preserve Dolby Vision dynamic metadata."
+                )
             }
 
             let transitionDuration = effectiveTransitionDuration(clips: clips, requestedSeconds: style.crossfadeDurationSeconds)
@@ -516,6 +524,7 @@ public final class AVFoundationRenderEngine {
         renderSize: CGSize,
         frameRate: Int,
         exportDynamicRange: DynamicRange,
+        exportBinaryMode: HDRFFmpegBinaryMode,
         photoMaterializer: PhotoAssetMaterializing?,
         temporaryURLs: inout [URL],
         diagnostics: RenderDiagnostics,
@@ -557,7 +566,9 @@ public final class AVFoundationRenderEngine {
                     captureDateOverlayText: nil,
                     captureDateOverlayURL: nil,
                     diagnostics: diagnostics,
-                    isTemporary: true
+                    isTemporary: true,
+                    exportDynamicRange: exportDynamicRange,
+                    exportBinaryMode: exportBinaryMode
                 ) {
                     clips.append(clip)
                 }
@@ -566,6 +577,10 @@ public final class AVFoundationRenderEngine {
                 switch item.type {
                 case .image:
                     let sourceURL = try await resolveURL(for: item, photoMaterializer: photoMaterializer)
+                    let sourceColorInfo = try stillImageClipFactory.sourceColorInfo(
+                        forImageURL: sourceURL,
+                        dynamicRange: exportDynamicRange
+                    )
                     let captureDateOverlayText = formattedCaptureDateOverlayText(for: item, style: style)
                     let captureDateOverlayURL = makeCaptureDateOverlayIfNeeded(
                         overlayText: captureDateOverlayText,
@@ -589,11 +604,13 @@ public final class AVFoundationRenderEngine {
                         fallbackDuration: segment.duration,
                         includeAudio: false,
                         sourceDescription: "image \(item.filename)",
-                        sourceColorInfo: item.colorInfo,
+                        sourceColorInfo: sourceColorInfo,
                         captureDateOverlayText: captureDateOverlayText,
                         captureDateOverlayURL: captureDateOverlayURL,
                         diagnostics: diagnostics,
-                        isTemporary: true
+                        isTemporary: true,
+                        exportDynamicRange: exportDynamicRange,
+                        exportBinaryMode: exportBinaryMode
                     ) {
                         clips.append(clip)
                     }
@@ -619,7 +636,9 @@ public final class AVFoundationRenderEngine {
                         captureDateOverlayText: captureDateOverlayText,
                         captureDateOverlayURL: captureDateOverlayURL,
                         diagnostics: diagnostics,
-                        isTemporary: false
+                        isTemporary: false,
+                        exportDynamicRange: exportDynamicRange,
+                        exportBinaryMode: exportBinaryMode
                     ) {
                         clips.append(clip)
                     }
@@ -706,7 +725,9 @@ public final class AVFoundationRenderEngine {
         captureDateOverlayText: String?,
         captureDateOverlayURL: URL?,
         diagnostics: RenderDiagnostics,
-        isTemporary: Bool
+        isTemporary: Bool,
+        exportDynamicRange: DynamicRange,
+        exportBinaryMode: HDRFFmpegBinaryMode
     ) async throws -> InputClip? {
         let asset = AVURLAsset(url: assetURL)
         let videoTracks: [AVAssetTrack]
@@ -749,13 +770,22 @@ public final class AVFoundationRenderEngine {
         }
 
         let codecDescription = await videoCodecDescription(for: videoTrack)
-        let resolvedColorInfo = await resolvedColorInfo(for: videoTrack, fallback: sourceColorInfo)
+        let resolvedColorInfo = await resolvedColorInfo(
+            for: videoTrack,
+            assetURL: assetURL,
+            fallback: sourceColorInfo,
+            exportDynamicRange: exportDynamicRange,
+            exportBinaryMode: exportBinaryMode,
+            diagnostics: diagnostics,
+            isTemporary: isTemporary
+        )
 
         diagnostics.add(
             "Clip ready: source=\(sourceDescription), asset=\(assetURL.path), clipDuration=\(format(clipDuration)), " +
             "assetDuration=\(format(assetDuration)), videoTrackRange=\(format(videoTrackRange)), " +
             "audioTrackRange=\(format(audioTrackTimeRange)), codec=\(codecDescription), " +
             "colorPrimaries=\(resolvedColorInfo.colorPrimaries ?? "nil"), transfer=\(resolvedColorInfo.transferFunction ?? "nil"), " +
+            "transferFlavor=\(resolvedColorInfo.transferFlavor.rawValue), hdrMetadata=\(resolvedColorInfo.hdrMetadataFlavor.rawValue), " +
             "isHDR=\(resolvedColorInfo.isHDR), temp=\(isTemporary), " +
             "captureDateOverlay=\(captureDateOverlayText ?? "none")"
         )
@@ -1442,7 +1472,15 @@ public final class AVFoundationRenderEngine {
         return "\(fourcc) (\(mediaSubType))"
     }
 
-    private func resolvedColorInfo(for track: AVAssetTrack, fallback: ColorInfo) async -> ColorInfo {
+    private func resolvedColorInfo(
+        for track: AVAssetTrack,
+        assetURL: URL,
+        fallback: ColorInfo,
+        exportDynamicRange: DynamicRange,
+        exportBinaryMode: HDRFFmpegBinaryMode,
+        diagnostics: RenderDiagnostics,
+        isTemporary: Bool
+    ) async -> ColorInfo {
         guard let formatDescriptions = try? await track.load(.formatDescriptions),
               let firstDescription = formatDescriptions.first else {
             return fallback
@@ -1452,18 +1490,51 @@ public final class AVFoundationRenderEngine {
         let extensions = CMFormatDescriptionGetExtensions(cmFormatDescription) as NSDictionary?
         let primaries = extensions?[kCMFormatDescriptionExtension_ColorPrimaries] as? String ?? fallback.colorPrimaries
         let transfer = extensions?[kCMFormatDescriptionExtension_TransferFunction] as? String ?? fallback.transferFunction
-        let transferLowercased = transfer?.lowercased() ?? ""
-        let isHDR = transferLowercased.contains("2100_hlg") ||
-            transferLowercased.contains("hlg") ||
-            transferLowercased.contains("smpte_st_2084") ||
-            transferLowercased.contains("pq") ||
-            fallback.isHDR
-
-        return ColorInfo(
-            isHDR: isHDR,
-            colorPrimaries: primaries,
+        let transferFlavor = ColorTransferFlavor.inferred(
+            isHDR: fallback.isHDR,
             transferFunction: transfer
         )
+        var hdrMetadataFlavor = fallback.hdrMetadataFlavor
+
+        if exportDynamicRange == .hdr,
+           !isTemporary,
+           hdrMetadataFlavor == .none,
+           transferFlavor == .hlg {
+            hdrMetadataFlavor = probedHDRMetadataFlavor(
+                for: assetURL,
+                binaryMode: exportBinaryMode,
+                diagnostics: diagnostics
+            )
+        }
+
+        return ColorInfo(
+            isHDR: fallback.isHDR || transferFlavor != .sdr || hdrMetadataFlavor != .none,
+            colorPrimaries: primaries,
+            transferFunction: transfer,
+            transferFlavor: transferFlavor,
+            hdrMetadataFlavor: hdrMetadataFlavor
+        )
+    }
+
+    private func probedHDRMetadataFlavor(
+        for assetURL: URL,
+        binaryMode: HDRFFmpegBinaryMode,
+        diagnostics: RenderDiagnostics
+    ) -> HDRMetadataFlavor {
+        do {
+            let binary = try FFmpegBinaryResolver().resolveProbeBinary(mode: binaryMode)
+            let metadata = try FFprobeSourceMetadataProbe().probeVideoSourceMetadata(
+                at: assetURL,
+                ffprobeURL: binary.ffprobeURL
+            )
+            if metadata.hdrMetadataFlavor == .dolbyVision {
+                diagnostics.add("HDR source metadata probe: \(assetURL.lastPathComponent) includes Dolby Vision side data.")
+            }
+            return metadata.hdrMetadataFlavor
+        } catch {
+            diagnostics.add("HDR source metadata probe skipped for \(assetURL.lastPathComponent): \(describe(error))")
+            return .none
+        }
     }
 
     private func fourCCString(_ value: FourCharCode) -> String {
