@@ -107,6 +107,7 @@ Operational updates after first packaged run:
 - Added Plex TV auto-naming (`<Show> - SYYYYE<MM>99 - <Month YYYY>`) plus persisted `Show Title` and description metadata fields for final MP4 exports.
 - Added folder/album month-year derivation from prepared media capture dates, with a manual session-only override when selected media spans multiple months or lacks capture dates.
 - Added embedded final-delivery MP4 metadata for Plex-oriented fields (`title`, `show`, `season_number`, `episode_sort`, `episode_id`, `date`, `creation_time`, `description`, `synopsis`, `comment`, `genre`) using `+use_metadata_tags`.
+- Added final-delivery export provenance metadata using standard tags (`software`, `version`, `information`) plus custom `com.jkfisher.monthlyvideogenerator.*` keys for app/build and structured export details.
 - Added a `Mega Test` batch mode that expands checked Resolution/FPS/Range/Audio axes into sequential renders while reusing one preparation pass and appending per-combination suffixes to the Plex basename.
 - Switched SDR final export from `AVAssetExportSession` to the shared FFmpeg backend, added SDR H.264/HEVC encoder capability probing, and normalized SDR outputs to BT.709 with real bitrate control.
 - Reworked the main window into a denser two-column layout with a vertical scroll fallback so all controls remain reachable on smaller window heights.

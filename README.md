@@ -69,6 +69,12 @@ See:
 
 These helper scripts are for the QuickTime Keys (`mdta`) metadata written by the app's Plex-oriented MP4 exports.
 
+Current exports write:
+
+- Plex-facing tags such as `title`, `show`, `season_number`, `episode_sort`, `episode_id`, `description`, `synopsis`, and `comment`
+- Standard provenance tags `software`, `version`, and `information`
+- App-specific custom keys under `com.jkfisher.monthlyvideogenerator.*`
+
 Inspect an export:
 
 ```bash
@@ -81,7 +87,7 @@ Force JSON output via `ffprobe`:
 ./scripts/show_metadata.sh --json "/path/to/video.mp4"
 ```
 
-Rewrite metadata without re-encoding. This always writes a new file, refuses to overwrite an existing output, and supports `--dry-run`:
+Rewrite metadata without re-encoding. This always writes a new file, refuses to overwrite an existing output, and supports `--dry-run`. The retag script can also update `software`, `version`, `information`, and repeated `--custom key=value` entries:
 
 ```bash
 ./scripts/retag_mp4.sh \

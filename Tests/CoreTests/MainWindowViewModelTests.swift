@@ -91,7 +91,12 @@ final class MainWindowViewModelTests: XCTestCase {
         )
         let viewModel = makeViewModel(
             coordinator: coordinator,
-            preferencesStore: makePreferencesStore()
+            preferencesStore: makePreferencesStore(),
+            exportProvenanceIdentity: OutputProvenanceAppIdentity(
+                appName: "Monthly Video Generator",
+                appVersion: "0.5.0",
+                buildNumber: "20260307200552"
+            )
         )
         let directory = makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -132,7 +137,12 @@ final class MainWindowViewModelTests: XCTestCase {
         )
         let viewModel = makeViewModel(
             coordinator: coordinator,
-            preferencesStore: makePreferencesStore()
+            preferencesStore: makePreferencesStore(),
+            exportProvenanceIdentity: OutputProvenanceAppIdentity(
+                appName: "Monthly Video Generator",
+                appVersion: "0.5.0",
+                buildNumber: "20260307200552"
+            )
         )
         let directory = makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -172,7 +182,12 @@ final class MainWindowViewModelTests: XCTestCase {
         )
         let viewModel = makeViewModel(
             coordinator: coordinator,
-            preferencesStore: makePreferencesStore()
+            preferencesStore: makePreferencesStore(),
+            exportProvenanceIdentity: OutputProvenanceAppIdentity(
+                appName: "Monthly Video Generator",
+                appVersion: "0.5.0",
+                buildNumber: "20260307200552"
+            )
         )
         let directory = makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -233,7 +248,12 @@ final class MainWindowViewModelTests: XCTestCase {
         )
         let viewModel = makeViewModel(
             coordinator: coordinator,
-            preferencesStore: makePreferencesStore()
+            preferencesStore: makePreferencesStore(),
+            exportProvenanceIdentity: OutputProvenanceAppIdentity(
+                appName: "Monthly Video Generator",
+                appVersion: "0.5.0",
+                buildNumber: "20260307200552"
+            )
         )
         let directory = makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -303,7 +323,12 @@ final class MainWindowViewModelTests: XCTestCase {
         )
         let viewModel = makeViewModel(
             coordinator: coordinator,
-            preferencesStore: makePreferencesStore()
+            preferencesStore: makePreferencesStore(),
+            exportProvenanceIdentity: OutputProvenanceAppIdentity(
+                appName: "Monthly Video Generator",
+                appVersion: "0.5.0",
+                buildNumber: "20260307200552"
+            )
         )
         let directory = makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -330,6 +355,12 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertEqual(request.output.baseFilename, "Family Videos - S2024E0799 - July 2024")
         XCTAssertEqual(request.plexTVMetadata?.identity.showTitle, "Family Videos")
         XCTAssertEqual(request.plexTVMetadata?.embedded.description, "Fisher Family Monthly Video for July 2024")
+        XCTAssertEqual(request.plexTVMetadata?.embedded.provenance?.software, "Monthly Video Generator")
+        XCTAssertEqual(request.plexTVMetadata?.embedded.provenance?.version, "0.5.0 (20260307200552)")
+        XCTAssertEqual(
+            request.plexTVMetadata?.embedded.provenance?.information,
+            "1280x720, 60 fps, HDR (HLG), HEVC, AAC Stereo, MP4, Balanced bitrate"
+        )
 
         viewModel.plexShowTitle = "Changed After Start"
         viewModel.plexDescriptionText = "Changed After Start"
@@ -711,12 +742,14 @@ final class MainWindowViewModelTests: XCTestCase {
 
     private func makeViewModel(
         coordinator: RenderCoordinating,
-        preferencesStore: UserDefaults
+        preferencesStore: UserDefaults,
+        exportProvenanceIdentity: OutputProvenanceAppIdentity = AppMetadata.exportProvenanceIdentity
     ) -> MainWindowViewModel {
         MainWindowViewModel(
             coordinator: coordinator,
             preferencesStore: preferencesStore,
-            filenameGenerator: PlexTVFilenameGenerator()
+            filenameGenerator: PlexTVFilenameGenerator(),
+            exportProvenanceIdentity: exportProvenanceIdentity
         )
     }
 

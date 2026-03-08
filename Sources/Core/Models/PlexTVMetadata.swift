@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 public struct PlexEpisodeIdentity: Equatable, Codable, Sendable {
@@ -30,6 +31,41 @@ public struct PlexEpisodeIdentity: Equatable, Codable, Sendable {
     }
 }
 
+public struct OutputProvenanceAppIdentity: Equatable, Codable, Sendable {
+    public let appName: String
+    public let appVersion: String
+    public let buildNumber: String
+
+    public init(appName: String, appVersion: String, buildNumber: String) {
+        self.appName = appName.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.appVersion = appVersion.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.buildNumber = buildNumber.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    public var versionString: String {
+        "\(appVersion) (\(buildNumber))"
+    }
+}
+
+public struct EmbeddedOutputProvenance: Equatable, Codable, Sendable {
+    public let software: String
+    public let version: String
+    public let information: String
+    public let customEntries: [String: String]
+
+    public init(
+        software: String,
+        version: String,
+        information: String,
+        customEntries: [String: String]
+    ) {
+        self.software = software
+        self.version = version
+        self.information = information
+        self.customEntries = customEntries
+    }
+}
+
 public struct EmbeddedOutputMetadata: Equatable, Codable, Sendable {
     public let title: String
     public let description: String
@@ -42,6 +78,7 @@ public struct EmbeddedOutputMetadata: Equatable, Codable, Sendable {
     public let date: String
     public let creationTime: Date?
     public let genre: String
+    public let provenance: EmbeddedOutputProvenance?
 
     public init(
         title: String,
@@ -54,7 +91,8 @@ public struct EmbeddedOutputMetadata: Equatable, Codable, Sendable {
         episodeID: String,
         date: String,
         creationTime: Date?,
-        genre: String
+        genre: String,
+        provenance: EmbeddedOutputProvenance? = nil
     ) {
         self.title = title
         self.description = description
@@ -67,6 +105,7 @@ public struct EmbeddedOutputMetadata: Equatable, Codable, Sendable {
         self.date = date
         self.creationTime = creationTime
         self.genre = genre
+        self.provenance = provenance
     }
 }
 
@@ -160,6 +199,7 @@ public enum PlexTVMetadataResolver {
         monthYear: MonthYear,
         descriptionText: String,
         creationTime: Date?,
+        provenance: EmbeddedOutputProvenance? = nil,
         timeZone: TimeZone = .current
     ) -> PlexTVMetadata {
         let identity = PlexEpisodeIdentity(showTitle: showTitle, monthYear: monthYear)
@@ -178,8 +218,164 @@ public enum PlexTVMetadataResolver {
                 episodeID: identity.episodeID,
                 date: String(identity.seasonNumber),
                 creationTime: resolvedCreationTime,
-                genre: "Family"
+                genre: "Family",
+                provenance: provenance
             )
         )
+    }
+}
+
+public enum EmbeddedOutputProvenanceResolver {
+    private static let customKeyPrefix = "com.jkfisher.monthlyvideogenerator"
+
+    public static func resolve(
+        exportProfile: ExportProfile,
+        timeline: Timeline,
+        appIdentity: OutputProvenanceAppIdentity
+    ) -> EmbeddedOutputProvenance {
+        let renderSize = normalizedRenderSize(RenderSizing.renderSize(for: timeline, policy: exportProfile.resolution))
+        let frameRate = RenderSizing.frameRate(for: timeline, policy: exportProfile.frameRate)
+        let information = humanReadableInformation(
+            exportProfile: exportProfile,
+            renderSize: renderSize,
+            frameRate: frameRate
+        )
+
+        let payload = ExportProvenancePayload(
+            appName: appIdentity.appName,
+            appVersion: appIdentity.appVersion,
+            buildNumber: appIdentity.buildNumber,
+            container: exportProfile.container.rawValue,
+            videoCodec: exportProfile.videoCodec.rawValue,
+            audioCodec: exportProfile.audioCodec.rawValue,
+            dynamicRange: exportProfile.dynamicRange.rawValue,
+            resolutionPolicy: exportProfile.resolution.rawValue,
+            resolvedWidth: Int(renderSize.width.rounded()),
+            resolvedHeight: Int(renderSize.height.rounded()),
+            frameRatePolicy: exportProfile.frameRate.rawValue,
+            resolvedFrameRate: frameRate,
+            audioLayout: exportProfile.audioLayout.rawValue,
+            bitrateMode: exportProfile.bitrateMode.rawValue
+        )
+
+        return EmbeddedOutputProvenance(
+            software: appIdentity.appName,
+            version: appIdentity.versionString,
+            information: information,
+            customEntries: [
+                "\(customKeyPrefix).app_name": appIdentity.appName,
+                "\(customKeyPrefix).app_version": appIdentity.appVersion,
+                "\(customKeyPrefix).build_number": appIdentity.buildNumber,
+                "\(customKeyPrefix).export_profile": exportProfileSummary(payload),
+                "\(customKeyPrefix).export_json": encodedJSON(payload)
+            ]
+        )
+    }
+
+    private static func humanReadableInformation(
+        exportProfile: ExportProfile,
+        renderSize: CGSize,
+        frameRate: Int
+    ) -> String {
+        let width = Int(renderSize.width.rounded())
+        let height = Int(renderSize.height.rounded())
+        return [
+            "\(width)x\(height)",
+            "\(frameRate) fps",
+            dynamicRangeDescription(exportProfile.dynamicRange),
+            videoCodecDescription(exportProfile.videoCodec),
+            audioDescription(codec: exportProfile.audioCodec, layout: exportProfile.audioLayout),
+            exportProfile.container.rawValue.uppercased(),
+            bitrateModeDescription(exportProfile.bitrateMode)
+        ].joined(separator: ", ")
+    }
+
+    private static func dynamicRangeDescription(_ dynamicRange: DynamicRange) -> String {
+        switch dynamicRange {
+        case .hdr:
+            return "HDR (HLG)"
+        case .sdr:
+            return "SDR"
+        }
+    }
+
+    private static func videoCodecDescription(_ codec: VideoCodec) -> String {
+        switch codec {
+        case .hevc:
+            return "HEVC"
+        case .h264:
+            return "H.264"
+        }
+    }
+
+    private static func audioDescription(codec: AudioCodec, layout: AudioLayout) -> String {
+        "\(codec.rawValue.uppercased()) \(layout.displayLabel)"
+    }
+
+    private static func bitrateModeDescription(_ mode: BitrateMode) -> String {
+        switch mode {
+        case .balanced:
+            return "Balanced bitrate"
+        case .qualityFirst:
+            return "Quality-first bitrate"
+        case .sizeFirst:
+            return "Size-first bitrate"
+        }
+    }
+
+    private static func exportProfileSummary(_ payload: ExportProvenancePayload) -> String {
+        [
+            "container=\(payload.container)",
+            "videoCodec=\(payload.videoCodec)",
+            "audioCodec=\(payload.audioCodec)",
+            "dynamicRange=\(payload.dynamicRange)",
+            "resolutionPolicy=\(payload.resolutionPolicy)",
+            "resolvedSize=\(payload.resolvedWidth)x\(payload.resolvedHeight)",
+            "frameRatePolicy=\(payload.frameRatePolicy)",
+            "resolvedFrameRate=\(payload.resolvedFrameRate)",
+            "audioLayout=\(payload.audioLayout)",
+            "bitrateMode=\(payload.bitrateMode)"
+        ].joined(separator: ",")
+    }
+
+    private static func encodedJSON(_ payload: ExportProvenancePayload) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        if
+            let data = try? encoder.encode(payload),
+            let value = String(data: data, encoding: .utf8)
+        {
+            return value
+        }
+
+        return "{}"
+    }
+
+    private static func normalizedRenderSize(_ size: CGSize) -> CGSize {
+        CGSize(
+            width: CGFloat(evenDimension(max(2, Int(size.width.rounded())))),
+            height: CGFloat(evenDimension(max(2, Int(size.height.rounded()))))
+        )
+    }
+
+    private static func evenDimension(_ value: Int) -> Int {
+        value.isMultiple(of: 2) ? value : value + 1
+    }
+
+    private struct ExportProvenancePayload: Codable {
+        let appName: String
+        let appVersion: String
+        let buildNumber: String
+        let container: String
+        let videoCodec: String
+        let audioCodec: String
+        let dynamicRange: String
+        let resolutionPolicy: String
+        let resolvedWidth: Int
+        let resolvedHeight: Int
+        let frameRatePolicy: String
+        let resolvedFrameRate: Int
+        let audioLayout: String
+        let bitrateMode: String
     }
 }

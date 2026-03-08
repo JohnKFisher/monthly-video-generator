@@ -614,6 +614,19 @@ struct FFmpegCommandBuilder {
             metadataEntries.append(("creation_time", metadataTimestamp(from: creationTime)))
         }
 
+        if let provenance = embeddedMetadata.provenance {
+            metadataEntries.append(contentsOf: [
+                ("software", provenance.software),
+                ("version", provenance.version),
+                ("information", provenance.information)
+            ])
+            metadataEntries.append(
+                contentsOf: provenance.customEntries
+                    .sorted { lhs, rhs in lhs.key < rhs.key }
+                    .map { ($0.key, $0.value) }
+            )
+        }
+
         for (key, value) in metadataEntries where !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             arguments.append(contentsOf: ["-metadata", "\(key)=\(value)"])
         }

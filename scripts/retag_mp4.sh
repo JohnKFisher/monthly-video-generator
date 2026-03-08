@@ -26,6 +26,10 @@ Metadata options:
   --synopsis <text>
   --comment <text>
   --genre <text>
+  --software <text>
+  --version <text>
+  --information <text>
+  --custom <key=value>           Adds a custom metadata entry. May be repeated.
   --description-all <text>      Sets description, synopsis, and comment together.
 
 Safety:
@@ -62,6 +66,10 @@ description=""
 synopsis=""
 comment=""
 genre=""
+software=""
+version_value=""
+information=""
+custom_entries=()
 
 require_value() {
   local option="$1"
@@ -138,6 +146,26 @@ while [[ $# -gt 0 ]]; do
     --genre)
       require_value "$1" "${2:-}"
       genre="${2:-}"
+      shift 2
+      ;;
+    --software)
+      require_value "$1" "${2:-}"
+      software="${2:-}"
+      shift 2
+      ;;
+    --version)
+      require_value "$1" "${2:-}"
+      version_value="${2:-}"
+      shift 2
+      ;;
+    --information)
+      require_value "$1" "${2:-}"
+      information="${2:-}"
+      shift 2
+      ;;
+    --custom)
+      require_value "$1" "${2:-}"
+      custom_entries+=("${2:-}")
       shift 2
       ;;
     --description-all)
@@ -229,6 +257,23 @@ append_metadata "description" "$description"
 append_metadata "synopsis" "$synopsis"
 append_metadata "comment" "$comment"
 append_metadata "genre" "$genre"
+append_metadata "software" "$software"
+append_metadata "version" "$version_value"
+append_metadata "information" "$information"
+
+for entry in "${custom_entries[@]}"; do
+  if [[ "$entry" != *=* ]]; then
+    echo "Custom metadata must use key=value form: $entry" >&2
+    exit 1
+  fi
+  custom_key="${entry%%=*}"
+  custom_value="${entry#*=}"
+  if [[ -z "$custom_key" ]]; then
+    echo "Custom metadata key must not be empty: $entry" >&2
+    exit 1
+  fi
+  append_metadata "$custom_key" "$custom_value"
+done
 
 if [[ ${#metadata_preview[@]} -eq 0 ]]; then
   echo "No metadata changes requested." >&2

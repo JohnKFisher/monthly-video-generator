@@ -42,6 +42,69 @@ final class PlexTVMetadataTests: XCTestCase {
         )
     }
 
+    func testProvenanceResolverBuildsStandardAndCustomMetadata() throws {
+        let item = makeImageItem(id: "image-1", captureDate: makeDate(year: 2026, month: 6, day: 28))
+        let timeline = TimelineBuilder().buildTimeline(
+            items: [item],
+            ordering: .captureDateAscendingStable,
+            style: .stageOneDefault
+        )
+        let exportProfile = ExportProfile(
+            container: .mp4,
+            videoCodec: .hevc,
+            audioCodec: .aac,
+            frameRate: .fps60,
+            resolution: .fixed720p,
+            dynamicRange: .hdr,
+            audioLayout: .stereo,
+            bitrateMode: .balanced
+        )
+
+        let provenance = EmbeddedOutputProvenanceResolver.resolve(
+            exportProfile: exportProfile,
+            timeline: timeline,
+            appIdentity: OutputProvenanceAppIdentity(
+                appName: "Monthly Video Generator",
+                appVersion: "0.5.0",
+                buildNumber: "20260307200552"
+            )
+        )
+
+        XCTAssertEqual(provenance.software, "Monthly Video Generator")
+        XCTAssertEqual(provenance.version, "0.5.0 (20260307200552)")
+        XCTAssertEqual(
+            provenance.information,
+            "1280x720, 60 fps, HDR (HLG), HEVC, AAC Stereo, MP4, Balanced bitrate"
+        )
+        XCTAssertEqual(
+            provenance.customEntries["com.jkfisher.monthlyvideogenerator.app_name"],
+            "Monthly Video Generator"
+        )
+        XCTAssertEqual(
+            provenance.customEntries["com.jkfisher.monthlyvideogenerator.app_version"],
+            "0.5.0"
+        )
+        XCTAssertEqual(
+            provenance.customEntries["com.jkfisher.monthlyvideogenerator.build_number"],
+            "20260307200552"
+        )
+        XCTAssertEqual(
+            provenance.customEntries["com.jkfisher.monthlyvideogenerator.export_profile"],
+            "container=mp4,videoCodec=hevc,audioCodec=aac,dynamicRange=hdr,resolutionPolicy=fixed720p,resolvedSize=1280x720,frameRatePolicy=fps60,resolvedFrameRate=60,audioLayout=stereo,bitrateMode=balanced"
+        )
+
+        let exportJSON = try XCTUnwrap(
+            provenance.customEntries["com.jkfisher.monthlyvideogenerator.export_json"]?.data(using: .utf8)
+        )
+        let exportPayload = try XCTUnwrap(JSONSerialization.jsonObject(with: exportJSON) as? [String: Any])
+        XCTAssertEqual(exportPayload["appName"] as? String, "Monthly Video Generator")
+        XCTAssertEqual(exportPayload["appVersion"] as? String, "0.5.0")
+        XCTAssertEqual(exportPayload["buildNumber"] as? String, "20260307200552")
+        XCTAssertEqual(exportPayload["resolvedWidth"] as? Int, 1280)
+        XCTAssertEqual(exportPayload["resolvedHeight"] as? Int, 720)
+        XCTAssertEqual(exportPayload["resolvedFrameRate"] as? Int, 60)
+    }
+
     func testResolveMonthYearRejectsMissingCaptureDates() {
         let items = [
             MediaItem(
@@ -102,7 +165,16 @@ final class PlexTVMetadataTests: XCTestCase {
             showTitle: "Family Videos",
             monthYear: MonthYear(month: 6, year: 2026),
             descriptionText: "Fisher Family Monthly Video for June 2026",
-            creationTime: makeDate(year: 2026, month: 6, day: 28)
+            creationTime: makeDate(year: 2026, month: 6, day: 28),
+            provenance: EmbeddedOutputProvenance(
+                software: "Monthly Video Generator",
+                version: "0.5.0 (20260307200552)",
+                information: "1280x720, 60 fps, HDR (HLG), HEVC, AAC Stereo, MP4, Balanced bitrate",
+                customEntries: [
+                    "com.jkfisher.monthlyvideogenerator.app_name": "Monthly Video Generator",
+                    "com.jkfisher.monthlyvideogenerator.app_version": "0.5.0"
+                ]
+            )
         )
         let request = RenderRequest(
             source: .folder(path: outputDirectory, recursive: true),
@@ -138,12 +210,17 @@ final class PlexTVMetadataTests: XCTestCase {
         let plexJSON = try XCTUnwrap(json?["plexTVMetadata"] as? [String: Any])
         let identityJSON = try XCTUnwrap(plexJSON["identity"] as? [String: Any])
         let embeddedJSON = try XCTUnwrap(plexJSON["embedded"] as? [String: Any])
+        let provenanceJSON = try XCTUnwrap(embeddedJSON["provenance"] as? [String: Any])
+        let customEntriesJSON = try XCTUnwrap(provenanceJSON["customEntries"] as? [String: Any])
 
         XCTAssertEqual(identityJSON["showTitle"] as? String, "Family Videos")
         XCTAssertEqual(embeddedJSON["seasonNumber"] as? Int, 2026)
         XCTAssertEqual(embeddedJSON["episodeSort"] as? Int, 699)
         XCTAssertEqual(embeddedJSON["episodeID"] as? String, "S2026E0699")
         XCTAssertEqual(embeddedJSON["description"] as? String, "Fisher Family Monthly Video for June 2026")
+        XCTAssertEqual(provenanceJSON["software"] as? String, "Monthly Video Generator")
+        XCTAssertEqual(provenanceJSON["version"] as? String, "0.5.0 (20260307200552)")
+        XCTAssertEqual(customEntriesJSON["com.jkfisher.monthlyvideogenerator.app_version"] as? String, "0.5.0")
     }
 
     private func makeImageItem(id: String, captureDate: Date) -> MediaItem {

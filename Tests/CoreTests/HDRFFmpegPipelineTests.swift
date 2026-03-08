@@ -1304,7 +1304,19 @@ final class HDRFFmpegPipelineTests: XCTestCase {
                 episodeID: "S2026E0699",
                 date: "2026",
                 creationTime: creationTime,
-                genre: "Family"
+                genre: "Family",
+                provenance: EmbeddedOutputProvenance(
+                    software: "Monthly Video Generator",
+                    version: "0.5.0 (20260307200552)",
+                    information: "1920x1080, 30 fps, SDR, H.264, AAC Stereo, MP4, Balanced bitrate",
+                    customEntries: [
+                        "com.jkfisher.monthlyvideogenerator.app_name": "Monthly Video Generator",
+                        "com.jkfisher.monthlyvideogenerator.app_version": "0.5.0",
+                        "com.jkfisher.monthlyvideogenerator.build_number": "20260307200552",
+                        "com.jkfisher.monthlyvideogenerator.export_profile": "container=mp4,videoCodec=h264,audioCodec=aac,dynamicRange=sdr,resolutionPolicy=fixed1080p,resolvedSize=1920x1080,frameRatePolicy=fps30,resolvedFrameRate=30,audioLayout=stereo,bitrateMode=balanced",
+                        "com.jkfisher.monthlyvideogenerator.export_json": "{\"appName\":\"Monthly Video Generator\",\"appVersion\":\"0.5.0\",\"buildNumber\":\"20260307200552\"}"
+                    ]
+                )
             )
         )
 
@@ -1323,6 +1335,11 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("-metadata comment=Fisher Family Monthly Video for June 2026"))
         XCTAssertTrue(joined.contains("-metadata genre=Family"))
         XCTAssertTrue(joined.contains("-metadata creation_time=2026-06-28T12:00:00Z"))
+        XCTAssertTrue(joined.contains("-metadata software=Monthly Video Generator"))
+        XCTAssertTrue(joined.contains("-metadata version=0.5.0 (20260307200552)"))
+        XCTAssertTrue(joined.contains("-metadata information=1920x1080, 30 fps, SDR, H.264, AAC Stereo, MP4, Balanced bitrate"))
+        XCTAssertTrue(joined.contains("-metadata com.jkfisher.monthlyvideogenerator.app_version=0.5.0"))
+        XCTAssertTrue(joined.contains("-metadata com.jkfisher.monthlyvideogenerator.export_json={\"appName\":\"Monthly Video Generator\",\"appVersion\":\"0.5.0\",\"buildNumber\":\"20260307200552\"}"))
     }
 
     func testCommandBuilderOmitsEmbeddedMetadataForIntermediateChunks() throws {
@@ -1358,7 +1375,15 @@ final class HDRFFmpegPipelineTests: XCTestCase {
                 episodeID: "S2026E0699",
                 date: "2026",
                 creationTime: makeMetadataDate(year: 2026, month: 6, day: 28),
-                genre: "Family"
+                genre: "Family",
+                provenance: EmbeddedOutputProvenance(
+                    software: "Monthly Video Generator",
+                    version: "0.5.0 (20260307200552)",
+                    information: "1920x1080, 30 fps, SDR, H.264, AAC Stereo, MP4, Balanced bitrate",
+                    customEntries: [
+                        "com.jkfisher.monthlyvideogenerator.app_name": "Monthly Video Generator"
+                    ]
+                )
             ),
             renderIntent: .intermediateChunk
         )
@@ -1387,6 +1412,8 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         let outputURL = outputDirectory.appendingPathComponent("plex-tags.mp4")
         let description = "Fisher Family Monthly Video for June 2026"
         let creationTime = "2026-06-28T12:00:00Z"
+        let provenanceInformation = "16x16, 30 fps, SDR, H.264, AAC Stereo, MP4, Balanced bitrate"
+        let exportJSON = "{\"appName\":\"Monthly Video Generator\",\"appVersion\":\"0.5.0\",\"buildNumber\":\"20260307200552\",\"resolvedWidth\":16,\"resolvedHeight\":16,\"resolvedFrameRate\":30}"
 
         _ = try runProcess(
             executableURL: ffmpegURL,
@@ -1414,6 +1441,14 @@ final class HDRFFmpegPipelineTests: XCTestCase {
                 "-metadata", "comment=\(description)",
                 "-metadata", "genre=Family",
                 "-metadata", "creation_time=\(creationTime)",
+                "-metadata", "software=Monthly Video Generator",
+                "-metadata", "version=0.5.0 (20260307200552)",
+                "-metadata", "information=\(provenanceInformation)",
+                "-metadata", "com.jkfisher.monthlyvideogenerator.app_name=Monthly Video Generator",
+                "-metadata", "com.jkfisher.monthlyvideogenerator.app_version=0.5.0",
+                "-metadata", "com.jkfisher.monthlyvideogenerator.build_number=20260307200552",
+                "-metadata", "com.jkfisher.monthlyvideogenerator.export_profile=container=mp4,videoCodec=h264,audioCodec=aac,dynamicRange=sdr,resolutionPolicy=fixed720p,resolvedSize=16x16,frameRatePolicy=fps30,resolvedFrameRate=30,audioLayout=stereo,bitrateMode=balanced",
+                "-metadata", "com.jkfisher.monthlyvideogenerator.export_json=\(exportJSON)",
                 outputURL.path
             ]
         )
@@ -1443,6 +1478,14 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertEqual(tags["comment"] as? String, description)
         XCTAssertEqual(tags["genre"] as? String, "Family")
         XCTAssertEqual(tags["creation_time"] as? String, creationTime)
+        XCTAssertEqual(tags["software"] as? String, "Monthly Video Generator")
+        XCTAssertEqual(tags["version"] as? String, "0.5.0 (20260307200552)")
+        XCTAssertEqual(tags["information"] as? String, provenanceInformation)
+        XCTAssertEqual(tags["com.jkfisher.monthlyvideogenerator.app_name"] as? String, "Monthly Video Generator")
+        XCTAssertEqual(tags["com.jkfisher.monthlyvideogenerator.app_version"] as? String, "0.5.0")
+        XCTAssertEqual(tags["com.jkfisher.monthlyvideogenerator.build_number"] as? String, "20260307200552")
+        XCTAssertEqual(tags["com.jkfisher.monthlyvideogenerator.export_profile"] as? String, "container=mp4,videoCodec=h264,audioCodec=aac,dynamicRange=sdr,resolutionPolicy=fixed720p,resolvedSize=16x16,frameRatePolicy=fps30,resolvedFrameRate=30,audioLayout=stereo,bitrateMode=balanced")
+        XCTAssertEqual(tags["com.jkfisher.monthlyvideogenerator.export_json"] as? String, exportJSON)
     }
 
     private func makeCapableResolution() -> FFmpegBinaryResolution {

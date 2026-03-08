@@ -310,6 +310,7 @@ final class MainWindowViewModel: ObservableObject {
     private let runReportService: RunReportService
     private let preferencesStore: UserDefaults
     private let filenameGenerator: PlexTVFilenameGenerator
+    private let exportProvenanceIdentity: OutputProvenanceAppIdentity
     private var renderTask: Task<Void, Never>?
     private var renderStatusDetail: String?
     private var currentMegaTestCombination: MegaTestCombination?
@@ -330,7 +331,8 @@ final class MainWindowViewModel: ObservableObject {
         exportProfileManager: ExportProfileManager = ExportProfileManager(),
         runReportService: RunReportService = RunReportService(),
         preferencesStore: UserDefaults = .standard,
-        filenameGenerator: PlexTVFilenameGenerator = PlexTVFilenameGenerator()
+        filenameGenerator: PlexTVFilenameGenerator = PlexTVFilenameGenerator(),
+        exportProvenanceIdentity: OutputProvenanceAppIdentity = AppMetadata.exportProvenanceIdentity
     ) {
         self.coordinator = coordinator
         self.photoDiscovery = photoDiscovery
@@ -339,6 +341,7 @@ final class MainWindowViewModel: ObservableObject {
         self.runReportService = runReportService
         self.preferencesStore = preferencesStore
         self.filenameGenerator = filenameGenerator
+        self.exportProvenanceIdentity = exportProvenanceIdentity
         appVersionBuildLabel = AppMetadata.versionBuildLabel
 
         let now = Date()
@@ -646,6 +649,7 @@ final class MainWindowViewModel: ObservableObject {
             let plexRenderDetails = try resolvePlexRenderDetails(
                 preparedSession: preparedSession,
                 fallbackMonthYear: monthYear,
+                exportProfile: exportResolution.effectiveProfile,
                 outputBaseFilenameOverride: nil
             )
 
@@ -693,12 +697,6 @@ final class MainWindowViewModel: ObservableObject {
             renderStatusDetail = nil
             updateRenderingStatusMessage()
 
-            let plexRenderDetails = try resolvePlexRenderDetails(
-                preparedSession: preparedSession,
-                fallbackMonthYear: monthYear,
-                outputBaseFilenameOverride: nil
-            )
-
             for (index, combination) in combinations.enumerated() {
                 try Task.checkCancellation()
 
@@ -709,6 +707,12 @@ final class MainWindowViewModel: ObservableObject {
                     items: preparedSession.preparation.items
                 )
                 warnings = preparedSession.preparation.warnings + exportResolution.warnings.map(\.message)
+                let plexRenderDetails = try resolvePlexRenderDetails(
+                    preparedSession: preparedSession,
+                    fallbackMonthYear: monthYear,
+                    exportProfile: exportResolution.effectiveProfile,
+                    outputBaseFilenameOverride: nil
+                )
 
                 let outputBaseFilename = filenameGenerator.makeMegaTestOutputName(
                     baseName: plexRenderDetails.metadata.identity.filenameBase,
@@ -795,6 +799,7 @@ final class MainWindowViewModel: ObservableObject {
     private func resolvePlexRenderDetails(
         preparedSession: PreparedRenderSession,
         fallbackMonthYear: MonthYear,
+        exportProfile: ExportProfile,
         outputBaseFilenameOverride: String?
     ) throws -> ResolvedPlexRenderDetails {
         let monthYearContext = try resolvePlexMonthYearContext(
@@ -806,11 +811,17 @@ final class MainWindowViewModel: ObservableObject {
             applyPlexDescription(autoDescription, autoManaged: true)
         }
 
+        let provenance = EmbeddedOutputProvenanceResolver.resolve(
+            exportProfile: exportProfile,
+            timeline: preparedSession.preparation.timeline,
+            appIdentity: exportProvenanceIdentity
+        )
         let metadata = PlexTVMetadataResolver.resolveMetadata(
             showTitle: resolvedPlexShowTitle(),
             monthYear: monthYearContext.monthYear,
             descriptionText: isPlexDescriptionAutoManaged ? autoDescription : plexDescriptionText,
-            creationTime: monthYearContext.latestCaptureDate
+            creationTime: monthYearContext.latestCaptureDate,
+            provenance: provenance
         )
         let autoOutputBaseFilename = metadata.identity.filenameBase
         if isOutputNameAutoManaged {
