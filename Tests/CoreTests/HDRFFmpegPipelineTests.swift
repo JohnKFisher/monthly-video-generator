@@ -1270,6 +1270,181 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertEqual(decoded, profile)
     }
 
+    func testCommandBuilderIncludesPlexTVMetadataForFinalMP4() throws {
+        let builder = FFmpegCommandBuilder()
+        let creationTime = makeMetadataDate(year: 2026, month: 6, day: 28)
+        let plan = FFmpegRenderPlan(
+            clips: [
+                FFmpegRenderClip(
+                    url: URL(fileURLWithPath: "/tmp/single.mov"),
+                    durationSeconds: 3.0,
+                    includeAudio: true,
+                    hasAudioTrack: true,
+                    colorInfo: ColorInfo(isHDR: false, colorPrimaries: "ITU_R_709_2", transferFunction: "ITU_R_709_2"),
+                    sourceDescription: "single"
+                )
+            ],
+            transitionDurationSeconds: 0,
+            outputURL: URL(fileURLWithPath: "/tmp/out.mp4"),
+            renderSize: CGSize(width: 1920, height: 1080),
+            frameRate: 30,
+            audioLayout: .stereo,
+            bitrateMode: .balanced,
+            container: .mp4,
+            videoCodec: .h264,
+            dynamicRange: .sdr,
+            embeddedMetadata: EmbeddedOutputMetadata(
+                title: "June 2026",
+                description: "Fisher Family Monthly Video for June 2026",
+                synopsis: "Fisher Family Monthly Video for June 2026",
+                comment: "Fisher Family Monthly Video for June 2026",
+                show: "Family Videos",
+                seasonNumber: 2026,
+                episodeSort: 699,
+                episodeID: "S2026E0699",
+                date: "2026",
+                creationTime: creationTime,
+                genre: "Family"
+            )
+        )
+
+        let command = try builder.buildCommand(plan: plan, resolution: makeCapableResolution())
+        let joined = command.arguments.joined(separator: " ")
+
+        XCTAssertTrue(joined.contains("-movflags +write_colr+use_metadata_tags"))
+        XCTAssertTrue(joined.contains("-metadata title=June 2026"))
+        XCTAssertTrue(joined.contains("-metadata show=Family Videos"))
+        XCTAssertTrue(joined.contains("-metadata season_number=2026"))
+        XCTAssertTrue(joined.contains("-metadata episode_sort=699"))
+        XCTAssertTrue(joined.contains("-metadata episode_id=S2026E0699"))
+        XCTAssertTrue(joined.contains("-metadata date=2026"))
+        XCTAssertTrue(joined.contains("-metadata description=Fisher Family Monthly Video for June 2026"))
+        XCTAssertTrue(joined.contains("-metadata synopsis=Fisher Family Monthly Video for June 2026"))
+        XCTAssertTrue(joined.contains("-metadata comment=Fisher Family Monthly Video for June 2026"))
+        XCTAssertTrue(joined.contains("-metadata genre=Family"))
+        XCTAssertTrue(joined.contains("-metadata creation_time=2026-06-28T12:00:00Z"))
+    }
+
+    func testCommandBuilderOmitsEmbeddedMetadataForIntermediateChunks() throws {
+        let builder = FFmpegCommandBuilder()
+        let plan = FFmpegRenderPlan(
+            clips: [
+                FFmpegRenderClip(
+                    url: URL(fileURLWithPath: "/tmp/chunk.mov"),
+                    durationSeconds: 3.0,
+                    includeAudio: false,
+                    hasAudioTrack: false,
+                    colorInfo: ColorInfo(isHDR: false, colorPrimaries: "ITU_R_709_2", transferFunction: "ITU_R_709_2"),
+                    sourceDescription: "chunk"
+                )
+            ],
+            transitionDurationSeconds: 0,
+            outputURL: URL(fileURLWithPath: "/tmp/chunk.mp4"),
+            renderSize: CGSize(width: 1920, height: 1080),
+            frameRate: 30,
+            audioLayout: .stereo,
+            bitrateMode: .balanced,
+            container: .mp4,
+            videoCodec: .h264,
+            dynamicRange: .sdr,
+            embeddedMetadata: EmbeddedOutputMetadata(
+                title: "June 2026",
+                description: "Fisher Family Monthly Video for June 2026",
+                synopsis: "Fisher Family Monthly Video for June 2026",
+                comment: "Fisher Family Monthly Video for June 2026",
+                show: "Family Videos",
+                seasonNumber: 2026,
+                episodeSort: 699,
+                episodeID: "S2026E0699",
+                date: "2026",
+                creationTime: makeMetadataDate(year: 2026, month: 6, day: 28),
+                genre: "Family"
+            ),
+            renderIntent: .intermediateChunk
+        )
+
+        let command = try builder.buildCommand(plan: plan, resolution: makeCapableResolution())
+        let joined = command.arguments.joined(separator: " ")
+
+        XCTAssertTrue(joined.contains("-movflags +write_colr"))
+        XCTAssertFalse(joined.contains("use_metadata_tags"))
+        XCTAssertFalse(joined.contains("-metadata title="))
+        XCTAssertFalse(joined.contains("-metadata show="))
+    }
+
+    func testBundledFFmpegPreservesPlexTVTagsInMP4() throws {
+        guard
+            let ffmpegURL = bundledBinaryURL(named: "ffmpeg"),
+            let ffprobeURL = bundledBinaryURL(named: "ffprobe")
+        else {
+            throw XCTSkip("Bundled FFmpeg binaries are not available in third_party/ffmpeg/bin.")
+        }
+
+        let outputDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outputDirectory) }
+
+        let outputURL = outputDirectory.appendingPathComponent("plex-tags.mp4")
+        let description = "Fisher Family Monthly Video for June 2026"
+        let creationTime = "2026-06-28T12:00:00Z"
+
+        _ = try runProcess(
+            executableURL: ffmpegURL,
+            arguments: [
+                "-hide_banner",
+                "-loglevel", "error",
+                "-y",
+                "-f", "lavfi",
+                "-i", "color=c=black:s=16x16:d=1",
+                "-f", "lavfi",
+                "-i", "anullsrc=r=48000:cl=stereo",
+                "-shortest",
+                "-c:v", "libx264",
+                "-pix_fmt", "yuv420p",
+                "-c:a", "aac",
+                "-movflags", "+use_metadata_tags",
+                "-metadata", "title=June 2026",
+                "-metadata", "show=Family Videos",
+                "-metadata", "season_number=2026",
+                "-metadata", "episode_sort=699",
+                "-metadata", "episode_id=S2026E0699",
+                "-metadata", "date=2026",
+                "-metadata", "description=\(description)",
+                "-metadata", "synopsis=\(description)",
+                "-metadata", "comment=\(description)",
+                "-metadata", "genre=Family",
+                "-metadata", "creation_time=\(creationTime)",
+                outputURL.path
+            ]
+        )
+
+        let probeOutput = try runProcess(
+            executableURL: ffprobeURL,
+            arguments: [
+                "-v", "quiet",
+                "-print_format", "json",
+                "-show_entries", "format_tags",
+                outputURL.path
+            ]
+        )
+        let data = try XCTUnwrap(probeOutput.data(using: .utf8))
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let format = try XCTUnwrap(json?["format"] as? [String: Any])
+        let tags = try XCTUnwrap(format["tags"] as? [String: Any])
+
+        XCTAssertEqual(tags["title"] as? String, "June 2026")
+        XCTAssertEqual(tags["show"] as? String, "Family Videos")
+        XCTAssertEqual(tags["season_number"] as? String, "2026")
+        XCTAssertEqual(tags["episode_sort"] as? String, "699")
+        XCTAssertEqual(tags["episode_id"] as? String, "S2026E0699")
+        XCTAssertEqual(tags["date"] as? String, "2026")
+        XCTAssertEqual(tags["description"] as? String, description)
+        XCTAssertEqual(tags["synopsis"] as? String, description)
+        XCTAssertEqual(tags["comment"] as? String, description)
+        XCTAssertEqual(tags["genre"] as? String, "Family")
+        XCTAssertEqual(tags["creation_time"] as? String, creationTime)
+    }
+
     private func makeCapableResolution() -> FFmpegBinaryResolution {
         FFmpegBinaryResolution(
             selectedBinary: FFmpegBinary(
@@ -1292,5 +1467,42 @@ final class HDRFFmpegPipelineTests: XCTestCase {
             bundledCapabilities: nil,
             fallbackReason: nil
         )
+    }
+
+    private func makeMetadataDate(year: Int, month: Int, day: Int) -> Date {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
+        return calendar.date(from: DateComponents(year: year, month: month, day: day, hour: 12)) ?? Date()
+    }
+
+    private func bundledBinaryURL(named name: String) -> URL? {
+        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+            .appendingPathComponent("third_party/ffmpeg/bin", isDirectory: true)
+        let url = root.appendingPathComponent(name)
+        guard FileManager.default.isExecutableFile(atPath: url.path) else {
+            return nil
+        }
+        return url
+    }
+
+    private func runProcess(executableURL: URL, arguments: [String]) throws -> String {
+        let process = Process()
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.executableURL = executableURL
+        process.arguments = arguments
+        process.standardOutput = stdout
+        process.standardError = stderr
+
+        try process.run()
+        process.waitUntilExit()
+
+        let stdoutData = stdout.fileHandleForReading.readDataToEndOfFile()
+        let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
+        if process.terminationStatus != 0 {
+            let stderrText = String(decoding: stderrData, as: UTF8.self)
+            throw XCTSkip("Command failed (\(process.terminationStatus)): \(stderrText)")
+        }
+        return String(decoding: stdoutData, as: UTF8.self)
     }
 }

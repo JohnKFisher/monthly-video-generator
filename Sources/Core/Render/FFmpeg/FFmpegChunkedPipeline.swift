@@ -144,6 +144,7 @@ struct FFmpegHDRChunkPipelineBuilder {
                 videoCodec: .hevc,
                 dynamicRange: .hdr,
                 hdrHEVCEncoderMode: finalPlan.hdrHEVCEncoderMode,
+                embeddedMetadata: nil,
                 renderIntent: .intermediateChunk
             )
         }
@@ -172,6 +173,7 @@ struct FFmpegHDRChunkPipelineBuilder {
             videoCodec: finalPlan.videoCodec,
             dynamicRange: finalPlan.dynamicRange,
             hdrHEVCEncoderMode: finalPlan.hdrHEVCEncoderMode,
+            embeddedMetadata: finalPlan.embeddedMetadata,
             renderIntent: .finalDelivery
         )
 

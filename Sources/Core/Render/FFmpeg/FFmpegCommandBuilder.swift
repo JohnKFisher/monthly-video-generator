@@ -230,8 +230,10 @@ struct FFmpegCommandBuilder {
             arguments: &arguments
         )
 
+        appendEmbeddedMetadataArguments(for: plan, arguments: &arguments)
+
         arguments.append(contentsOf: [
-            "-movflags", "+write_colr",
+            "-movflags", movflags(for: plan),
             "-colorspace", outputColorspace(for: plan.dynamicRange),
             "-color_primaries", outputColorPrimaries(for: plan.dynamicRange),
             "-color_trc", outputColorTransfer(for: plan.dynamicRange),
@@ -588,6 +590,49 @@ struct FFmpegCommandBuilder {
         }
     }
 
+    private func appendEmbeddedMetadataArguments(for plan: FFmpegRenderPlan, arguments: inout [String]) {
+        guard plan.renderIntent == .finalDelivery,
+              plan.container == .mp4,
+              let embeddedMetadata = plan.embeddedMetadata else {
+            return
+        }
+
+        var metadataEntries: [(String, String)] = [
+            ("title", embeddedMetadata.title),
+            ("show", embeddedMetadata.show),
+            ("season_number", String(embeddedMetadata.seasonNumber)),
+            ("episode_sort", String(embeddedMetadata.episodeSort)),
+            ("episode_id", embeddedMetadata.episodeID),
+            ("date", embeddedMetadata.date),
+            ("description", embeddedMetadata.description),
+            ("synopsis", embeddedMetadata.synopsis),
+            ("comment", embeddedMetadata.comment),
+            ("genre", embeddedMetadata.genre)
+        ]
+
+        if let creationTime = embeddedMetadata.creationTime {
+            metadataEntries.append(("creation_time", metadataTimestamp(from: creationTime)))
+        }
+
+        for (key, value) in metadataEntries where !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            arguments.append(contentsOf: ["-metadata", "\(key)=\(value)"])
+        }
+    }
+
+    private func movflags(for plan: FFmpegRenderPlan) -> String {
+        guard plan.renderIntent == .finalDelivery, plan.container == .mp4 else {
+            return "+write_colr"
+        }
+        return "+write_colr+use_metadata_tags"
+    }
+
+    private func metadataTimestamp(from date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.string(from: date)
+    }
+
     private func intermediatePixelFormat(for dynamicRange: DynamicRange) -> String {
         switch dynamicRange {
         case .hdr:
@@ -664,6 +709,7 @@ private extension FFmpegRenderPlan {
             videoCodec: videoCodec,
             dynamicRange: dynamicRange,
             hdrHEVCEncoderMode: hdrHEVCEncoderMode,
+            embeddedMetadata: embeddedMetadata,
             renderIntent: .finalDelivery
         )
     }

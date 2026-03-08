@@ -4,34 +4,29 @@ import Foundation
 import XCTest
 
 final class TemporaryTestingExportSupportTests: XCTestCase {
-    func testFilenameGeneratorUsesLiteralPrefixAndPolicyLabels() {
-        let generator = TemporaryTestingFilenameGenerator()
-        let date = Date(timeIntervalSince1970: 1_746_000_123)
+    func testFilenameGeneratorUsesPlexTVEpisodeFormat() {
+        let generator = PlexTVFilenameGenerator()
 
         let outputName = generator.makeOutputName(
-            resolution: .smart,
-            frameRate: .smart,
-            dynamicRange: .hdr,
-            audioLayout: .smart,
-            date: date
+            showTitle: "Family Videos",
+            monthYear: MonthYear(month: 6, year: 2025)
         )
 
-        XCTAssertEqual(outputName, "Testing - S2026E1746000123 - Smart - Smartfps - HDR - Smart")
+        XCTAssertEqual(outputName, "Family Videos - S2025E0699 - June 2025")
     }
 
-    func testFilenameGeneratorUsesFixedLabelsForManualSelections() {
-        let generator = TemporaryTestingFilenameGenerator()
-        let date = Date(timeIntervalSince1970: 1_746_000_124)
+    func testMegaTestFilenameAppendsCombinationSuffixes() {
+        let generator = PlexTVFilenameGenerator()
 
-        let outputName = generator.makeOutputName(
+        let outputName = generator.makeMegaTestOutputName(
+            baseName: "Family Videos - S2025E0699 - June 2025",
             resolution: .fixed1080p,
             frameRate: .fps60,
             dynamicRange: .sdr,
-            audioLayout: .surround51,
-            date: date
+            audioLayout: .surround51
         )
 
-        XCTAssertEqual(outputName, "Testing - S2026E1746000124 - 1080 - 60fps - SDR - 5.1")
+        XCTAssertEqual(outputName, "Family Videos - S2025E0699 - June 2025 - 1080 - 60fps - SDR - 5.1")
     }
 
     func testMegaTestSelectionWithoutVaryFlagsReturnsCurrentSelectionOnly() {

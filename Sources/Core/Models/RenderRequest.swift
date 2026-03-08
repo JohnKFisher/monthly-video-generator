@@ -44,6 +44,7 @@ public struct RenderRequest: Equatable, Sendable {
     public let style: StyleProfile
     public let export: ExportProfile
     public let output: OutputTarget
+    public let plexTVMetadata: PlexTVMetadata?
 
     public init(
         source: MediaSource,
@@ -51,7 +52,8 @@ public struct RenderRequest: Equatable, Sendable {
         ordering: OrderingRule,
         style: StyleProfile,
         export: ExportProfile,
-        output: OutputTarget
+        output: OutputTarget,
+        plexTVMetadata: PlexTVMetadata? = nil
     ) {
         self.source = source
         self.monthYear = monthYear
@@ -59,5 +61,6 @@ public struct RenderRequest: Equatable, Sendable {
         self.style = style
         self.export = export
         self.output = output
+        self.plexTVMetadata = plexTVMetadata
     }
 }

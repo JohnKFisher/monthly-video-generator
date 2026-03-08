@@ -30,6 +30,7 @@ public final class AVFoundationRenderEngine {
         style: StyleProfile,
         exportProfile: ExportProfile,
         outputTarget: OutputTarget,
+        plexTVMetadata: PlexTVMetadata?,
         photoMaterializer: PhotoAssetMaterializing?,
         writeDiagnosticsLog: Bool,
         progressHandler: (@MainActor @Sendable (Double) -> Void)? = nil,
@@ -64,6 +65,12 @@ public final class AVFoundationRenderEngine {
             "hdrHEVCEncoderMode=\(exportProfile.hdrHEVCEncoderMode.rawValue), " +
             "audioLayout=\(exportProfile.audioLayout.rawValue), bitrate=\(exportProfile.bitrateMode.rawValue)"
         )
+        if let plexTVMetadata {
+            diagnostics.add(
+                "Plex TV metadata: show=\(plexTVMetadata.identity.showTitle), " +
+                "episodeID=\(plexTVMetadata.identity.episodeID), title=\(plexTVMetadata.identity.episodeTitle)"
+            )
+        }
 
         let requestedRenderSize = resolveRenderSize(from: timeline, policy: exportProfile.resolution)
         let resolvedFrameRate = resolveFrameRate(from: timeline, policy: exportProfile.frameRate)
@@ -114,7 +121,8 @@ public final class AVFoundationRenderEngine {
                 outputURL: outputURL,
                 renderSize: renderSize,
                 frameRate: resolvedFrameRate,
-                exportProfile: exportProfile
+                exportProfile: exportProfile,
+                embeddedMetadata: plexTVMetadata?.embedded
             )
 
             let binaryResolution: FFmpegBinaryResolution
@@ -268,7 +276,8 @@ public final class AVFoundationRenderEngine {
         outputURL: URL,
         renderSize: CGSize,
         frameRate: Int,
-        exportProfile: ExportProfile
+        exportProfile: ExportProfile,
+        embeddedMetadata: EmbeddedOutputMetadata?
     ) -> FFmpegRenderPlan {
         FFmpegRenderPlan(
             clips: clips.map {
@@ -293,6 +302,7 @@ public final class AVFoundationRenderEngine {
             videoCodec: exportProfile.videoCodec,
             dynamicRange: exportProfile.dynamicRange,
             hdrHEVCEncoderMode: exportProfile.hdrHEVCEncoderMode,
+            embeddedMetadata: embeddedMetadata,
             renderIntent: .finalDelivery
         )
     }

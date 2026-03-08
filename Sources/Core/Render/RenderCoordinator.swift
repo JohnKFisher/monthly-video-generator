@@ -119,6 +119,7 @@ public final class RenderCoordinator: @unchecked Sendable {
             style: request.style,
             exportProfile: request.export,
             outputTarget: request.output,
+            plexTVMetadata: request.plexTVMetadata,
             photoMaterializer: photoMaterializer,
             writeDiagnosticsLog: writeDiagnosticsLog,
             progressHandler: progressHandler,

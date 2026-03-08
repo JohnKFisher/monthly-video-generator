@@ -1,39 +1,19 @@
 import Core
 import Foundation
 
-struct TemporaryTestingFilenameGenerator: Sendable {
-    static let literalPrefix = "S2026E"
-
-    private let now: @Sendable () -> Date
-
-    init(now: @escaping @Sendable () -> Date = Date.init) {
-        self.now = now
+struct PlexTVFilenameGenerator: Sendable {
+    func makeOutputName(showTitle: String, monthYear: MonthYear) -> String {
+        PlexEpisodeIdentity(showTitle: showTitle, monthYear: monthYear).filenameBase
     }
 
-    func makeOutputName(
+    func makeMegaTestOutputName(
+        baseName: String,
         resolution: ResolutionPolicy,
         frameRate: FrameRatePolicy,
         dynamicRange: DynamicRange,
         audioLayout: AudioLayout
     ) -> String {
-        makeOutputName(
-            resolution: resolution,
-            frameRate: frameRate,
-            dynamicRange: dynamicRange,
-            audioLayout: audioLayout,
-            date: now()
-        )
-    }
-
-    func makeOutputName(
-        resolution: ResolutionPolicy,
-        frameRate: FrameRatePolicy,
-        dynamicRange: DynamicRange,
-        audioLayout: AudioLayout,
-        date: Date
-    ) -> String {
-        let epoch = Int64(floor(date.timeIntervalSince1970))
-        return "Testing - \(Self.literalPrefix)\(epoch) - \(Self.resolutionToken(for: resolution)) - \(Self.frameRateToken(for: frameRate))fps - \(Self.dynamicRangeToken(for: dynamicRange)) - \(Self.audioToken(for: audioLayout))"
+        "\(baseName) - \(Self.resolutionToken(for: resolution)) - \(Self.frameRateToken(for: frameRate))fps - \(Self.dynamicRangeToken(for: dynamicRange)) - \(Self.audioToken(for: audioLayout))"
     }
 
     static func resolutionToken(for resolution: ResolutionPolicy) -> String {
@@ -114,10 +94,10 @@ struct MegaTestCombination: Identifiable, Equatable, Sendable {
     }
 
     var displayLabel: String {
-        "\(TemporaryTestingFilenameGenerator.resolutionToken(for: resolution)) / \(frameRateDisplayLabel) / \(TemporaryTestingFilenameGenerator.dynamicRangeToken(for: dynamicRange)) / \(audioLayout.displayLabel)"
+        "\(PlexTVFilenameGenerator.resolutionToken(for: resolution)) / \(frameRateDisplayLabel) / \(PlexTVFilenameGenerator.dynamicRangeToken(for: dynamicRange)) / \(audioLayout.displayLabel)"
     }
 
     var frameRateDisplayLabel: String {
-        "\(TemporaryTestingFilenameGenerator.frameRateToken(for: frameRate)) fps"
+        "\(PlexTVFilenameGenerator.frameRateToken(for: frameRate)) fps"
     }
 }

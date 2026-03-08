@@ -375,6 +375,7 @@ struct FFmpegRenderPlan: Equatable, Sendable {
     let videoCodec: VideoCodec
     let dynamicRange: DynamicRange
     let hdrHEVCEncoderMode: HDRHEVCEncoderMode
+    let embeddedMetadata: EmbeddedOutputMetadata?
     let renderIntent: FFmpegRenderIntent
 
     init(
@@ -390,6 +391,7 @@ struct FFmpegRenderPlan: Equatable, Sendable {
         videoCodec: VideoCodec,
         dynamicRange: DynamicRange,
         hdrHEVCEncoderMode: HDRHEVCEncoderMode = .automatic,
+        embeddedMetadata: EmbeddedOutputMetadata? = nil,
         renderIntent: FFmpegRenderIntent = .finalDelivery
     ) {
         self.clips = clips
@@ -404,6 +406,7 @@ struct FFmpegRenderPlan: Equatable, Sendable {
         self.videoCodec = videoCodec
         self.dynamicRange = dynamicRange
         self.hdrHEVCEncoderMode = hdrHEVCEncoderMode
+        self.embeddedMetadata = embeddedMetadata
         self.renderIntent = renderIntent
     }
 

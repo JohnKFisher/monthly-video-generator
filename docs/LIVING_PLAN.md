@@ -41,7 +41,7 @@ Implemented now:
 - PhotoKit source selection now supports both month/year filtering and album-based filtering.
 - Export UI/model for container/codec/frame rate/resolution/HDR/audio layout/bitrate mode.
 - Plex/Infuse-oriented default export preset for Apple TV 4K (`MP4 + HEVC + HDR + Smart Audio + Balanced + HDR Auto + HDR HEVC Encoder Default`), plus explicit UI reset action.
-- Temporary test-only output naming and mega-test batch UI for exercising Resolution/FPS/Range/Audio combinations.
+- Plex TV episode naming + embedded MP4 metadata for the `Family Videos` library workflow, plus mega-test batch UI for exercising Resolution/FPS/Range/Audio combinations.
 
 Open for S4 completion:
 - Migrate renderer to newer non-deprecated AVFoundation export APIs.
@@ -104,8 +104,10 @@ Operational updates after first packaged run:
 - Updated Export profile manager to resolve effective HDR settings (`HEVC`) with explicit compatibility messaging so UI/behavior stay aligned.
 - Replaced fixed `30 fps` export with `30 fps` / `60 fps` / `Smart` controls, made Smart the default, and resolved Smart to `60 fps` only when any selected video is `>= 50 fps`.
 - Added Apple Photos Smart-fps inspection before render prep, including progress/status messaging, cached AVAsset reuse during later materialization, and cancellation-aware PhotoKit request handling.
-- Added a temporary auto-generated testing output name (`Testing - S2026E<epoch> - <Resolution> - <FPS>fps - <Range> - <Audio>`) that stays synced until manually edited.
-- Added a temporary `Mega Test` batch mode that expands checked Resolution/FPS/Range/Audio axes into sequential renders while reusing one preparation pass and prompting after per-combination failures.
+- Added Plex TV auto-naming (`<Show> - SYYYYE<MM>99 - <Month YYYY>`) plus persisted `Show Title` and description metadata fields for final MP4 exports.
+- Added folder/album month-year derivation from prepared media capture dates, with a manual session-only override when selected media spans multiple months or lacks capture dates.
+- Added embedded final-delivery MP4 metadata for Plex-oriented fields (`title`, `show`, `season_number`, `episode_sort`, `episode_id`, `date`, `creation_time`, `description`, `synopsis`, `comment`, `genre`) using `+use_metadata_tags`.
+- Added a `Mega Test` batch mode that expands checked Resolution/FPS/Range/Audio axes into sequential renders while reusing one preparation pass and appending per-combination suffixes to the Plex basename.
 - Switched SDR final export from `AVAssetExportSession` to the shared FFmpeg backend, added SDR H.264/HEVC encoder capability probing, and normalized SDR outputs to BT.709 with real bitrate control.
 - Reworked the main window into a denser two-column layout with a vertical scroll fallback so all controls remain reachable on smaller window heights.
 - Added an `HDR HEVC Encoder` picker with `Default` and strict `VideoToolbox` modes, threaded that selection through FFmpeg capability resolution and completion summaries, and kept `Default` as the persisted Plex/Infuse baseline.

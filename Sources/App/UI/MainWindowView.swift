@@ -296,6 +296,9 @@ struct MainWindowView: View {
                     }
                 }
 
+                TextField("Show title", text: $viewModel.plexShowTitle)
+                caption("Used for Plex TV episode filenames and embedded MP4 metadata.")
+
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 10) {
                         TextField("Output name", text: $viewModel.outputFilename)
@@ -323,11 +326,74 @@ struct MainWindowView: View {
                 caption(viewModel.outputDirectoryURL.path)
                     .lineLimit(1)
 
-                caption(
-                    viewModel.isOutputNameAutoManaged
-                    ? "Temporary testing name stays in sync with Resolution, FPS, Range, and Audio until you edit it."
-                    : "Manual output name override is active. Use “Use Auto Name” to restore the temporary testing name."
-                )
+                caption(viewModel.outputNameAutomationDescription)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 10) {
+                        Text("Description / Synopsis / Comment")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 8)
+                        Button(viewModel.isPlexDescriptionAutoManaged ? "Regenerate" : "Use Default") {
+                            viewModel.useDefaultPlexDescription()
+                        }
+                    }
+
+                    TextEditor(text: $viewModel.plexDescriptionText)
+                        .font(.body)
+                        .frame(minHeight: 84)
+
+                    caption(viewModel.plexDescriptionAutomationDescription)
+                }
+
+                if viewModel.showsManualMonthYearOverride {
+                    VStack(alignment: .leading, spacing: rowSpacing) {
+                        Text("Manual Month/Year Override")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                        caption(viewModel.manualMonthYearOverrideMessage)
+
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 10) {
+                                Picker("Month", selection: $viewModel.manualMonthYearOverrideMonth) {
+                                    ForEach(viewModel.months, id: \.self) { month in
+                                        Text(String(month)).tag(month)
+                                    }
+                                }
+
+                                Picker("Year", selection: $viewModel.manualMonthYearOverrideYear) {
+                                    ForEach(viewModel.years, id: \.self) { year in
+                                        Text(String(year)).tag(year)
+                                    }
+                                }
+
+                                Button("Clear Override") {
+                                    viewModel.clearManualMonthYearOverride()
+                                }
+                            }
+
+                            VStack(alignment: .leading, spacing: rowSpacing) {
+                                Picker("Month", selection: $viewModel.manualMonthYearOverrideMonth) {
+                                    ForEach(viewModel.months, id: \.self) { month in
+                                        Text(String(month)).tag(month)
+                                    }
+                                }
+
+                                Picker("Year", selection: $viewModel.manualMonthYearOverrideYear) {
+                                    ForEach(viewModel.years, id: \.self) { year in
+                                        Text(String(year)).tag(year)
+                                    }
+                                }
+
+                                Button("Clear Override") {
+                                    viewModel.clearManualMonthYearOverride()
+                                }
+                            }
+                        }
+
+                        caption("Use this only when folder or album media spans multiple months or is missing capture dates.")
+                    }
+                }
 
                 ViewThatFits(in: .horizontal) {
                     HStack {
@@ -381,7 +447,7 @@ struct MainWindowView: View {
                 }
 
                 caption("\(viewModel.megaTestCombinationCountDescription) will be rendered sequentially.")
-                caption("Mega test always uses the temporary generated testing filename for each combination and ignores the single-render Output name field.")
+                caption("Mega test always uses the resolved Plex TV auto basename plus per-combination suffixes and ignores the single-render Output name field.")
                 if let megaTestHDRHEVCEncoderDescription = viewModel.megaTestHDRHEVCEncoderDescription {
                     caption(megaTestHDRHEVCEncoderDescription)
                 }
