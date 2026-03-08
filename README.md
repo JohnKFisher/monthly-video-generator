@@ -65,6 +65,38 @@ See:
 
 - `docs/THIRD_PARTY.md`
 
+## Inspect And Edit Plex MP4 Metadata
+
+These helper scripts are for the QuickTime Keys (`mdta`) metadata written by the app's Plex-oriented MP4 exports.
+
+Inspect an export:
+
+```bash
+./scripts/show_metadata.sh "/path/to/video.mp4"
+```
+
+Force JSON output via `ffprobe`:
+
+```bash
+./scripts/show_metadata.sh --json "/path/to/video.mp4"
+```
+
+Rewrite metadata without re-encoding. This always writes a new file, refuses to overwrite an existing output, and supports `--dry-run`:
+
+```bash
+./scripts/retag_mp4.sh \
+  --input "/path/to/input.mp4" \
+  --output "/path/to/output.mp4" \
+  --title "March 2026" \
+  --show "Family Videos" \
+  --season-number 2026 \
+  --episode-sort 399 \
+  --episode-id "S2026E0399" \
+  --date 2026 \
+  --description-all "Fisher Family Monthly Video for March 2026" \
+  --genre "Family"
+```
+
 ## Default Export Profile (Plex + Infuse on Apple TV 4K)
 
 New default export profile for fresh installs (existing saved preferences are preserved):
