@@ -19,9 +19,7 @@ struct FFmpegCommand {
 
 struct FFmpegCommandBuilder {
     static let hlgSDRNominalPeak = 1400
-    static let hdrSDRNominalPeak = 1000
-    static let hdrSDRContrastCompensation = 1.08
-    private let supportFileLocator = FFmpegSupportFileLocator()
+    static let hdrSDRNominalPeak = 203
 
     func buildCommand(plan: FFmpegRenderPlan, resolution: FFmpegBinaryResolution) throws -> FFmpegCommand {
         guard !plan.clips.isEmpty else {
@@ -321,11 +319,9 @@ struct FFmpegCommandBuilder {
             return hdrToSDRToneMapFilter(for: transferFlavor)
         }
 
-        if colorInfo.isDisplayP3Like {
-            return "zscale=transferin=bt709:primariesin=smpte432:matrixin=bt709:transfer=bt709:primaries=bt709:matrix=bt709"
-        }
-
-        return "zscale=transferin=bt709:primariesin=bt709:matrixin=bt709:transfer=bt709:primaries=bt709:matrix=bt709"
+        let transferIn = sdrTransferInput(for: colorInfo)
+        let primariesIn = sdrPrimariesInput(for: colorInfo)
+        return "zscale=transferin=\(transferIn):primariesin=\(primariesIn):matrixin=bt709:transfer=bt709:primaries=bt709:matrix=bt709"
     }
 
     private func hdrTransferFlavor(for colorInfo: ColorInfo) -> FFmpegHDRTransferFlavor? {
@@ -340,17 +336,25 @@ struct FFmpegCommandBuilder {
     }
 
     private func sdrToHLGUpliftFilter(for colorInfo: ColorInfo) throws -> String {
-        let primariesIn = colorInfo.isDisplayP3Like ? "smpte432" : "bt709"
-        let contrast = String(format: "%.2f", Self.hdrSDRContrastCompensation)
-        let lutURL = try supportFileLocator.sdrLumaLiftLUTURL()
-        return "zscale=transferin=bt709:primariesin=\(primariesIn):matrixin=bt709:transfer=linear," +
+        let transferIn = sdrTransferInput(for: colorInfo)
+        let primariesIn = sdrPrimariesInput(for: colorInfo)
+        return "zscale=transferin=\(transferIn):primariesin=\(primariesIn):matrixin=bt709:transfer=linear," +
             "format=gbrpf32le," +
-            // Apply the SDR uplift through a precomputed luma-driven 3D LUT so
-            // bright colors keep their hue/detail without the heavy per-pixel
-            // geq cost of evaluating the same transform at render time.
-            "lut3d=file=\(lutURL.path):interp=tetrahedral," +
-            "zscale=transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc:range=tv:npl=\(Self.hdrSDRNominalPeak)," +
-            "eq=contrast=\(contrast)"
+            // Map SDR into HLG with a lower nominal peak so SDR white lands in
+            // the expected HLG range instead of being pushed toward washed-out highlights.
+            "zscale=transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc:range=tv:npl=\(Self.hdrSDRNominalPeak)"
+    }
+
+    private func sdrTransferInput(for colorInfo: ColorInfo) -> String {
+        let normalizedTransfer = (colorInfo.transferFunction ?? "").lowercased()
+        if normalizedTransfer.contains("iec_srgb") || normalizedTransfer.contains("srgb") || normalizedTransfer.contains("61966") {
+            return "iec61966-2-1"
+        }
+        return "bt709"
+    }
+
+    private func sdrPrimariesInput(for colorInfo: ColorInfo) -> String {
+        colorInfo.isDisplayP3Like ? "smpte432" : "bt709"
     }
 
     // SDR output needs explicit HDR-to-SDR tone mapping for video clips with HDR

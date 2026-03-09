@@ -72,10 +72,10 @@ public final class StillImageClipFactory {
         static func displayP3() -> IntermediateColorConfiguration {
             IntermediateColorConfiguration(
                 avColorPrimaries: AVVideoColorPrimaries_P3_D65,
-                avTransferFunction: AVVideoTransferFunction_ITU_R_709_2,
+                avTransferFunction: AVVideoTransferFunction_IEC_sRGB,
                 avYCbCrMatrix: AVVideoYCbCrMatrix_ITU_R_709_2,
                 cvColorPrimaries: kCVImageBufferColorPrimaries_P3_D65,
-                cvTransferFunction: kCVImageBufferTransferFunction_ITU_R_709_2,
+                cvTransferFunction: kCVImageBufferTransferFunction_sRGB,
                 cvYCbCrMatrix: kCVImageBufferYCbCrMatrix_ITU_R_709_2,
                 cgColorSpace: CGColorSpace(name: CGColorSpace.displayP3)
                     ?? CGColorSpace(name: CGColorSpace.itur_709)
