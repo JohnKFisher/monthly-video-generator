@@ -66,6 +66,16 @@ public struct RenderResult: Sendable {
     }
 }
 
+public struct SystemFFmpegFallbackRequest: Equatable, Sendable {
+    public let reason: String
+
+    public init(reason: String) {
+        self.reason = reason
+    }
+}
+
+public typealias SystemFFmpegFallbackHandler = @MainActor @Sendable (SystemFFmpegFallbackRequest) async -> Bool
+
 public final class RenderCoordinator: @unchecked Sendable {
     private let folderDiscoveryService: FolderMediaDiscoveryService
     private let timelineBuilder: TimelineBuilder
@@ -112,7 +122,8 @@ public final class RenderCoordinator: @unchecked Sendable {
         photoMaterializer: PhotoAssetMaterializing?,
         writeDiagnosticsLog: Bool,
         progressHandler: (@MainActor @Sendable (Double) -> Void)?,
-        statusHandler: (@MainActor @Sendable (String) -> Void)? = nil
+        statusHandler: (@MainActor @Sendable (String) -> Void)? = nil,
+        systemFFmpegFallbackHandler: SystemFFmpegFallbackHandler? = nil
     ) async throws -> RenderResult {
         try await renderEngine.render(
             timeline: preparation.timeline,
@@ -124,7 +135,8 @@ public final class RenderCoordinator: @unchecked Sendable {
             photoMaterializer: photoMaterializer,
             writeDiagnosticsLog: writeDiagnosticsLog,
             progressHandler: progressHandler,
-            statusHandler: statusHandler
+            statusHandler: statusHandler,
+            systemFFmpegFallbackHandler: systemFFmpegFallbackHandler
         )
     }
 

@@ -56,6 +56,14 @@ struct FFmpegBinaryResolver {
         let bundledBinary = bundledBinaryOverride ?? discoverBundledBinary()
 
         switch mode {
+        case .bundledPreferred:
+            if let bundledBinary {
+                return bundledBinary
+            }
+            if let systemBinary {
+                return systemBinary
+            }
+            throw RenderError.exportFailed("No ffprobe binary was found in bundled FFmpeg resources or PATH/common locations.")
         case .autoSystemThenBundled:
             if let systemBinary {
                 return systemBinary
@@ -92,6 +100,48 @@ struct FFmpegBinaryResolver {
         let bundledCapabilities = try bundledBinary.map(probeCapabilities)
 
         switch mode {
+        case .bundledPreferred:
+            if let bundledBinary,
+               let bundledCapabilities,
+               bundledCapabilities.supportsRenderPipeline(requirements: requirements) {
+                diagnostics("FFmpeg resolver selected bundled binary.")
+                return FFmpegBinaryResolution(
+                    selectedBinary: bundledBinary,
+                    selectedCapabilities: bundledCapabilities,
+                    systemCapabilities: systemCapabilities,
+                    bundledCapabilities: bundledCapabilities,
+                    fallbackReason: nil
+                )
+            }
+
+            if let systemBinary,
+               let systemCapabilities,
+               systemCapabilities.supportsRenderPipeline(requirements: requirements) {
+                let fallbackReason: String
+                if let bundledCapabilities {
+                    fallbackReason = "Bundled FFmpeg missing required features: \(bundledCapabilities.missingRequiredCapabilities(requirements: requirements).joined(separator: ", "))."
+                } else {
+                    fallbackReason = "Bundled FFmpeg not found."
+                }
+                diagnostics("FFmpeg resolver selected system binary after bundled fallback. \(fallbackReason)")
+                return FFmpegBinaryResolution(
+                    selectedBinary: systemBinary,
+                    selectedCapabilities: systemCapabilities,
+                    systemCapabilities: systemCapabilities,
+                    bundledCapabilities: bundledCapabilities,
+                    fallbackReason: fallbackReason
+                )
+            }
+
+            throw RenderError.exportFailed(buildResolutionFailureMessage(
+                mode: mode,
+                requirements: requirements,
+                systemBinary: systemBinary,
+                systemCapabilities: systemCapabilities,
+                bundledBinary: bundledBinary,
+                bundledCapabilities: bundledCapabilities
+            ))
+
         case .autoSystemThenBundled:
             if let systemBinary,
                let systemCapabilities,

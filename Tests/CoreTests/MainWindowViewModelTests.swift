@@ -38,6 +38,37 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.monthLabel(for: 12), "12 - December")
     }
 
+    func testLegacyPersistedEngineSelectionIsNormalizedToBundledPreferred() throws {
+        let preferencesStore = makePreferencesStore()
+        let legacyPayload: [String: Any] = [
+            "includeOpeningTitle": true,
+            "openingTitleText": "June 2026",
+            "crossfadeDurationSeconds": 0.75,
+            "stillImageDurationSeconds": 3.0,
+            "selectedPhotosFilterMode": "monthYear",
+            "selectedPhotoAlbumID": "",
+            "selectedContainer": "mp4",
+            "selectedVideoCodec": "hevc",
+            "selectedFrameRatePolicy": "smart",
+            "selectedResolutionPolicy": "smart",
+            "selectedDynamicRange": "hdr",
+            "selectedHDRBinaryMode": "systemOnly",
+            "selectedHDRHEVCEncoderMode": "automatic",
+            "selectedAudioLayout": "smart",
+            "selectedBitrateMode": "balanced",
+            "writeDiagnosticsLog": true
+        ]
+        let data = try JSONSerialization.data(withJSONObject: legacyPayload)
+        preferencesStore.set(data, forKey: "MainWindowViewModel.renderSettings.v1")
+
+        let viewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            preferencesStore: preferencesStore
+        )
+
+        XCTAssertEqual(viewModel.selectedHDRBinaryMode, .bundledPreferred)
+    }
+
     func testOutputNameAutoSyncStopsAfterManualEditAndCanBeRestored() {
         let viewModel = makeViewModel(
             coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
@@ -289,7 +320,6 @@ final class MainWindowViewModelTests: XCTestCase {
         viewModel.selectedAudioLayout = .smart
         viewModel.selectedResolutionPolicy = .smart
         viewModel.selectedFrameRatePolicy = .smart
-        viewModel.selectedHDRBinaryMode = .autoSystemThenBundled
         viewModel.selectedHDRHEVCEncoderMode = .automatic
 
         viewModel.startRender()
@@ -312,7 +342,7 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertEqual(value(in: summary, forRowNamed: "Resolution"), "Smart (720p)")
         XCTAssertEqual(value(in: summary, forRowNamed: "Frame Rate"), "Smart (60 fps)")
         XCTAssertEqual(value(in: summary, forRowNamed: "Range"), "HDR")
-        XCTAssertEqual(value(in: summary, forRowNamed: "Engine"), "Auto (Bundled)")
+        XCTAssertEqual(value(in: summary, forRowNamed: "Engine"), "Bundled Preferred")
         XCTAssertEqual(viewModel.renderCompleteAlertMessage, summary.alertMessage)
         XCTAssertTrue(summary.alertMessage.hasPrefix(summary.outputPath))
     }
@@ -365,7 +395,6 @@ final class MainWindowViewModelTests: XCTestCase {
         viewModel.selectedAudioLayout = .smart
         viewModel.selectedResolutionPolicy = .smart
         viewModel.selectedFrameRatePolicy = .smart
-        viewModel.selectedHDRBinaryMode = .autoSystemThenBundled
         viewModel.selectedHDRHEVCEncoderMode = .automatic
         viewModel.selectedMonth = 6
         viewModel.selectedYear = 2025
@@ -395,7 +424,6 @@ final class MainWindowViewModelTests: XCTestCase {
         viewModel.selectedAudioLayout = .mono
         viewModel.selectedResolutionPolicy = .fixed4K
         viewModel.selectedFrameRatePolicy = .fps30
-        viewModel.selectedHDRBinaryMode = .bundledOnly
         viewModel.selectedHDRHEVCEncoderMode = .videoToolbox
 
         coordinator.resumeRender()
@@ -411,11 +439,89 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertEqual(value(in: summary, forRowNamed: "Audio"), "Smart (Stereo)")
         XCTAssertEqual(value(in: summary, forRowNamed: "Resolution"), "Smart (1080p)")
         XCTAssertEqual(value(in: summary, forRowNamed: "Frame Rate"), "Smart (60 fps)")
-        XCTAssertEqual(value(in: summary, forRowNamed: "Engine"), "Auto (System)")
+        XCTAssertEqual(value(in: summary, forRowNamed: "Engine"), "Bundled Preferred (System Fallback)")
 
         XCTAssertEqual(request.output.baseFilename, "Family Videos - S2024E0799 - July 2024")
         XCTAssertEqual(request.plexTVMetadata?.identity.showTitle, "Family Videos")
         XCTAssertEqual(request.plexTVMetadata?.embedded.description, "Fisher Family Monthly Video for July 2024")
+    }
+
+    func testSystemFFmpegFallbackCanBeCancelled() async throws {
+        let coordinator = RenderCoordinatorSpy(
+            preparation: makePreparation(
+                items: [makeImageItem(id: "image-1", captureDate: makeDate(year: 2025, month: 6, day: 15))]
+            ),
+            systemFallbackReason: "Bundled FFmpeg missing required features: zscale filter."
+        )
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            preferencesStore: makePreferencesStore()
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.sourceMode = .folder
+        viewModel.selectedFolderURL = directory
+        viewModel.outputDirectoryURL = directory
+
+        viewModel.startRender()
+        await waitUntilSystemFFmpegFallbackPrompt(viewModel)
+        viewModel.cancelSystemFFmpegFallback()
+        await waitUntil(
+            message: "Timed out waiting for fallback cancellation to finish."
+        ) {
+            !viewModel.isRendering
+        }
+
+        XCTAssertNil(viewModel.pendingSystemFFmpegFallbackConfirmation)
+        XCTAssertFalse(viewModel.showRenderCompleteAlert)
+        XCTAssertTrue(viewModel.statusMessage.contains("fallback was not approved"))
+    }
+
+    func testSystemFFmpegFallbackCanBeApproved() async throws {
+        let coordinator = RenderCoordinatorSpy(
+            preparation: makePreparation(
+                items: [makeImageItem(id: "image-1", captureDate: makeDate(year: 2025, month: 6, day: 15))]
+            ),
+            systemFallbackReason: "Bundled FFmpeg not found.",
+            renderResultBuilder: { _, request, _ in
+                let outputURL = request.output.directory
+                    .appendingPathComponent(request.output.baseFilename)
+                    .appendingPathExtension(request.export.container.fileExtension)
+                return RenderResult(
+                    outputURL: outputURL,
+                    diagnosticsLogURL: nil,
+                    backendSummary: "FFmpeg HDR backend [system] (encoder: libx265)",
+                    backendInfo: RenderBackendInfo(binarySource: .system, encoder: "libx265"),
+                    resolvedVideoInfo: ResolvedRenderVideoInfo(width: 1920, height: 1080, frameRate: 30)
+                )
+            }
+        )
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            preferencesStore: makePreferencesStore()
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.sourceMode = .folder
+        viewModel.selectedFolderURL = directory
+        viewModel.outputDirectoryURL = directory
+        viewModel.selectedDynamicRange = .hdr
+
+        viewModel.startRender()
+        await waitUntilSystemFFmpegFallbackPrompt(viewModel)
+        viewModel.approveSystemFFmpegFallback()
+        await waitUntil(
+            message: "Timed out waiting for approved fallback render to finish."
+        ) {
+            !viewModel.isRendering && viewModel.lastSingleRenderCompletionSummary != nil
+        }
+
+        let summary = try XCTUnwrap(viewModel.lastSingleRenderCompletionSummary)
+        XCTAssertNil(viewModel.pendingSystemFFmpegFallbackConfirmation)
+        XCTAssertTrue(viewModel.showRenderCompleteAlert)
+        XCTAssertEqual(value(in: summary, forRowNamed: "Engine"), "Bundled Preferred (System Fallback)")
     }
 
     func testHDRHEVCEncoderSelectionPersistsAndResetRestoresDefault() {
@@ -707,6 +813,20 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertTrue(condition(), message)
     }
 
+    private func waitUntilSystemFFmpegFallbackPrompt(
+        _ viewModel: MainWindowViewModel,
+        timeout: TimeInterval = 2.0
+    ) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while viewModel.pendingSystemFFmpegFallbackConfirmation == nil && Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertNotNil(
+            viewModel.pendingSystemFFmpegFallbackConfirmation,
+            "Timed out waiting for system FFmpeg fallback prompt."
+        )
+    }
+
     private func value(
         in summary: MainWindowViewModel.RenderCompletionSummary,
         forRowNamed title: String,
@@ -727,6 +847,7 @@ private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendabl
     let failedRenderIndices: Set<Int>
     let suspendRenderUntilResumed: Bool
     let renderResultBuilder: ((RenderPreparation, RenderRequest, Int) -> RenderResult)?
+    let systemFallbackReason: String?
     private(set) var prepareFolderRequests: [RenderRequest] = []
     private(set) var renderRequests: [RenderRequest] = []
     private(set) var cancelCurrentRenderCallCount: Int = 0
@@ -736,11 +857,13 @@ private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendabl
         preparation: RenderPreparation,
         failedRenderIndices: Set<Int> = [],
         suspendRenderUntilResumed: Bool = false,
+        systemFallbackReason: String? = nil,
         renderResultBuilder: ((RenderPreparation, RenderRequest, Int) -> RenderResult)? = nil
     ) {
         self.preparation = preparation
         self.failedRenderIndices = failedRenderIndices
         self.suspendRenderUntilResumed = suspendRenderUntilResumed
+        self.systemFallbackReason = systemFallbackReason
         self.renderResultBuilder = renderResultBuilder
     }
 
@@ -767,12 +890,22 @@ private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendabl
         photoMaterializer: PhotoAssetMaterializing?,
         writeDiagnosticsLog: Bool,
         progressHandler: RenderProgressHandler,
-        statusHandler: RenderStatusHandler
+        statusHandler: RenderStatusHandler,
+        systemFFmpegFallbackHandler: SystemFFmpegFallbackHandler?
     ) async throws -> RenderResult {
         let index = renderRequests.count
         renderRequests.append(request)
         statusHandler?(writeDiagnosticsLog ? "Encoding with diagnostics" : "Encoding")
         progressHandler?(1.0)
+
+        if let systemFallbackReason {
+            let approved = await systemFFmpegFallbackHandler?(
+                SystemFFmpegFallbackRequest(reason: systemFallbackReason)
+            ) ?? true
+            guard approved else {
+                throw RenderError.exportFailed("Render cancelled because system FFmpeg fallback was not approved.")
+            }
+        }
 
         if suspendRenderUntilResumed {
             await withCheckedContinuation { continuation in
@@ -817,10 +950,10 @@ private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendabl
 
     private func defaultBinarySource(for mode: HDRFFmpegBinaryMode) -> RenderBackendBinarySource {
         switch mode {
+        case .bundledPreferred, .bundledOnly:
+            return .bundled
         case .autoSystemThenBundled, .systemOnly:
             return .system
-        case .bundledOnly:
-            return .bundled
         }
     }
 

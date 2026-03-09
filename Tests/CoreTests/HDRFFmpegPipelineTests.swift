@@ -241,6 +241,101 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertNil(resolution.fallbackReason)
     }
 
+    func testBinaryResolverBundledPreferredUsesBundledWhenCapable() throws {
+        let systemBinary = FFmpegBinary(
+            ffmpegURL: URL(fileURLWithPath: "/tmp/system/ffmpeg"),
+            ffprobeURL: URL(fileURLWithPath: "/tmp/system/ffprobe"),
+            source: .system
+        )
+        let bundledBinary = FFmpegBinary(
+            ffmpegURL: URL(fileURLWithPath: "/tmp/bundled/ffmpeg"),
+            ffprobeURL: URL(fileURLWithPath: "/tmp/bundled/ffprobe"),
+            source: .bundled
+        )
+
+        let resolver = FFmpegBinaryResolver(
+            systemBinaryOverride: systemBinary,
+            bundledBinaryOverride: bundledBinary,
+            probeOverride: { binary in
+                FFmpegCapabilities(
+                    versionDescription: binary.source.rawValue,
+                    hasZscale: true,
+                    hasTonemap: true,
+                    hasXfade: true,
+                    hasAcrossfade: true,
+                    hasLibx264: true,
+                    hasH264VideoToolbox: true,
+                    hasLibx265: true,
+                    hasHEVCVideoToolbox: true
+                )
+            }
+        )
+
+        let resolution = try resolver.resolve(
+            mode: .bundledPreferred,
+            codec: .hevc,
+            dynamicRange: .hdr,
+            diagnostics: { _ in }
+        )
+
+        XCTAssertEqual(resolution.selectedBinary.source, .bundled)
+        XCTAssertNil(resolution.fallbackReason)
+    }
+
+    func testBinaryResolverBundledPreferredFallsBackToSystemWhenBundledLacksCapabilities() throws {
+        let systemBinary = FFmpegBinary(
+            ffmpegURL: URL(fileURLWithPath: "/tmp/system/ffmpeg"),
+            ffprobeURL: URL(fileURLWithPath: "/tmp/system/ffprobe"),
+            source: .system
+        )
+        let bundledBinary = FFmpegBinary(
+            ffmpegURL: URL(fileURLWithPath: "/tmp/bundled/ffmpeg"),
+            ffprobeURL: URL(fileURLWithPath: "/tmp/bundled/ffprobe"),
+            source: .bundled
+        )
+
+        let resolver = FFmpegBinaryResolver(
+            systemBinaryOverride: systemBinary,
+            bundledBinaryOverride: bundledBinary,
+            probeOverride: { binary in
+                if binary.source == .bundled {
+                    return FFmpegCapabilities(
+                        versionDescription: "bundled",
+                        hasZscale: false,
+                        hasTonemap: true,
+                        hasXfade: true,
+                        hasAcrossfade: true,
+                        hasLibx264: true,
+                        hasH264VideoToolbox: true,
+                        hasLibx265: true,
+                        hasHEVCVideoToolbox: true
+                    )
+                }
+                return FFmpegCapabilities(
+                    versionDescription: "system",
+                    hasZscale: true,
+                    hasTonemap: true,
+                    hasXfade: true,
+                    hasAcrossfade: true,
+                    hasLibx264: true,
+                    hasH264VideoToolbox: true,
+                    hasLibx265: true,
+                    hasHEVCVideoToolbox: true
+                )
+            }
+        )
+
+        let resolution = try resolver.resolve(
+            mode: .bundledPreferred,
+            codec: .hevc,
+            dynamicRange: .hdr,
+            diagnostics: { _ in }
+        )
+
+        XCTAssertEqual(resolution.selectedBinary.source, .system)
+        XCTAssertTrue(resolution.fallbackReason?.contains("Bundled FFmpeg missing required features") ?? false)
+    }
+
     func testBinaryResolverSystemOnlyFailsWhenHDRVideoToolboxModeIsUnavailable() {
         let systemBinary = FFmpegBinary(
             ffmpegURL: URL(fileURLWithPath: "/tmp/system/ffmpeg"),

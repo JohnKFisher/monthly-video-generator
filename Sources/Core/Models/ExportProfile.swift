@@ -76,6 +76,7 @@ public enum DynamicRange: String, CaseIterable, Codable, Sendable {
 }
 
 public enum HDRFFmpegBinaryMode: String, CaseIterable, Codable, Sendable {
+    case bundledPreferred
     case autoSystemThenBundled
     case systemOnly
     case bundledOnly
@@ -191,7 +192,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         frameRate: FrameRatePolicy = .smart,
         resolution: ResolutionPolicy,
         dynamicRange: DynamicRange,
-        hdrFFmpegBinaryMode: HDRFFmpegBinaryMode = .autoSystemThenBundled,
+        hdrFFmpegBinaryMode: HDRFFmpegBinaryMode = .bundledPreferred,
         hdrHEVCEncoderMode: HDRHEVCEncoderMode = .automatic,
         audioLayout: AudioLayout,
         bitrateMode: BitrateMode
@@ -215,7 +216,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         frameRate: .smart,
         resolution: .smart,
         dynamicRange: .sdr,
-        hdrFFmpegBinaryMode: .autoSystemThenBundled,
+        hdrFFmpegBinaryMode: .bundledPreferred,
         hdrHEVCEncoderMode: .automatic,
         audioLayout: .smart,
         bitrateMode: .balanced
@@ -228,7 +229,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         frameRate: .smart,
         resolution: .smart,
         dynamicRange: .hdr,
-        hdrFFmpegBinaryMode: .autoSystemThenBundled,
+        hdrFFmpegBinaryMode: .bundledPreferred,
         hdrHEVCEncoderMode: .automatic,
         audioLayout: .smart,
         bitrateMode: .balanced
@@ -255,7 +256,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         self.frameRate = try container.decodeIfPresent(FrameRatePolicy.self, forKey: .frameRate) ?? .smart
         self.resolution = try container.decode(ResolutionPolicy.self, forKey: .resolution)
         self.dynamicRange = try container.decode(DynamicRange.self, forKey: .dynamicRange)
-        self.hdrFFmpegBinaryMode = try container.decodeIfPresent(HDRFFmpegBinaryMode.self, forKey: .hdrFFmpegBinaryMode) ?? .autoSystemThenBundled
+        self.hdrFFmpegBinaryMode = try container.decodeIfPresent(HDRFFmpegBinaryMode.self, forKey: .hdrFFmpegBinaryMode) ?? .bundledPreferred
         self.hdrHEVCEncoderMode = try container.decodeIfPresent(HDRHEVCEncoderMode.self, forKey: .hdrHEVCEncoderMode) ?? .automatic
         self.audioLayout = try container.decode(AudioLayout.self, forKey: .audioLayout)
         self.bitrateMode = try container.decode(BitrateMode.self, forKey: .bitrateMode)

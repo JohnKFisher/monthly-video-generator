@@ -35,7 +35,8 @@ public final class AVFoundationRenderEngine {
         photoMaterializer: PhotoAssetMaterializing?,
         writeDiagnosticsLog: Bool,
         progressHandler: (@MainActor @Sendable (Double) -> Void)? = nil,
-        statusHandler: (@MainActor @Sendable (String) -> Void)? = nil
+        statusHandler: (@MainActor @Sendable (String) -> Void)? = nil,
+        systemFFmpegFallbackHandler: SystemFFmpegFallbackHandler? = nil
     ) async throws -> RenderResult {
         guard !timeline.segments.isEmpty else {
             throw RenderError.noRenderableMedia
@@ -195,7 +196,8 @@ public final class AVFoundationRenderEngine {
                         progressRange: progressRange,
                         statusPrefix: "HDR chunk \(index + 1)/\(chunkExecutionPlan.chunkPlans.count)",
                         progressHandler: progressHandler,
-                        statusHandler: statusHandler
+                        statusHandler: statusHandler,
+                        systemFFmpegFallbackHandler: systemFFmpegFallbackHandler
                     )
                     diagnostics.add(
                         "HDR chunk render completed: index=\(index + 1)/\(chunkExecutionPlan.chunkPlans.count), output=\(chunkPlan.outputURL.path)"
@@ -218,7 +220,8 @@ public final class AVFoundationRenderEngine {
                     ),
                     statusPrefix: "HDR final merge",
                     progressHandler: progressHandler,
-                    statusHandler: statusHandler
+                    statusHandler: statusHandler,
+                    systemFFmpegFallbackHandler: systemFFmpegFallbackHandler
                 )
                 diagnostics.add("HDR final merge completed: output=\(chunkExecutionPlan.finalPlan.outputURL.path)")
             } else {
@@ -236,7 +239,8 @@ public final class AVFoundationRenderEngine {
                     progressRange: 0.30...0.98,
                     statusPrefix: nil,
                     progressHandler: progressHandler,
-                    statusHandler: statusHandler
+                    statusHandler: statusHandler,
+                    systemFFmpegFallbackHandler: systemFFmpegFallbackHandler
                 )
             }
             reportProgress(1.0, handler: progressHandler)
@@ -405,7 +409,8 @@ public final class AVFoundationRenderEngine {
         progressRange: ClosedRange<Double>,
         statusPrefix: String?,
         progressHandler: (@MainActor @Sendable (Double) -> Void)?,
-        statusHandler: (@MainActor @Sendable (String) -> Void)?
+        statusHandler: (@MainActor @Sendable (String) -> Void)?,
+        systemFFmpegFallbackHandler: SystemFFmpegFallbackHandler?
     ) async throws -> FFmpegBinaryResolution {
         try await ffmpegHDRRenderer.render(
             plan: plan,
@@ -418,7 +423,8 @@ public final class AVFoundationRenderEngine {
             statusHandler: { ffmpegStatus in
                 let status = statusPrefix.map { "\($0): \(ffmpegStatus)" } ?? ffmpegStatus
                 self.reportStatus(status, handler: statusHandler)
-            }
+            },
+            systemFFmpegFallbackHandler: systemFFmpegFallbackHandler
         )
     }
 

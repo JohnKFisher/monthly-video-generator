@@ -32,7 +32,7 @@ final class RenderPipelineTests: XCTestCase {
         XCTAssertEqual(profile.frameRate, .smart)
         XCTAssertEqual(profile.resolution, .smart)
         XCTAssertEqual(profile.dynamicRange, .hdr)
-        XCTAssertEqual(profile.hdrFFmpegBinaryMode, .autoSystemThenBundled)
+        XCTAssertEqual(profile.hdrFFmpegBinaryMode, .bundledPreferred)
         XCTAssertEqual(profile.hdrHEVCEncoderMode, .automatic)
         XCTAssertEqual(profile.audioLayout, .smart)
         XCTAssertEqual(profile.bitrateMode, .balanced)
@@ -52,7 +52,7 @@ final class RenderPipelineTests: XCTestCase {
             frameRate: .smart,
             resolution: .matchSourceMax,
             dynamicRange: .hdr,
-            hdrFFmpegBinaryMode: .autoSystemThenBundled,
+            hdrFFmpegBinaryMode: .bundledPreferred,
             audioLayout: .surround51,
             bitrateMode: .balanced
         )
@@ -75,7 +75,7 @@ final class RenderPipelineTests: XCTestCase {
             frameRate: .fps30,
             resolution: .fixed1080p,
             dynamicRange: .sdr,
-            hdrFFmpegBinaryMode: .autoSystemThenBundled,
+            hdrFFmpegBinaryMode: .bundledPreferred,
             audioLayout: .surround51,
             bitrateMode: .sizeFirst
         )
@@ -95,7 +95,7 @@ final class RenderPipelineTests: XCTestCase {
             frameRate: .fps30,
             resolution: .fixed1080p,
             dynamicRange: .sdr,
-            hdrFFmpegBinaryMode: .autoSystemThenBundled,
+            hdrFFmpegBinaryMode: .bundledPreferred,
             audioLayout: .smart,
             bitrateMode: .balanced
         )
@@ -120,7 +120,7 @@ final class RenderPipelineTests: XCTestCase {
             frameRate: .fps30,
             resolution: .fixed1080p,
             dynamicRange: .sdr,
-            hdrFFmpegBinaryMode: .autoSystemThenBundled,
+            hdrFFmpegBinaryMode: .bundledPreferred,
             audioLayout: .smart,
             bitrateMode: .balanced
         )
@@ -145,7 +145,7 @@ final class RenderPipelineTests: XCTestCase {
             frameRate: .fps30,
             resolution: .fixed1080p,
             dynamicRange: .sdr,
-            hdrFFmpegBinaryMode: .autoSystemThenBundled,
+            hdrFFmpegBinaryMode: .bundledPreferred,
             audioLayout: .smart,
             bitrateMode: .balanced
         )
@@ -170,7 +170,7 @@ final class RenderPipelineTests: XCTestCase {
             frameRate: .fps30,
             resolution: .fixed1080p,
             dynamicRange: .sdr,
-            hdrFFmpegBinaryMode: .autoSystemThenBundled,
+            hdrFFmpegBinaryMode: .bundledPreferred,
             audioLayout: .smart,
             bitrateMode: .balanced
         )

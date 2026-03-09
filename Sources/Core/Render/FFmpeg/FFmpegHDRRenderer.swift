@@ -153,7 +153,8 @@ final class FFmpegHDRRenderer {
         binaryMode: HDRFFmpegBinaryMode,
         diagnostics: @escaping (String) -> Void,
         progressHandler: @escaping (Double) -> Void,
-        statusHandler: @escaping (String) -> Void = { _ in }
+        statusHandler: @escaping (String) -> Void = { _ in },
+        systemFFmpegFallbackHandler: SystemFFmpegFallbackHandler? = nil
     ) async throws -> FFmpegBinaryResolution {
         let callbacks = CallbackRelay(
             diagnostics: diagnostics,
@@ -169,6 +170,18 @@ final class FFmpegHDRRenderer {
             plan: plan,
             diagnostics: diagnostics
         )
+        if binaryMode == .bundledPreferred,
+           resolution.selectedBinary.source == .system,
+           let fallbackReason = resolution.fallbackReason,
+           let systemFFmpegFallbackHandler {
+            callbacks.updateStatus("Awaiting system FFmpeg fallback confirmation...")
+            let approved = await systemFFmpegFallbackHandler(
+                SystemFFmpegFallbackRequest(reason: fallbackReason)
+            )
+            guard approved else {
+                throw RenderError.exportFailed("Render cancelled because system FFmpeg fallback was not approved.")
+            }
+        }
         guard let selectedEncoder = resolution.selectedCapabilities.preferredEncoder(
             for: plan.videoCodec,
             dynamicRange: plan.dynamicRange,

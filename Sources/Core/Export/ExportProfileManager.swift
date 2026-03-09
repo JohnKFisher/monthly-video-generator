@@ -111,7 +111,7 @@ public final class ExportProfileManager {
             case .videoToolbox:
                 warnings.append(
                     ExportCompatibilityWarning(
-                        "HDR HEVC encoder VideoToolbox mode prioritizes faster hardware encoding and fails explicitly if hevc_videotoolbox is unavailable for the selected FFmpeg engine."
+                        "HDR HEVC encoder VideoToolbox mode prioritizes faster hardware encoding and fails explicitly if hevc_videotoolbox is unavailable for the available FFmpeg toolchain."
                     )
                 )
             }
@@ -119,6 +119,8 @@ public final class ExportProfileManager {
         }
 
         switch profile.hdrFFmpegBinaryMode {
+        case .bundledPreferred:
+            warnings.append(ExportCompatibilityWarning("FFmpeg uses the bundled toolchain first and will ask before falling back to system ffmpeg if bundled capabilities are missing."))
         case .autoSystemThenBundled:
             warnings.append(ExportCompatibilityWarning("FFmpeg engine Auto mode uses system ffmpeg first, then bundled ffmpeg if required filters or encoders are missing."))
         case .systemOnly:

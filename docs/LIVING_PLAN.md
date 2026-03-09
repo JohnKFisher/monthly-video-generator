@@ -72,7 +72,7 @@ Operational updates after first packaged run:
 - Hotfix: HDR tone-map pass now uses a standards-based identity 10-bit pipeline (HLG/BT.2020) with explicit HDR metadata insertion policy instead of a creative filter stack that caused severe clipping/saturation artifacts.
 - Hotfix: HDR writer settings now enforce HEVC Main10 with explicit metadata policy (Auto + recompute), and fall back to HLG static signaling (`metadata insertion = None`) when encoder support is limited.
 - Added render-complete success alert and an explicit “Open Render Folder” action in the UI for faster post-export discovery.
-- Expanded the single-render completion alert so it now summarizes the requested and actual export settings used for that finished file, including Smart/Auto resolutions such as `Smart (5.1)` and `Auto (Bundled)`.
+- Expanded the single-render completion alert so it now summarizes the requested and actual export settings used for that finished file, including Smart/fallback resolutions such as `Smart (5.1)` and `Bundled Preferred (System Fallback)` when applicable.
 - Hotfix: HDR pass now resolves per-frame source color tags (HLG/PQ/P3/709) instead of forcing HLG interpretation for every frame, and still-photo intermediates are now tagged from per-image source color space (P3 or BT.709) rather than one fixed BT.709 path.
 - Hotfix: HDR photo stills now use gain-map-aware decoding (when present) and are emitted as 10-bit BT.2020 HLG intermediates; non-HDR stills retain source-aware SDR tagging (P3/BT.709).
 - Added export option `Write diagnostics log (.log)` so diagnostics generation is explicitly user-controlled; when enabled, successful renders now produce a `.log` and run-report JSON includes the diagnostics path.
@@ -250,6 +250,7 @@ Operational updates after first packaged run:
 - 2026-03-08: Retuned SDR-to-HLG uplift to use a highlight-preserving shoulder curve in linear light instead of a hard `2 x` clamp, keeping the brighter HDR SDR fallback while recovering blown highlight detail in SDR stills and videos.
 - 2026-03-09: Replaced the SDR-only post-uplift global saturation bump with a lighter `contrast + vibrance` recovery step so bright SDR colors regain detail without pushing already colorful SDR frames too hard.
 - 2026-03-08: Added FFprobe-based Dolby Vision side-data detection during HDR render prep and explicit diagnostics when Dolby Vision sources fall back to plain HLG final output.
+- 2026-03-09: Removed the FFmpeg engine picker from the UI, made bundled FFmpeg the default render path, and added an explicit per-render confirmation dialog before any fallback to system FFmpeg.
 
 ## Risks/Blockers
 
@@ -257,7 +258,7 @@ Operational updates after first packaged run:
 - Progress reporting is phase-based and monotonic but still ETA-free (not frame-accurate completion-time prediction).
 - Very large photo months may have long materialization times; additional user-facing progress granularity is still needed.
 - FFmpeg-backed final exports can take materially longer than the old SDR preset path, especially at `4K60` or when software encoders (`libx264`/`libx265`) are selected by capability fallback.
-- FFmpeg bundling is operator-managed; missing/invalid bundled binaries will fail exports in `Bundled Only` mode.
+- FFmpeg bundling is operator-managed; missing/invalid bundled binaries now trigger an explicit user-confirmed fallback to system FFmpeg when the system toolchain can satisfy the render requirements.
 
 ## Next Actions (Top 3)
 

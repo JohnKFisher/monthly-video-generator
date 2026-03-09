@@ -24,7 +24,8 @@ protocol RenderCoordinating: AnyObject, Sendable {
         photoMaterializer: PhotoAssetMaterializing?,
         writeDiagnosticsLog: Bool,
         progressHandler: RenderProgressHandler,
-        statusHandler: RenderStatusHandler
+        statusHandler: RenderStatusHandler,
+        systemFFmpegFallbackHandler: SystemFFmpegFallbackHandler?
     ) async throws -> RenderResult
     func cancelCurrentRender()
 }
@@ -74,6 +75,15 @@ final class MainWindowViewModel: ObservableObject {
             case .missingAlbumSelection:
                 return "Choose a Photos album before rendering."
             }
+        }
+    }
+
+    struct SystemFFmpegFallbackConfirmation: Identifiable {
+        let id = UUID()
+        let reason: String
+
+        var alertMessage: String {
+            "\(reason)\n\nUse system FFmpeg for this render? Your saved settings will not change."
         }
     }
 
@@ -275,6 +285,7 @@ final class MainWindowViewModel: ObservableObject {
     @Published var lastBackendSummary: String = ""
     @Published private(set) var lastSingleRenderCompletionSummary: RenderCompletionSummary?
     @Published var showRenderCompleteAlert: Bool = false
+    @Published var pendingSystemFFmpegFallbackConfirmation: SystemFFmpegFallbackConfirmation?
 
     let appVersionBuildLabel: String
     let months = Array(1...12)
@@ -290,6 +301,8 @@ final class MainWindowViewModel: ObservableObject {
     private let exportProvenanceIdentity: OutputProvenanceAppIdentity
     private var renderTask: Task<Void, Never>?
     private var renderStatusDetail: String?
+    private var systemFFmpegFallbackContinuation: CheckedContinuation<Bool, Never>?
+    private var hasApprovedSystemFFmpegFallbackForCurrentRun = false
     private var isApplyingExportConstraints = false
     private var isRestoringPersistedSettings = false
     private var isApplyingOutputFilenameProgrammatically = false
@@ -432,8 +445,12 @@ final class MainWindowViewModel: ObservableObject {
         case .automatic:
             return "Default preserves the current quality-first HDR order: libx265 first, then VideoToolbox if required."
         case .videoToolbox:
-            return "VideoToolbox is faster for HDR HEVC on supported Macs, but may trade some compression efficiency and fails explicitly if unavailable for the selected FFmpeg engine."
+            return "VideoToolbox is faster for HDR HEVC on supported Macs, but may trade some compression efficiency and fails explicitly if unavailable for the available FFmpeg toolchain."
         }
+    }
+
+    var ffmpegEngineDescription: String {
+        "Bundled FFmpeg is used by default. If bundled FFmpeg cannot satisfy the selected export, the app will ask before falling back to system FFmpeg."
     }
 
     var bitrateModeDescription: String {
@@ -520,6 +537,7 @@ final class MainWindowViewModel: ObservableObject {
 
     func cancelRender() {
         renderTask?.cancel()
+        resolveSystemFFmpegFallbackConfirmation(approved: false)
         photoMaterializer.cancelPendingRequests()
         coordinator.cancelCurrentRender()
         statusMessage = "Cancelling render..."
@@ -536,6 +554,14 @@ final class MainWindowViewModel: ObservableObject {
         }
         NSWorkspace.shared.open(directoryURL)
         #endif
+    }
+
+    func approveSystemFFmpegFallback() {
+        resolveSystemFFmpegFallbackConfirmation(approved: true)
+    }
+
+    func cancelSystemFFmpegFallback() {
+        resolveSystemFFmpegFallbackConfirmation(approved: false)
     }
 
     private func performSingleRender(completionSummarySnapshot: SingleRenderSummarySnapshot) async {
@@ -818,6 +844,9 @@ final class MainWindowViewModel: ObservableObject {
         lastBackendSummary = ""
         lastSingleRenderCompletionSummary = nil
         showRenderCompleteAlert = false
+        pendingSystemFFmpegFallbackConfirmation = nil
+        systemFFmpegFallbackContinuation = nil
+        hasApprovedSystemFFmpegFallbackForCurrentRun = false
     }
 
     private func finishSuccessfulRun(status: String) {
@@ -831,6 +860,9 @@ final class MainWindowViewModel: ObservableObject {
             statusMessage += "\nBackend: \(lastBackendSummary)"
         }
         showRenderCompleteAlert = true
+        pendingSystemFFmpegFallbackConfirmation = nil
+        systemFFmpegFallbackContinuation = nil
+        hasApprovedSystemFFmpegFallbackForCurrentRun = false
         isRendering = false
     }
 
@@ -840,6 +872,9 @@ final class MainWindowViewModel: ObservableObject {
         statusMessage = formatErrorForDisplay(error)
         lastSingleRenderCompletionSummary = nil
         showRenderCompleteAlert = false
+        pendingSystemFFmpegFallbackConfirmation = nil
+        systemFFmpegFallbackContinuation = nil
+        hasApprovedSystemFFmpegFallbackForCurrentRun = false
         isRendering = false
     }
 
@@ -1045,6 +1080,10 @@ final class MainWindowViewModel: ObservableObject {
             },
             statusHandler: { [weak self] status in
                 self?.applyReportedRenderStatus(status)
+            },
+            systemFFmpegFallbackHandler: { [weak self] request in
+                guard let self else { return false }
+                return await self.confirmSystemFFmpegFallbackIfNeeded(request)
             }
         )
     }
@@ -1218,6 +1257,8 @@ final class MainWindowViewModel: ObservableObject {
 
     private func hdrBinaryModeLabel(for hdrBinaryMode: HDRFFmpegBinaryMode) -> String {
         switch hdrBinaryMode {
+        case .bundledPreferred:
+            return "Bundled Preferred"
         case .autoSystemThenBundled:
             return "Auto"
         case .systemOnly:
@@ -1294,11 +1335,49 @@ final class MainWindowViewModel: ObservableObject {
         backendInfo: RenderBackendInfo?
     ) -> String {
         switch selectedMode {
+        case .bundledPreferred:
+            switch backendInfo?.binarySource {
+            case .system:
+                return "System Fallback"
+            case .bundled, nil:
+                return hdrBinaryModeLabel(for: selectedMode)
+            }
         case .autoSystemThenBundled:
             return backendInfo?.binarySource?.displayLabel ?? hdrBinaryModeLabel(for: selectedMode)
         case .systemOnly, .bundledOnly:
             return hdrBinaryModeLabel(for: selectedMode)
         }
+    }
+
+    private func confirmSystemFFmpegFallbackIfNeeded(_ request: SystemFFmpegFallbackRequest) async -> Bool {
+        if hasApprovedSystemFFmpegFallbackForCurrentRun {
+            return true
+        }
+
+        pendingSystemFFmpegFallbackConfirmation = SystemFFmpegFallbackConfirmation(reason: request.reason)
+        return await withCheckedContinuation { continuation in
+            systemFFmpegFallbackContinuation = continuation
+        }
+    }
+
+    private func resolveSystemFFmpegFallbackConfirmation(approved: Bool) {
+        pendingSystemFFmpegFallbackConfirmation = nil
+        if approved {
+            hasApprovedSystemFFmpegFallbackForCurrentRun = true
+        }
+
+        guard let continuation = systemFFmpegFallbackContinuation else {
+            if !approved {
+                hasApprovedSystemFFmpegFallbackForCurrentRun = false
+            }
+            return
+        }
+
+        systemFFmpegFallbackContinuation = nil
+        if !approved {
+            hasApprovedSystemFFmpegFallbackForCurrentRun = false
+        }
+        continuation.resume(returning: approved)
     }
 
     private func formatErrorForDisplay(_ error: Error) -> String {
@@ -1551,7 +1630,7 @@ final class MainWindowViewModel: ObservableObject {
         selectedFrameRatePolicy = settings.selectedFrameRatePolicy ?? .smart
         selectedResolutionPolicy = settings.selectedResolutionPolicy.normalized
         selectedDynamicRange = settings.selectedDynamicRange
-        selectedHDRBinaryMode = settings.selectedHDRBinaryMode ?? .autoSystemThenBundled
+        selectedHDRBinaryMode = .bundledPreferred
         selectedHDRHEVCEncoderMode = settings.selectedHDRHEVCEncoderMode ?? .automatic
         selectedAudioLayout = settings.selectedAudioLayout
         selectedBitrateMode = settings.selectedBitrateMode

@@ -117,7 +117,7 @@ New default export profile for fresh installs (existing saved preferences are pr
 - Dynamic range: `HDR` (HLG)
 - Audio: `AAC Smart` (`Mono` unless any selected video needs `Stereo` or `5.1`)
 - Bitrate mode: `Balanced`
-- FFmpeg engine: `Auto (System then Bundled)`
+- FFmpeg engine: `Bundled Preferred` (asks before falling back to system FFmpeg)
 - HDR HEVC Encoder: `Default` (`libx265` first, then `hevc_videotoolbox` if required)
 
 Notes:

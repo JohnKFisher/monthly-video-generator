@@ -42,6 +42,22 @@ struct MainWindowView: View {
         } message: {
             Text(viewModel.renderCompleteAlertMessage)
         }
+        .alert(
+            "Use System FFmpeg?",
+            isPresented: Binding(
+                get: { viewModel.pendingSystemFFmpegFallbackConfirmation != nil },
+                set: { _ in }
+            )
+        ) {
+            Button("Use System FFmpeg") {
+                viewModel.approveSystemFFmpegFallback()
+            }
+            Button("Cancel Render", role: .cancel) {
+                viewModel.cancelSystemFFmpegFallback()
+            }
+        } message: {
+            Text(viewModel.pendingSystemFFmpegFallbackConfirmation?.alertMessage ?? "")
+        }
     }
 
     private var headerBar: some View {
@@ -266,12 +282,6 @@ struct MainWindowView: View {
                     }
                 }
 
-                Picker("FFmpeg Engine", selection: $viewModel.selectedHDRBinaryMode) {
-                    Text("Auto (System then Bundled)").tag(HDRFFmpegBinaryMode.autoSystemThenBundled)
-                    Text("System Only").tag(HDRFFmpegBinaryMode.systemOnly)
-                    Text("Bundled Only").tag(HDRFFmpegBinaryMode.bundledOnly)
-                }
-
                 Picker("HDR HEVC Encoder", selection: $viewModel.selectedHDRHEVCEncoderMode) {
                     ForEach(HDRHEVCEncoderMode.allCases, id: \.self) { mode in
                         Text(mode.displayLabel).tag(mode)
@@ -282,6 +292,7 @@ struct MainWindowView: View {
                 if viewModel.isHDRSelectionLocked {
                     caption(viewModel.hdrSelectionLockReason)
                 }
+                caption(viewModel.ffmpegEngineDescription)
                 caption(viewModel.hdrHEVCEncoderDescription)
 
                 VStack(alignment: .leading, spacing: 4) {
