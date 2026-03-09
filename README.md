@@ -25,7 +25,7 @@ swift build
 
 This creates:
 
-- `dist/MonthlyVideoGenerator.app`
+- `dist/Monthly Video Generator.app`
 
 The build also generates a custom macOS `AppIcon.icns` from the repo-local Swift
 icon renderer in `scripts/generate_app_icon.swift` and embeds it into the app bundle.
@@ -59,7 +59,7 @@ Then run:
 
 If binaries are present, they are copied into:
 
-- `dist/MonthlyVideoGenerator.app/Contents/Resources/FFmpeg/`
+- `dist/Monthly Video Generator.app/Contents/Resources/FFmpeg/`
 
 See:
 

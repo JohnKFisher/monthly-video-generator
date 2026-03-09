@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_NAME="MonthlyVideoGenerator"
+APP_NAME="Monthly Video Generator"
 EXECUTABLE_NAME="MonthlyVideoGeneratorApp"
 BUNDLE_ID="com.jkfisher.MonthlyVideoGenerator"
 VERSION_FILE="$ROOT_DIR/VERSION"
@@ -75,8 +75,12 @@ if [[ -x "$THIRD_PARTY_FFMPEG_BIN_DIR/ffmpeg" && -x "$THIRD_PARTY_FFMPEG_BIN_DIR
   chmod +x "$APP_BUNDLE/Contents/Resources/FFmpeg/ffmpeg" "$APP_BUNDLE/Contents/Resources/FFmpeg/ffprobe"
   echo "Bundled FFmpeg binaries from: $THIRD_PARTY_FFMPEG_BIN_DIR"
 else
-  echo "No bundled FFmpeg binaries found at $THIRD_PARTY_FFMPEG_BIN_DIR (system FFmpeg auto mode remains available)."
+  echo "No bundled FFmpeg binaries found at $THIRD_PARTY_FFMPEG_BIN_DIR (the app will require explicit approval before any system FFmpeg fallback)."
 fi
+
+while IFS= read -r resourceBundle; do
+  cp -R "$resourceBundle" "$APP_BUNDLE/Contents/Resources/"
+done < <(find .build -type d -name "*${EXECUTABLE_NAME}*.bundle" | sort)
 
 cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -93,6 +97,8 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
   <string>6.0</string>
   <key>CFBundleIconFile</key>
   <string>$ICON_NAME</string>
+  <key>CFBundleDisplayName</key>
+  <string>$APP_NAME</string>
   <key>CFBundleName</key>
   <string>$APP_NAME</string>
   <key>CFBundlePackageType</key>

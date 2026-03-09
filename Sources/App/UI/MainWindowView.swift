@@ -3,6 +3,7 @@ import SwiftUI
 
 struct MainWindowView: View {
     @StateObject private var viewModel = MainWindowViewModel()
+    @State private var isAdvancedExportSettingsExpanded = false
     private let sectionSpacing: CGFloat = 12
     private let rowSpacing: CGFloat = 8
 
@@ -62,13 +63,20 @@ struct MainWindowView: View {
 
     private var headerBar: some View {
         HStack(alignment: .top, spacing: 16) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Monthly Video Generator")
-                    .font(.title2)
-                    .fontWeight(.semibold)
-                Text(viewModel.appVersionBuildLabel)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            HStack(alignment: .center, spacing: 12) {
+                Image(AppMetadata.headerIconResourceName, bundle: .module)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 48, height: 48)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(AppMetadata.appName)
+                        .font(.title2)
+                        .fontWeight(.semibold)
+                    Text(viewModel.appVersionBuildLabel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Spacer(minLength: 12)
@@ -176,6 +184,8 @@ struct MainWindowView: View {
 
                 if viewModel.includeOpeningTitle {
                     TextField("Title text", text: $viewModel.openingTitleText)
+                    TextField("Small caption", text: $viewModel.openingTitleCaptionText)
+                    caption("Leave blank to hide the smaller caption.")
                     caption("If left blank, uses the selected month/year label. The opener now animates a small collage from upcoming media and may modestly increase export time.")
 
                     sliderRow(
@@ -185,20 +195,6 @@ struct MainWindowView: View {
                         step: 0.25,
                         displayValue: String(format: "%.2fs", viewModel.titleDurationSeconds)
                     )
-
-                    Picker("Small caption", selection: $viewModel.openingTitleCaptionMode) {
-                        ForEach(OpeningTitleCaptionMode.allCases, id: \.self) { mode in
-                            Text(mode.displayLabel).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-
-                    if viewModel.openingTitleCaptionMode == .custom {
-                        TextField("Caption text", text: $viewModel.openingTitleCaptionText)
-                        caption("Leave blank to hide the smaller caption.")
-                    } else {
-                        caption("Automatic uses the current album title, month/year label, or date span when available.")
-                    }
                 }
 
                 sliderRow(
@@ -227,85 +223,6 @@ struct MainWindowView: View {
     private var exportSection: some View {
         GroupBox("Export") {
             VStack(alignment: .leading, spacing: rowSpacing) {
-                Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: rowSpacing) {
-                    GridRow {
-                        Picker("Container", selection: $viewModel.selectedContainer) {
-                            ForEach(ContainerFormat.allCases, id: \.self) { format in
-                                Text(format.rawValue.uppercased()).tag(format)
-                            }
-                        }
-
-                        Picker("Codec", selection: $viewModel.selectedVideoCodec) {
-                            ForEach(VideoCodec.allCases, id: \.self) { codec in
-                                Text(codec.rawValue.uppercased()).tag(codec)
-                            }
-                        }
-                        .disabled(viewModel.isHDRSelectionLocked)
-                    }
-
-                    GridRow {
-                        Picker("Audio", selection: $viewModel.selectedAudioLayout) {
-                            ForEach(AudioLayout.allCases, id: \.self) { layout in
-                                Text(layout.displayLabel).tag(layout)
-                            }
-                        }
-
-                        Picker("Bitrate", selection: $viewModel.selectedBitrateMode) {
-                            ForEach(BitrateMode.allCases, id: \.self) { mode in
-                                Text(mode.rawValue.capitalized).tag(mode)
-                            }
-                        }
-                    }
-
-                    GridRow {
-                        Picker("Resolution", selection: $viewModel.selectedResolutionPolicy) {
-                            Text("720p").tag(ResolutionPolicy.fixed720p)
-                            Text("1080p").tag(ResolutionPolicy.fixed1080p)
-                            Text("4K").tag(ResolutionPolicy.fixed4K)
-                            Text("Smart").tag(ResolutionPolicy.smart)
-                        }
-
-                        Picker("Frame Rate", selection: $viewModel.selectedFrameRatePolicy) {
-                            Text("30 fps").tag(FrameRatePolicy.fps30)
-                            Text("60 fps").tag(FrameRatePolicy.fps60)
-                            Text("Smart").tag(FrameRatePolicy.smart)
-                        }
-                    }
-
-                    GridRow {
-                        Picker("Range", selection: $viewModel.selectedDynamicRange) {
-                            ForEach(DynamicRange.allCases, id: \.self) { range in
-                                Text(range.rawValue.uppercased()).tag(range)
-                            }
-                        }
-                        Color.clear
-                    }
-                }
-
-                Picker("HDR HEVC Encoder", selection: $viewModel.selectedHDRHEVCEncoderMode) {
-                    ForEach(HDRHEVCEncoderMode.allCases, id: \.self) { mode in
-                        Text(mode.displayLabel).tag(mode)
-                    }
-                }
-                .disabled(viewModel.selectedDynamicRange != .hdr)
-
-                if viewModel.isHDRSelectionLocked {
-                    caption(viewModel.hdrSelectionLockReason)
-                }
-                caption(viewModel.ffmpegEngineDescription)
-                caption(viewModel.hdrHEVCEncoderDescription)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    caption(viewModel.bitrateModeDescription)
-                    caption(viewModel.frameRateDescription)
-                    if let photosSmartFrameRateDescription = viewModel.photosSmartFrameRateDescription {
-                        caption(photosSmartFrameRateDescription)
-                    }
-                    if let photosSmartAudioDescription = viewModel.photosSmartAudioDescription {
-                        caption(photosSmartAudioDescription)
-                    }
-                }
-
                 TextField("Show title", text: $viewModel.plexShowTitle)
                 caption("Used for Plex TV episode filenames and embedded MP4 metadata.")
 
@@ -405,19 +322,105 @@ struct MainWindowView: View {
                     }
                 }
 
-                ViewThatFits(in: .horizontal) {
-                    HStack {
-                        Toggle("Write diagnostics log (.log)", isOn: $viewModel.writeDiagnosticsLog)
-                        Spacer()
-                        Button("Reset to Plex Defaults") {
-                            viewModel.resetExportSettingsToPlexDefaults()
-                        }
-                    }
-
+                DisclosureGroup(
+                    "Advanced Export Settings",
+                    isExpanded: $isAdvancedExportSettingsExpanded
+                ) {
                     VStack(alignment: .leading, spacing: rowSpacing) {
-                        Toggle("Write diagnostics log (.log)", isOn: $viewModel.writeDiagnosticsLog)
-                        Button("Reset to Plex Defaults") {
-                            viewModel.resetExportSettingsToPlexDefaults()
+                        Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: rowSpacing) {
+                            GridRow {
+                                Picker("Container", selection: $viewModel.selectedContainer) {
+                                    ForEach(ContainerFormat.allCases, id: \.self) { format in
+                                        Text(format.rawValue.uppercased()).tag(format)
+                                    }
+                                }
+
+                                Picker("Codec", selection: $viewModel.selectedVideoCodec) {
+                                    ForEach(VideoCodec.allCases, id: \.self) { codec in
+                                        Text(codec.rawValue.uppercased()).tag(codec)
+                                    }
+                                }
+                                .disabled(viewModel.isHDRSelectionLocked)
+                            }
+
+                            GridRow {
+                                Picker("Audio", selection: $viewModel.selectedAudioLayout) {
+                                    ForEach(AudioLayout.allCases, id: \.self) { layout in
+                                        Text(layout.displayLabel).tag(layout)
+                                    }
+                                }
+
+                                Picker("Bitrate", selection: $viewModel.selectedBitrateMode) {
+                                    ForEach(BitrateMode.allCases, id: \.self) { mode in
+                                        Text(mode.rawValue.capitalized).tag(mode)
+                                    }
+                                }
+                            }
+
+                            GridRow {
+                                Picker("Resolution", selection: $viewModel.selectedResolutionPolicy) {
+                                    Text("720p").tag(ResolutionPolicy.fixed720p)
+                                    Text("1080p").tag(ResolutionPolicy.fixed1080p)
+                                    Text("4K").tag(ResolutionPolicy.fixed4K)
+                                    Text("Smart").tag(ResolutionPolicy.smart)
+                                }
+
+                                Picker("Frame Rate", selection: $viewModel.selectedFrameRatePolicy) {
+                                    Text("30 fps").tag(FrameRatePolicy.fps30)
+                                    Text("60 fps").tag(FrameRatePolicy.fps60)
+                                    Text("Smart").tag(FrameRatePolicy.smart)
+                                }
+                            }
+
+                            GridRow {
+                                Picker("Range", selection: $viewModel.selectedDynamicRange) {
+                                    ForEach(DynamicRange.allCases, id: \.self) { range in
+                                        Text(range.rawValue.uppercased()).tag(range)
+                                    }
+                                }
+                                Color.clear
+                            }
+                        }
+
+                        Picker("HDR HEVC Encoder", selection: $viewModel.selectedHDRHEVCEncoderMode) {
+                            ForEach(HDRHEVCEncoderMode.allCases, id: \.self) { mode in
+                                Text(mode.displayLabel).tag(mode)
+                            }
+                        }
+                        .disabled(viewModel.selectedDynamicRange != .hdr)
+
+                        if viewModel.isHDRSelectionLocked {
+                            caption(viewModel.hdrSelectionLockReason)
+                        }
+                        caption(viewModel.ffmpegEngineDescription)
+                        caption(viewModel.hdrHEVCEncoderDescription)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            caption(viewModel.bitrateModeDescription)
+                            caption(viewModel.frameRateDescription)
+                            if let photosSmartFrameRateDescription = viewModel.photosSmartFrameRateDescription {
+                                caption(photosSmartFrameRateDescription)
+                            }
+                            if let photosSmartAudioDescription = viewModel.photosSmartAudioDescription {
+                                caption(photosSmartAudioDescription)
+                            }
+                        }
+
+                        ViewThatFits(in: .horizontal) {
+                            HStack {
+                                Toggle("Write diagnostics log (.log)", isOn: $viewModel.writeDiagnosticsLog)
+                                Spacer()
+                                Button("Reset to Plex Defaults") {
+                                    viewModel.resetExportSettingsToPlexDefaults()
+                                }
+                            }
+
+                            VStack(alignment: .leading, spacing: rowSpacing) {
+                                Toggle("Write diagnostics log (.log)", isOn: $viewModel.writeDiagnosticsLog)
+                                Button("Reset to Plex Defaults") {
+                                    viewModel.resetExportSettingsToPlexDefaults()
+                                }
+                            }
                         }
                     }
                 }

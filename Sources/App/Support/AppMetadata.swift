@@ -3,6 +3,7 @@ import Core
 
 enum AppMetadata {
     static let appName = "Monthly Video Generator"
+    static let headerIconResourceName = "AppHeaderIcon"
 
     static var shortVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"

@@ -24,7 +24,10 @@ let package = Package(
         .executableTarget(
             name: "MonthlyVideoGeneratorApp",
             dependencies: ["Core", "PhotosIntegration"],
-            path: "Sources/App"
+            path: "Sources/App",
+            resources: [
+                .process("Resources")
+            ]
         ),
         .testTarget(
             name: "CoreTests",

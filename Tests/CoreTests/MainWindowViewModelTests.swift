@@ -9,10 +9,72 @@ final class MainWindowViewModelTests: XCTestCase {
     func testInitialSourceDefaultsToApplePhotos() {
         let viewModel = makeViewModel(
             coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
-            preferencesStore: makePreferencesStore()
+            preferencesStore: makePreferencesStore(),
+            calendar: makeUTCGregorianCalendar(),
+            nowProvider: { self.makeDate(year: 2026, month: 3, day: 9) }
         )
 
         XCTAssertEqual(viewModel.sourceMode, .photos)
+        XCTAssertEqual(viewModel.selectedPhotosFilterMode, .monthYear)
+    }
+
+    func testLaunchDefaultsUseMostRecentlyCompletedMonth() {
+        let viewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            preferencesStore: makePreferencesStore(),
+            calendar: makeUTCGregorianCalendar(),
+            nowProvider: { self.makeDate(year: 2026, month: 3, day: 9) }
+        )
+
+        XCTAssertEqual(viewModel.selectedMonth, 2)
+        XCTAssertEqual(viewModel.selectedYear, 2026)
+    }
+
+    func testLaunchDefaultsRollJanuaryBackToPreviousDecember() {
+        let viewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            preferencesStore: makePreferencesStore(),
+            calendar: makeUTCGregorianCalendar(),
+            nowProvider: { self.makeDate(year: 2026, month: 1, day: 9) }
+        )
+
+        XCTAssertEqual(viewModel.selectedMonth, 12)
+        XCTAssertEqual(viewModel.selectedYear, 2025)
+    }
+
+    func testPersistedAlbumFilterIsOverriddenBackToMonthYearOnLaunch() throws {
+        let preferencesStore = makePreferencesStore()
+        let payload: [String: Any] = [
+            "includeOpeningTitle": true,
+            "openingTitleText": "June 2026",
+            "crossfadeDurationSeconds": 0.75,
+            "stillImageDurationSeconds": 3.0,
+            "selectedPhotosFilterMode": "album",
+            "selectedPhotoAlbumID": "album-123",
+            "selectedContainer": "mp4",
+            "selectedVideoCodec": "hevc",
+            "selectedFrameRatePolicy": "smart",
+            "selectedResolutionPolicy": "smart",
+            "selectedDynamicRange": "hdr",
+            "selectedHDRBinaryMode": "bundledPreferred",
+            "selectedHDRHEVCEncoderMode": "automatic",
+            "selectedAudioLayout": "smart",
+            "selectedBitrateMode": "balanced",
+            "writeDiagnosticsLog": true
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        preferencesStore.set(data, forKey: "MainWindowViewModel.renderSettings.v1")
+
+        let viewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            preferencesStore: preferencesStore,
+            calendar: makeUTCGregorianCalendar(),
+            nowProvider: { self.makeDate(year: 2026, month: 3, day: 9) }
+        )
+
+        XCTAssertEqual(viewModel.sourceMode, .photos)
+        XCTAssertEqual(viewModel.selectedPhotosFilterMode, .monthYear)
+        XCTAssertEqual(viewModel.selectedPhotoAlbumID, "album-123")
     }
 
     func testInitialOutputNameUsesPlexTVFormat() {
@@ -26,6 +88,42 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.isOutputNameAutoManaged)
         XCTAssertEqual(viewModel.plexDescriptionText, expectedDescription(monthYear: monthYear))
         XCTAssertTrue(viewModel.isPlexDescriptionAutoManaged)
+    }
+
+    func testDiagnosticsDefaultToOffWhenUnset() {
+        let viewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            preferencesStore: makePreferencesStore()
+        )
+
+        XCTAssertFalse(viewModel.writeDiagnosticsLog)
+    }
+
+    func testSavedDiagnosticsChoicePersistsAcrossLaunches() {
+        let preferencesStore = makePreferencesStore()
+        let initialViewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            preferencesStore: preferencesStore
+        )
+
+        initialViewModel.writeDiagnosticsLog = true
+
+        let restoredViewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            preferencesStore: preferencesStore
+        )
+
+        XCTAssertTrue(restoredViewModel.writeDiagnosticsLog)
+    }
+
+    func testOpeningTitleCaptionDefaultsToFisherFamilyVideos() {
+        let viewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            preferencesStore: makePreferencesStore()
+        )
+
+        XCTAssertEqual(viewModel.openingTitleCaptionMode, .custom)
+        XCTAssertEqual(viewModel.openingTitleCaptionText, "Fisher Family Videos")
     }
 
     func testMonthLabelIncludesNumberAndMonthName() {
@@ -109,6 +207,22 @@ final class MainWindowViewModelTests: XCTestCase {
         restoredViewModel.resetExportSettingsToPlexDefaults()
 
         XCTAssertEqual(restoredViewModel.plexShowTitle, "Family Videos")
+    }
+
+    func testResetExportSettingsRestoresCaptionAndDiagnosticsDefaults() {
+        let viewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            preferencesStore: makePreferencesStore()
+        )
+
+        viewModel.openingTitleCaptionText = "Cape Cod at dusk"
+        viewModel.writeDiagnosticsLog = true
+
+        viewModel.resetExportSettingsToPlexDefaults()
+
+        XCTAssertEqual(viewModel.openingTitleCaptionMode, .custom)
+        XCTAssertEqual(viewModel.openingTitleCaptionText, "Fisher Family Videos")
+        XCTAssertFalse(viewModel.writeDiagnosticsLog)
     }
 
     func testPlexDescriptionDefaultsToMonthYearAndCanBeRestored() {
@@ -657,11 +771,12 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertEqual(restoredViewModel.openingTitleCaptionText, "Cape Cod at dusk")
     }
 
-    func testOpeningTitleCaptionLegacyDefaultsLoadSafely() throws {
+    func testLegacyAutomaticOpeningTitleCaptionNormalizesToCustomDefaultText() throws {
         let preferencesStore = makePreferencesStore()
         let legacyPayload: [String: Any] = [
             "includeOpeningTitle": true,
             "openingTitleText": "June 2026",
+            "openingTitleCaptionMode": "automatic",
             "crossfadeDurationSeconds": 0.75,
             "stillImageDurationSeconds": 3.0,
             "selectedPhotosFilterMode": "monthYear",
@@ -686,40 +801,58 @@ final class MainWindowViewModelTests: XCTestCase {
         )
 
         XCTAssertEqual(viewModel.titleDurationSeconds, 2.5, accuracy: 0.0001)
-        XCTAssertEqual(viewModel.openingTitleCaptionMode, .automatic)
-        XCTAssertEqual(viewModel.openingTitleCaptionText, "")
+        XCTAssertEqual(viewModel.openingTitleCaptionMode, .custom)
+        XCTAssertEqual(viewModel.openingTitleCaptionText, "Fisher Family Videos")
     }
 
-    func testSwitchingToCustomCaptionPrefillsAutomaticCaptionAndPreservesManualValue() {
+    func testLegacyAutomaticOpeningTitleCaptionKeepsSavedTextWhenPresent() throws {
+        let preferencesStore = makePreferencesStore()
+        let legacyPayload: [String: Any] = [
+            "includeOpeningTitle": true,
+            "openingTitleText": "June 2026",
+            "openingTitleCaptionMode": "automatic",
+            "openingTitleCaptionText": "Cape Cod at dusk",
+            "crossfadeDurationSeconds": 0.75,
+            "stillImageDurationSeconds": 3.0,
+            "selectedPhotosFilterMode": "monthYear",
+            "selectedPhotoAlbumID": "",
+            "selectedContainer": "mp4",
+            "selectedVideoCodec": "hevc",
+            "selectedFrameRatePolicy": "smart",
+            "selectedResolutionPolicy": "smart",
+            "selectedDynamicRange": "hdr",
+            "selectedHDRBinaryMode": "autoSystemThenBundled",
+            "selectedHDRHEVCEncoderMode": "automatic",
+            "selectedAudioLayout": "smart",
+            "selectedBitrateMode": "balanced",
+            "writeDiagnosticsLog": false
+        ]
+        let data = try JSONSerialization.data(withJSONObject: legacyPayload)
+        preferencesStore.set(data, forKey: "MainWindowViewModel.renderSettings.v1")
+
         let viewModel = makeViewModel(
             coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
-            preferencesStore: makePreferencesStore()
+            preferencesStore: preferencesStore
         )
-        let expectedAutomaticCaption = MonthYear(month: viewModel.selectedMonth, year: viewModel.selectedYear).displayLabel
 
-        viewModel.sourceMode = .photos
-        viewModel.openingTitleText = "Summer Highlights"
-        viewModel.openingTitleCaptionMode = .custom
-
-        XCTAssertEqual(viewModel.openingTitleCaptionText, expectedAutomaticCaption)
-
-        viewModel.openingTitleCaptionText = "Cape Cod at dusk"
-        viewModel.openingTitleCaptionMode = .automatic
-        viewModel.openingTitleCaptionMode = .custom
-
+        XCTAssertEqual(viewModel.openingTitleCaptionMode, .custom)
         XCTAssertEqual(viewModel.openingTitleCaptionText, "Cape Cod at dusk")
     }
 
     private func makeViewModel(
         coordinator: RenderCoordinating,
         preferencesStore: UserDefaults,
-        exportProvenanceIdentity: OutputProvenanceAppIdentity = AppMetadata.exportProvenanceIdentity
+        exportProvenanceIdentity: OutputProvenanceAppIdentity = AppMetadata.exportProvenanceIdentity,
+        calendar: Calendar = .current,
+        nowProvider: @escaping () -> Date = Date.init
     ) -> MainWindowViewModel {
         MainWindowViewModel(
             coordinator: coordinator,
             preferencesStore: preferencesStore,
             filenameGenerator: PlexTVFilenameGenerator(),
-            exportProvenanceIdentity: exportProvenanceIdentity
+            exportProvenanceIdentity: exportProvenanceIdentity,
+            calendar: calendar,
+            nowProvider: nowProvider
         )
     }
 
@@ -788,9 +921,14 @@ final class MainWindowViewModelTests: XCTestCase {
     }
 
     private func makeDate(year: Int, month: Int, day: Int) -> Date {
+        let calendar = makeUTCGregorianCalendar()
+        return calendar.date(from: DateComponents(year: year, month: month, day: day, hour: 12)) ?? Date()
+    }
+
+    private func makeUTCGregorianCalendar() -> Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
-        return calendar.date(from: DateComponents(year: year, month: month, day: day, hour: 12)) ?? Date()
+        return calendar
     }
 
     private func expectedOutputName(showTitle: String = "Family Videos", monthYear: MonthYear) -> String {

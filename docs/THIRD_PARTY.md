@@ -5,7 +5,7 @@
 This project supports an optional bundled FFmpeg toolchain for HDR exports.
 
 - Location in repo: `third_party/ffmpeg/bin/ffmpeg` and `third_party/ffmpeg/bin/ffprobe`
-- Location in packaged app: `MonthlyVideoGenerator.app/Contents/Resources/FFmpeg/`
+- Location in packaged app: `Monthly Video Generator.app/Contents/Resources/FFmpeg/`
 
 ### Acquisition
 
