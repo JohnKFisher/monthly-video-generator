@@ -5,6 +5,28 @@ import Foundation
 import XCTest
 
 final class HDRFFmpegPipelineTests: XCTestCase {
+    private final class ResolverFileManagerStub: FileManager, @unchecked Sendable {
+        private let stubCurrentDirectoryPath: String
+        private let executablePaths: Set<String>
+
+        init(
+            currentDirectoryPath: String = "/tmp/nonexistent-bundled-ffmpeg",
+            executablePaths: Set<String> = []
+        ) {
+            self.stubCurrentDirectoryPath = currentDirectoryPath
+            self.executablePaths = executablePaths
+            super.init()
+        }
+
+        override var currentDirectoryPath: String {
+            stubCurrentDirectoryPath
+        }
+
+        override func isExecutableFile(atPath path: String) -> Bool {
+            executablePaths.contains(path)
+        }
+    }
+
     func testRendererClosesParentPipeWriteEndsAfterLaunch() {
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -334,6 +356,28 @@ final class HDRFFmpegPipelineTests: XCTestCase {
 
         XCTAssertEqual(resolution.selectedBinary.source, .system)
         XCTAssertTrue(resolution.fallbackReason?.contains("Bundled FFmpeg missing required features") ?? false)
+    }
+
+    func testBinaryResolverBundledPreferredProbeRequiresBundledBinary() {
+        let systemBinary = FFmpegBinary(
+            ffmpegURL: URL(fileURLWithPath: "/tmp/system/ffmpeg"),
+            ffprobeURL: URL(fileURLWithPath: "/tmp/system/ffprobe"),
+            source: .system
+        )
+
+        let resolver = FFmpegBinaryResolver(
+            fileManager: ResolverFileManagerStub(),
+            systemBinaryOverride: systemBinary,
+            bundledBinaryOverride: nil,
+            probeOverride: nil
+        )
+
+        XCTAssertThrowsError(try resolver.resolveProbeBinary(mode: .bundledPreferred)) { error in
+            guard case let RenderError.exportFailed(message) = error else {
+                return XCTFail("Expected exportFailed, got \(error)")
+            }
+            XCTAssertTrue(message.contains("Bundled FFmpeg probe binary was not found"))
+        }
     }
 
     func testBinaryResolverSystemOnlyFailsWhenHDRVideoToolboxModeIsUnavailable() {

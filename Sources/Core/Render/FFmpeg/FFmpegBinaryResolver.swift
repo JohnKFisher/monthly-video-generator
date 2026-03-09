@@ -60,10 +60,7 @@ struct FFmpegBinaryResolver {
             if let bundledBinary {
                 return bundledBinary
             }
-            if let systemBinary {
-                return systemBinary
-            }
-            throw RenderError.exportFailed("No ffprobe binary was found in bundled FFmpeg resources or PATH/common locations.")
+            throw RenderError.exportFailed("Bundled FFmpeg probe binary was not found in app resources or third_party/ffmpeg.")
         case .autoSystemThenBundled:
             if let systemBinary {
                 return systemBinary
