@@ -248,7 +248,7 @@ Operational updates after first packaged run:
 - 2026-03-07: Bumped the shipped app version to `0.5.0` and promoted the current state as known-good rollback tag `checkpoint/20260307-known-good-v0-5-0`.
 - 2026-03-08: Reworked HDR export source classification to distinguish SDR/HLG/PQ inputs plus gain-map stills and Dolby Vision-backed HLG sources, then updated SDR-to-HLG normalization to use a fixed linear-light luminance uplift instead of a direct transfer remap that was darkening SDR material in HDR exports.
 - 2026-03-08: Retuned SDR-to-HLG uplift to use a highlight-preserving shoulder curve in linear light instead of a hard `2 x` clamp, keeping the brighter HDR SDR fallback while recovering blown highlight detail in SDR stills and videos.
-- 2026-03-09: Added a small SDR-only contrast/saturation compensation step after SDR-to-HLG uplift to recover the remaining washed-out look shared by SDR stills and SDR videos without changing native HLG handling.
+- 2026-03-09: Replaced the SDR-only post-uplift global saturation bump with a lighter `contrast + vibrance` recovery step so bright SDR colors regain detail without pushing already colorful SDR frames too hard.
 - 2026-03-08: Added FFprobe-based Dolby Vision side-data detection during HDR render prep and explicit diagnostics when Dolby Vision sources fall back to plain HLG final output.
 
 ## Risks/Blockers
