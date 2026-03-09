@@ -78,7 +78,6 @@ struct MainWindowView: View {
     private var rightColumn: some View {
         VStack(alignment: .leading, spacing: sectionSpacing) {
             exportSection
-            megaTestSection
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
@@ -413,69 +412,6 @@ struct MainWindowView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private var megaTestSection: some View {
-        GroupBox("Mega Test") {
-            VStack(alignment: .leading, spacing: rowSpacing) {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 16) {
-                        Toggle("Resolution", isOn: $viewModel.megaTestVaryResolution)
-                        Toggle("FPS", isOn: $viewModel.megaTestVaryFrameRate)
-                        Toggle("Range", isOn: $viewModel.megaTestVaryRange)
-                        Toggle("Audio", isOn: $viewModel.megaTestVaryAudio)
-                        Spacer()
-                        Button("Run Mega Test") {
-                            viewModel.startMegaTest()
-                        }
-                        .disabled(viewModel.isRendering)
-                    }
-
-                    VStack(alignment: .leading, spacing: rowSpacing) {
-                        HStack(spacing: 16) {
-                            Toggle("Resolution", isOn: $viewModel.megaTestVaryResolution)
-                            Toggle("FPS", isOn: $viewModel.megaTestVaryFrameRate)
-                            Toggle("Range", isOn: $viewModel.megaTestVaryRange)
-                            Toggle("Audio", isOn: $viewModel.megaTestVaryAudio)
-                        }
-                        Button("Run Mega Test") {
-                            viewModel.startMegaTest()
-                        }
-                        .disabled(viewModel.isRendering)
-                    }
-                }
-
-                caption("\(viewModel.megaTestCombinationCountDescription) will be rendered sequentially.")
-                caption("Mega test always uses the resolved Plex TV auto basename plus per-combination suffixes and ignores the single-render Output name field.")
-                if let megaTestHDRHEVCEncoderDescription = viewModel.megaTestHDRHEVCEncoderDescription {
-                    caption(megaTestHDRHEVCEncoderDescription)
-                }
-                if let megaTestPhotosSmartAudioDescription = viewModel.megaTestPhotosSmartAudioDescription {
-                    caption(megaTestPhotosSmartAudioDescription)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .alert(
-            "Mega Test Failed",
-            isPresented: Binding(
-                get: { viewModel.pendingMegaTestFailure != nil },
-                set: { isPresented in
-                    if !isPresented {
-                        viewModel.stopMegaTestAfterFailure()
-                    }
-                }
-            )
-        ) {
-            Button("Continue Remaining") {
-                viewModel.continueMegaTestAfterFailure()
-            }
-            Button("Stop Mega Test", role: .destructive) {
-                viewModel.stopMegaTestAfterFailure()
-            }
-        } message: {
-            Text(viewModel.pendingMegaTestFailure?.alertMessage ?? "")
         }
     }
 

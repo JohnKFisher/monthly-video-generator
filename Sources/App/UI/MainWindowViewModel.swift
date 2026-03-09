@@ -77,21 +77,6 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
 
-    struct MegaTestFailureContext: Identifiable {
-        let id = UUID()
-        let combination: MegaTestCombination
-        let message: String
-
-        var alertMessage: String {
-            "\(combination.displayLabel)\n\n\(message)"
-        }
-    }
-
-    private enum MegaTestFailureDecision {
-        case continueRemaining
-        case stop
-    }
-
     private struct PreparedRenderSession {
         let source: MediaSource
         let monthYear: MonthYear?
@@ -281,14 +266,6 @@ final class MainWindowViewModel: ObservableObject {
         didSet { handleRenderSettingChange() }
     }
 
-    @Published var megaTestVaryResolution: Bool = false
-    @Published var megaTestVaryFrameRate: Bool = false
-    @Published var megaTestVaryRange: Bool = false
-    @Published var megaTestVaryAudio: Bool = false
-    @Published private(set) var megaTestCurrentIndex: Int = 0
-    @Published private(set) var megaTestTotalCount: Int = 0
-    @Published var pendingMegaTestFailure: MegaTestFailureContext?
-
     @Published var isRendering: Bool = false
     @Published var progress: Double = 0
     @Published var statusMessage: String = "Idle"
@@ -313,8 +290,6 @@ final class MainWindowViewModel: ObservableObject {
     private let exportProvenanceIdentity: OutputProvenanceAppIdentity
     private var renderTask: Task<Void, Never>?
     private var renderStatusDetail: String?
-    private var currentMegaTestCombination: MegaTestCombination?
-    private var megaTestFailureContinuation: CheckedContinuation<MegaTestFailureDecision, Never>?
     private var isApplyingExportConstraints = false
     private var isRestoringPersistedSettings = false
     private var isApplyingOutputFilenameProgrammatically = false
@@ -500,50 +475,6 @@ final class MainWindowViewModel: ObservableObject {
         return lastOutputPath
     }
 
-    var megaTestPhotosSmartAudioDescription: String? {
-        guard sourceMode == .photos, megaTestVaryAudio else {
-            return nil
-        }
-        return "When Mega Test includes Smart audio in Apple Photos mode, preparation may inspect/download selected videos before rendering."
-    }
-
-    var megaTestHDRHEVCEncoderDescription: String? {
-        guard selectedDynamicRange == .hdr || megaTestVaryRange else {
-            return nil
-        }
-        return "Mega Test uses VideoToolbox for HDR HEVC combinations to keep test runs faster."
-    }
-
-    var megaTestSelection: MegaTestSelection {
-        MegaTestSelection(
-            varyResolution: megaTestVaryResolution,
-            varyFrameRate: megaTestVaryFrameRate,
-            varyDynamicRange: megaTestVaryRange,
-            varyAudioLayout: megaTestVaryAudio
-        )
-    }
-
-    var megaTestCombinations: [MegaTestCombination] {
-        megaTestSelection.expandedCombinations(
-            currentResolution: selectedResolutionPolicy.normalized,
-            currentFrameRate: selectedFrameRatePolicy,
-            currentDynamicRange: selectedDynamicRange,
-            currentAudioLayout: selectedAudioLayout
-        )
-    }
-
-    var megaTestCombinationCount: Int {
-        megaTestCombinations.count
-    }
-
-    var megaTestCombinationCountDescription: String {
-        let count = megaTestCombinationCount
-        if count == 1 {
-            return "1 combination"
-        }
-        return "\(count) combinations"
-    }
-
     func resetExportSettingsToPlexDefaults() {
         let profile = exportProfileManager.defaultProfile()
         isRestoringPersistedSettings = true
@@ -579,29 +510,8 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
 
-    func startMegaTest() {
-        guard !isRendering, renderTask == nil else { return }
-
-        let combinations = megaTestCombinations
-        renderTask = Task {
-            await performMegaTest(combinations: combinations)
-            await MainActor.run {
-                self.renderTask = nil
-            }
-        }
-    }
-
-    func continueMegaTestAfterFailure() {
-        resolveMegaTestFailureDecision(.continueRemaining)
-    }
-
-    func stopMegaTestAfterFailure() {
-        resolveMegaTestFailureDecision(.stop)
-    }
-
     func cancelRender() {
         renderTask?.cancel()
-        resolveMegaTestFailureDecision(.stop)
         photoMaterializer.cancelPendingRequests()
         coordinator.cancelCurrentRender()
         statusMessage = "Cancelling render..."
@@ -672,100 +582,6 @@ final class MainWindowViewModel: ObservableObject {
                 completionSummarySnapshot: completionSummarySnapshot
             )
             finishSuccessfulRun(status: "Render complete")
-        } catch {
-            finishFailedRun(error)
-        }
-    }
-
-    private func performMegaTest(combinations: [MegaTestCombination]) async {
-        beginRenderRun(status: "Preparing mega test media...")
-        megaTestTotalCount = combinations.count
-
-        do {
-            let monthYear = MonthYear(month: selectedMonth, year: selectedYear)
-            let style = buildStyle(for: monthYear)
-            let requiresSmartFrameRateInspection = combinations.contains { $0.frameRate == .smart }
-            let requiresSmartAudioInspection = combinations.contains { $0.audioLayout == .smart }
-            let preparedSession = try await prepareRenderSession(
-                style: style,
-                monthYear: monthYear,
-                requiresSmartFrameRateInspection: requiresSmartFrameRateInspection,
-                requiresSmartAudioInspection: requiresSmartAudioInspection
-            )
-
-            progress = max(progress, 0.08)
-            renderStatusDetail = nil
-            updateRenderingStatusMessage()
-
-            for (index, combination) in combinations.enumerated() {
-                try Task.checkCancellation()
-
-                megaTestCurrentIndex = index + 1
-                currentMegaTestCombination = combination
-                let exportResolution = resolveExportProfile(
-                    for: combination,
-                    items: preparedSession.preparation.items
-                )
-                warnings = preparedSession.preparation.warnings + exportResolution.warnings.map(\.message)
-                let plexRenderDetails = try resolvePlexRenderDetails(
-                    preparedSession: preparedSession,
-                    fallbackMonthYear: monthYear,
-                    exportProfile: exportResolution.effectiveProfile,
-                    outputBaseFilenameOverride: nil
-                )
-
-                let outputBaseFilename = filenameGenerator.makeMegaTestOutputName(
-                    baseName: plexRenderDetails.metadata.identity.filenameBase,
-                    resolution: combination.resolution,
-                    frameRate: combination.frameRate,
-                    dynamicRange: combination.dynamicRange,
-                    audioLayout: combination.audioLayout
-                )
-                let request = makeRenderRequest(
-                    preparedSession: preparedSession,
-                    exportProfile: exportResolution.effectiveProfile,
-                    outputBaseFilename: outputBaseFilename,
-                    plexTVMetadata: plexRenderDetails.metadata
-                )
-
-                do {
-                    let totalCount = Double(max(combinations.count, 1))
-                    let completedCount = Double(index)
-                    let renderResult = try await renderSingleRequest(
-                        preparedSession: preparedSession,
-                        request: request,
-                        progressMapper: { reportedProgress in
-                            (completedCount + min(max(reportedProgress, 0), 1)) / totalCount
-                        }
-                    )
-                    recordSuccessfulRender(
-                        renderResult,
-                        request: request,
-                        preparation: preparedSession.preparation
-                    )
-                    progress = Double(index + 1) / totalCount
-                } catch is CancellationError {
-                    throw CancellationError()
-                } catch {
-                    let decision = await promptForMegaTestFailure(
-                        combination: combination,
-                        error: error
-                    )
-                    try Task.checkCancellation()
-                    switch decision {
-                    case .continueRemaining:
-                        continue
-                    case .stop:
-                        renderStatusDetail = nil
-                        statusMessage = "Mega test stopped after failure\n\(combination.displayLabel)\n\(formatErrorForDisplay(error))"
-                        clearMegaTestState()
-                        isRendering = false
-                        return
-                    }
-                }
-            }
-
-            finishSuccessfulRun(status: "Mega test complete")
         } catch {
             finishFailedRun(error)
         }
@@ -994,8 +810,6 @@ final class MainWindowViewModel: ObservableObject {
         lastBackendSummary = ""
         lastSingleRenderCompletionSummary = nil
         showRenderCompleteAlert = false
-        pendingMegaTestFailure = nil
-        clearMegaTestState()
     }
 
     private func finishSuccessfulRun(status: String) {
@@ -1009,7 +823,6 @@ final class MainWindowViewModel: ObservableObject {
             statusMessage += "\nBackend: \(lastBackendSummary)"
         }
         showRenderCompleteAlert = true
-        clearMegaTestState()
         isRendering = false
     }
 
@@ -1019,15 +832,7 @@ final class MainWindowViewModel: ObservableObject {
         statusMessage = formatErrorForDisplay(error)
         lastSingleRenderCompletionSummary = nil
         showRenderCompleteAlert = false
-        pendingMegaTestFailure = nil
-        clearMegaTestState()
         isRendering = false
-    }
-
-    private func clearMegaTestState() {
-        megaTestCurrentIndex = 0
-        megaTestTotalCount = 0
-        currentMegaTestCombination = nil
     }
 
     private func resolveExportProfile(
@@ -1046,17 +851,6 @@ final class MainWindowViewModel: ObservableObject {
                 audioLayout: audioLayout,
                 hdrHEVCEncoderMode: hdrHEVCEncoderMode
             ),
-            items: items
-        )
-    }
-
-    private func resolveExportProfile(for combination: MegaTestCombination, items: [MediaItem]) -> ExportProfileResolution {
-        resolveExportProfile(
-            resolution: combination.resolution,
-            frameRate: combination.frameRate,
-            dynamicRange: combination.dynamicRange,
-            audioLayout: combination.audioLayout,
-            hdrHEVCEncoderMode: megaTestHDRHEVCEncoderMode(for: combination.dynamicRange),
             items: items
         )
     }
@@ -1080,10 +874,6 @@ final class MainWindowViewModel: ObservableObject {
             audioLayout: audioLayout,
             bitrateMode: selectedBitrateMode
         )
-    }
-
-    private func megaTestHDRHEVCEncoderMode(for dynamicRange: DynamicRange) -> HDRHEVCEncoderMode {
-        dynamicRange == .hdr ? .videoToolbox : selectedHDRHEVCEncoderMode
     }
 
     private func prepareRenderSession(
@@ -1503,28 +1293,6 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
 
-    private func promptForMegaTestFailure(
-        combination: MegaTestCombination,
-        error: Error
-    ) async -> MegaTestFailureDecision {
-        pendingMegaTestFailure = MegaTestFailureContext(
-            combination: combination,
-            message: formatErrorForDisplay(error)
-        )
-        return await withCheckedContinuation { continuation in
-            megaTestFailureContinuation = continuation
-        }
-    }
-
-    private func resolveMegaTestFailureDecision(_ decision: MegaTestFailureDecision) {
-        pendingMegaTestFailure = nil
-        guard let continuation = megaTestFailureContinuation else {
-            return
-        }
-        megaTestFailureContinuation = nil
-        continuation.resume(returning: decision)
-    }
-
     private func formatErrorForDisplay(_ error: Error) -> String {
         if error is CancellationError {
             return "Render cancelled"
@@ -1650,29 +1418,12 @@ final class MainWindowViewModel: ObservableObject {
 
     private func updateRenderingStatusMessage() {
         let percent = Int((progress * 100).rounded())
-        let megaTestPrefix: String?
-        if let currentMegaTestCombination,
-           megaTestCurrentIndex > 0,
-           megaTestTotalCount > 0 {
-            megaTestPrefix = "Mega Test \(megaTestCurrentIndex)/\(megaTestTotalCount): \(currentMegaTestCombination.displayLabel)"
-        } else {
-            megaTestPrefix = nil
-        }
-
         if let renderStatusDetail, !renderStatusDetail.isEmpty {
-            if let megaTestPrefix {
-                statusMessage = "\(megaTestPrefix)\n\(renderStatusDetail)\nOverall progress: \(percent)%"
-            } else {
-                statusMessage = "\(renderStatusDetail)\nOverall progress: \(percent)%"
-            }
+            statusMessage = "\(renderStatusDetail)\nOverall progress: \(percent)%"
             return
         }
 
-        if let megaTestPrefix {
-            statusMessage = "\(megaTestPrefix)\nOverall progress: \(percent)%"
-        } else {
-            statusMessage = "Rendering... \(percent)%"
-        }
+        statusMessage = "Rendering... \(percent)%"
     }
 
     private func handleRenderSettingChange(enforceHDRConstraints: Bool = false) {

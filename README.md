@@ -138,9 +138,6 @@ Current temporary test-only app behavior:
 - The Output name field auto-generates a testing filename from the selected `Resolution`, `FPS`, `Range`, and `Audio`:
   `Testing - S2026E<unix epoch> - <Resolution> - <FPS>fps - <Range> - <Audio>`
 - The field stays auto-managed until edited manually. `Use Auto Name` / `Regenerate` restores the temporary generated format.
-- The `Mega Test` section can batch sequential renders across checked `Resolution`, `FPS`, `Range`, and `Audio` axes while reusing one preparation pass.
-- Mega Test forces `VideoToolbox` for HDR HEVC combinations so the batch path stays faster, without changing the saved single-render picker state.
-- Mega test filenames always use the generated testing format for each combination and ignore the single-render Output name field.
 
 ## Known-Good Rollback
 

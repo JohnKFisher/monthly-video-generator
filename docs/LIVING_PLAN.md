@@ -109,16 +109,15 @@ Operational updates after first packaged run:
 - Added embedded final-delivery MP4 metadata for Plex-oriented fields (`title`, `show`, `season_number`, `episode_sort`, `episode_id`, `date`, `creation_time`, `description`, `synopsis`, `comment`, `genre`) using `+use_metadata_tags`.
 - Added final-delivery export provenance metadata using standard tags (`software`, `version`, `information`) plus custom `com.jkfisher.monthlyvideogenerator.*` keys for app/build and structured export details.
 - Added automatic named chapters for final MP4 exports: optional opening-title chapter plus one capture-date day chapter per day bucket, with per-day photo/video counts and FFmpeg `ffmetadata` chapter muxing.
-- Added a `Mega Test` batch mode that expands checked Resolution/FPS/Range/Audio axes into sequential renders while reusing one preparation pass and appending per-combination suffixes to the Plex basename.
 - Switched SDR final export from `AVAssetExportSession` to the shared FFmpeg backend, added SDR H.264/HEVC encoder capability probing, and normalized SDR outputs to BT.709 with real bitrate control.
 - Reworked the main window into a denser two-column layout with a vertical scroll fallback so all controls remain reachable on smaller window heights.
 - Added an `HDR HEVC Encoder` picker with `Default` and strict `VideoToolbox` modes, threaded that selection through FFmpeg capability resolution and completion summaries, and kept `Default` as the persisted Plex/Infuse baseline.
-- Mega Test now forces `VideoToolbox` for HDR HEVC combinations at execution time so large HDR test batches run faster without mutating the user’s saved single-render encoder choice.
 - Promoted the current release as the new known-good rollback checkpoint (`v0.5.0`): `checkpoint/20260307-known-good-v0-5-0`.
 - Promoted the current release as the new known-good rollback checkpoint (`v0.6.0`): `checkpoint/20260308-known-good-v0-6-0`.
 - 2026-03-07: Replaced the static opening title card with a seeded animated media-collage opener that samples preview assets across the run, adds light source/date context, and falls back to the legacy static card if preview loading or animation fails.
 - 2026-03-07: Added a default-on Style toggle for per-clip capture-date stamps, rendering transparent bottom-right overlay plates for dated photos/videos and compositing them in the FFmpeg path before crossfades.
 - 2026-03-07: Added an automatic final-delivery FFmpeg fade-to-black on the last `2 x` crossfade seconds of video output, while leaving audio unchanged and skipping the fade on intermediate HDR chunk renders.
+- 2026-03-09: Removed the temporary batch-render matrix UI and support code so the app now exposes only the standard single-render export flow.
 
 ## Decisions Log
 
@@ -229,9 +228,9 @@ Operational updates after first packaged run:
 - 2026-03-05: Added Smart-fps Photos inspection with AVAsset URL/fps caching so Smart decisions can inspect/download selected iCloud-backed videos once and later reuse the same materialized asset during render.
 - 2026-03-05: Upgraded render cancellation so the top-level render task cancellation also stops Smart-fps Photos inspection and cancels outstanding PhotoKit requests.
 - 2026-03-05: Added regression tests for Smart-fps resolution logic, 60 fps still/title intermediate generation, folder-discovered source frame rates, and Photos Smart-fps cache reuse/cancellation behavior.
-- 2026-03-05: Added temporary app-layer testing helpers for generated output names and mega-test matrix expansion, keeping the test-only logic isolated from the render engine.
-- 2026-03-05: Added Output name auto-sync/unlock behavior plus a `Mega Test` UI section that can batch sequential Resolution/FPS/Range/Audio renders and prompt to continue or stop after failures.
-- 2026-03-05: Added app-level tests for temporary output naming behavior, mega-test preparation reuse, manual-name bypass during batches, and stop/continue failure handling.
+- 2026-03-05: Added temporary app-layer testing helpers for generated output names while keeping the test-only logic isolated from the render engine.
+- 2026-03-05: Added Output name auto-sync/unlock behavior for the temporary testing filename flow.
+- 2026-03-05: Added app-level tests for temporary output naming behavior.
 - 2026-03-06: Added SDR FFmpeg HDR-source tone mapping with capability-gated `tonemap` filter requirements, bundled-binary fallback when system FFmpeg lacks tone-map support, and regression tests for PQ/HLG SDR conversion paths.
 - 2026-03-06: Retuned the SDR HLG source-video conversion path to `HLG -> linear:npl=1400 -> BT.709 primaries -> mobius tonemap -> BT.709/range=tv` after sample-frame comparisons showed the earlier `npl=400` recipe still left iPhone faces and highlights too hot in SDR exports.
 - 2026-03-06: Replaced SDR `AVAssetExportSession` final export with the shared FFmpeg backend, generalized FFmpeg capability probing for SDR H.264/HEVC encoders, and updated command generation to emit BT.709-tagged SDR or BT.2020 HLG HDR outputs from the same pipeline.
@@ -240,7 +239,6 @@ Operational updates after first packaged run:
 - 2026-03-06: Reorganized the main window into responsive two-column and one-column layouts, compacted the densest control rows, and wrapped the content in a scroll view so no options are lost on shorter windows.
 - 2026-03-06: Added a script-generated macOS app icon pipeline (`scripts/generate_app_icon.swift` -> `.iconset` -> `AppIcon.icns` via `iconutil`), embedded the custom icon in built app bundles, and bumped the shipped app version to `0.4.0`.
 - 2026-03-06: Expanded audio layout controls to `Mono` / `Stereo` / `5.1` / `Smart`, made Smart the new default, and resolved Smart audio from inspected source-video channel counts with a conservative `5.1` fallback for uninspectable videos.
-- 2026-03-06: Added an `Audio` Mega Test axis plus `- <Audio>` testing filename tokens, keeping generated names synced with the selected audio policy while Mega Test varies audio combinations deterministically.
 - 2026-03-06: Updated the FFmpeg render plan/command builder to emit real mono/stereo/5.1 AAC outputs instead of hard-coded stereo, including layout-matched silent fillers, final `-ac`, and bitrate-aware output size estimates.
 - 2026-03-07: Added persisted title-card duration and caption controls, including an `Automatic / Custom` small-caption mode that preserves typed casing for custom captions while keeping automatic source captions styled as before.
 - 2026-03-07: Shrunk capture-date overlay plates from full-frame transparent PNGs to tightly cropped badge rasters and moved final placement into FFmpeg overlay expressions, preventing 4K HDR exports from constructing dozens of extra full-screen RGBA streams.
