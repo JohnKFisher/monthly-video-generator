@@ -452,18 +452,17 @@ struct MainWindowView: View {
     private var headerIconView: some View {
         #if canImport(AppKit)
         if let headerIconImage = AppMetadata.headerIconImage {
-            Button {
-                isHeaderEasterEggPresented = true
-            } label: {
-                Image(nsImage: headerIconImage)
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: 48, height: 48)
-            }
-            .buttonStyle(.plain)
-            .popover(isPresented: $isHeaderEasterEggPresented, arrowEdge: .top) {
-                headerEasterEggPopover
-            }
+            Image(nsImage: headerIconImage)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 48, height: 48)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    isHeaderEasterEggPresented = true
+                }
+                .popover(isPresented: $isHeaderEasterEggPresented, arrowEdge: .top) {
+                    headerEasterEggPopover
+                }
         } else {
             Color.clear
                 .frame(width: 48, height: 48)
@@ -555,7 +554,7 @@ struct MainWindowView: View {
             }
             #endif
 
-            Text("Vibecoded, poorly, by John Kenneth Fisher, 2026.")
+            Text("Vibecoded (poorly) by John Kenneth Fisher, 2026.")
                 .font(.callout)
                 .multilineTextAlignment(.center)
         }
