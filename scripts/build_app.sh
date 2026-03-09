@@ -8,9 +8,17 @@ BUNDLE_ID="com.jkfisher.MonthlyVideoGenerator"
 VERSION_FILE="$ROOT_DIR/VERSION"
 DIST_DIR="$ROOT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/${APP_NAME}.app"
+CONTENTS_DIR="$APP_BUNDLE/Contents"
+MACOS_DIR="$CONTENTS_DIR/MacOS"
+RESOURCES_DIR="$CONTENTS_DIR/Resources"
+FRAMEWORKS_DIR="$CONTENTS_DIR/Frameworks"
 THIRD_PARTY_FFMPEG_BIN_DIR="$ROOT_DIR/third_party/ffmpeg/bin"
 ICON_NAME="AppIcon"
 ICON_GENERATOR_SCRIPT="$ROOT_DIR/scripts/generate_app_icon.swift"
+MINIMUM_SYSTEM_VERSION="15.0"
+DEFAULT_APP_ARCHS="arm64 x86_64"
+APP_ARCHS="${APP_ARCHS:-$DEFAULT_APP_ARCHS}"
+CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
 ICON_TEMP_DIR=""
 
 cleanup() {
@@ -33,23 +41,97 @@ fi
 
 BUILD_NUMBER="${BUILD_NUMBER:-$(date +%Y%m%d%H%M%S)}"
 
-cd "$ROOT_DIR"
-swift build
-
-EXECUTABLE_PATH=".build/debug/$EXECUTABLE_NAME"
-if [[ ! -f "$EXECUTABLE_PATH" ]]; then
-  EXECUTABLE_PATH="$(find .build -path "*/debug/$EXECUTABLE_NAME" -type f | head -n 1)"
-fi
-
-if [[ -z "$EXECUTABLE_PATH" || ! -f "$EXECUTABLE_PATH" ]]; then
-  echo "Error: could not find built executable '$EXECUTABLE_NAME'." >&2
+read -r -a BUILD_ARCHS <<< "$APP_ARCHS"
+if [[ "${#BUILD_ARCHS[@]}" -eq 0 ]]; then
+  echo "Error: APP_ARCHS must contain at least one architecture (for example: 'arm64 x86_64')." >&2
   exit 1
 fi
 
+BIN_PATHS=()
+RESOURCE_SOURCE_DIR=""
+
+build_release_slice() {
+  local arch="$1"
+  local triple="${arch}-apple-macosx${MINIMUM_SYSTEM_VERSION}"
+  local bin_path
+  local executable_path
+
+  echo "Building release slice for ${arch} (${triple})..."
+  swift build -c release --product "$EXECUTABLE_NAME" --triple "$triple"
+  bin_path="$(swift build -c release --product "$EXECUTABLE_NAME" --triple "$triple" --show-bin-path)"
+  executable_path="$bin_path/$EXECUTABLE_NAME"
+
+  if [[ ! -f "$executable_path" ]]; then
+    echo "Error: built executable missing at $executable_path." >&2
+    exit 1
+  fi
+
+  if [[ -z "$RESOURCE_SOURCE_DIR" ]]; then
+    RESOURCE_SOURCE_DIR="$bin_path"
+  fi
+
+  remove_nonportable_rpaths "$executable_path"
+  ensure_rpath "$executable_path" "@executable_path/../Frameworks"
+
+  BIN_PATHS+=("$executable_path")
+}
+
+current_rpaths() {
+  local binary="$1"
+  otool -l "$binary" | awk '
+    $1 == "cmd" && $2 == "LC_RPATH" { in_rpath = 1; next }
+    in_rpath && $1 == "path" { print $2; in_rpath = 0 }
+  '
+}
+
+remove_nonportable_rpaths() {
+  local binary="$1"
+  local rpath
+
+  while IFS= read -r rpath; do
+    case "$rpath" in
+      /Applications/Xcode.app/*|/Library/Developer/Toolchains/*)
+        install_name_tool -delete_rpath "$rpath" "$binary"
+        ;;
+    esac
+  done < <(current_rpaths "$binary")
+}
+
+ensure_rpath() {
+  local binary="$1"
+  local required_rpath="$2"
+
+  if ! current_rpaths "$binary" | grep -Fx "$required_rpath" >/dev/null 2>&1; then
+    install_name_tool -add_rpath "$required_rpath" "$binary"
+  fi
+}
+
+codesign_target() {
+  local target="$1"
+  local -a codesign_args=(--force --sign "$CODESIGN_IDENTITY")
+
+  if [[ "$CODESIGN_IDENTITY" != "-" ]]; then
+    codesign_args+=(--options runtime)
+  fi
+
+  codesign "${codesign_args[@]}" "$target"
+}
+
+cd "$ROOT_DIR"
+
+for arch in "${BUILD_ARCHS[@]}"; do
+  build_release_slice "$arch"
+done
+
 rm -rf "$APP_BUNDLE"
-mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
-cp "$EXECUTABLE_PATH" "$APP_BUNDLE/Contents/MacOS/$EXECUTABLE_NAME"
-chmod +x "$APP_BUNDLE/Contents/MacOS/$EXECUTABLE_NAME"
+mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$FRAMEWORKS_DIR"
+
+if [[ "${#BIN_PATHS[@]}" -eq 1 ]]; then
+  cp "${BIN_PATHS[0]}" "$MACOS_DIR/$EXECUTABLE_NAME"
+else
+  lipo -create "${BIN_PATHS[@]}" -output "$MACOS_DIR/$EXECUTABLE_NAME"
+fi
+chmod +x "$MACOS_DIR/$EXECUTABLE_NAME"
 
 if [[ ! -f "$ICON_GENERATOR_SCRIPT" ]]; then
   echo "Error: missing icon generator script at $ICON_GENERATOR_SCRIPT." >&2
@@ -66,23 +148,44 @@ swift "$ICON_GENERATOR_SCRIPT" \
   --master-png "$MASTER_ICON_PNG"
 
 iconutil --convert icns "$ICONSET_DIR" --output "$ICON_OUTPUT"
-cp "$ICON_OUTPUT" "$APP_BUNDLE/Contents/Resources/${ICON_NAME}.icns"
+cp "$ICON_OUTPUT" "$RESOURCES_DIR/${ICON_NAME}.icns"
 
 if [[ -x "$THIRD_PARTY_FFMPEG_BIN_DIR/ffmpeg" && -x "$THIRD_PARTY_FFMPEG_BIN_DIR/ffprobe" ]]; then
-  mkdir -p "$APP_BUNDLE/Contents/Resources/FFmpeg"
-  cp "$THIRD_PARTY_FFMPEG_BIN_DIR/ffmpeg" "$APP_BUNDLE/Contents/Resources/FFmpeg/ffmpeg"
-  cp "$THIRD_PARTY_FFMPEG_BIN_DIR/ffprobe" "$APP_BUNDLE/Contents/Resources/FFmpeg/ffprobe"
-  chmod +x "$APP_BUNDLE/Contents/Resources/FFmpeg/ffmpeg" "$APP_BUNDLE/Contents/Resources/FFmpeg/ffprobe"
+  mkdir -p "$RESOURCES_DIR/FFmpeg"
+  cp "$THIRD_PARTY_FFMPEG_BIN_DIR/ffmpeg" "$RESOURCES_DIR/FFmpeg/ffmpeg"
+  cp "$THIRD_PARTY_FFMPEG_BIN_DIR/ffprobe" "$RESOURCES_DIR/FFmpeg/ffprobe"
+  chmod +x "$RESOURCES_DIR/FFmpeg/ffmpeg" "$RESOURCES_DIR/FFmpeg/ffprobe"
   echo "Bundled FFmpeg binaries from: $THIRD_PARTY_FFMPEG_BIN_DIR"
 else
   echo "No bundled FFmpeg binaries found at $THIRD_PARTY_FFMPEG_BIN_DIR (the app will require explicit approval before any system FFmpeg fallback)."
 fi
 
-while IFS= read -r resourceBundle; do
-  cp -R "$resourceBundle" "$APP_BUNDLE/Contents/Resources/"
-done < <(find .build -type d -name "*${EXECUTABLE_NAME}*.bundle" | sort)
+if [[ -n "$RESOURCE_SOURCE_DIR" ]]; then
+  while IFS= read -r resource_bundle; do
+    cp -R "$resource_bundle" "$RESOURCES_DIR/"
+  done < <(find "$RESOURCE_SOURCE_DIR" -maxdepth 1 -type d -name "*.bundle" | sort)
+fi
 
-cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
+xcrun swift-stdlib-tool \
+  --copy \
+  --platform macosx \
+  --scan-executable "$MACOS_DIR/$EXECUTABLE_NAME" \
+  --destination "$FRAMEWORKS_DIR"
+
+while IFS= read -r dylib; do
+  codesign_target "$dylib"
+done < <(find "$FRAMEWORKS_DIR" -maxdepth 1 -type f -name "*.dylib" | sort)
+
+if [[ -x "$RESOURCES_DIR/FFmpeg/ffmpeg" ]]; then
+  codesign_target "$RESOURCES_DIR/FFmpeg/ffmpeg"
+fi
+if [[ -x "$RESOURCES_DIR/FFmpeg/ffprobe" ]]; then
+  codesign_target "$RESOURCES_DIR/FFmpeg/ffprobe"
+fi
+
+codesign_target "$MACOS_DIR/$EXECUTABLE_NAME"
+
+cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -108,7 +211,7 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key>
   <string>$BUILD_NUMBER</string>
   <key>LSMinimumSystemVersion</key>
-  <string>15.0</string>
+  <string>$MINIMUM_SYSTEM_VERSION</string>
   <key>NSHighResolutionCapable</key>
   <true/>
   <key>NSPhotoLibraryUsageDescription</key>
@@ -117,5 +220,14 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
+codesign_target "$APP_BUNDLE"
+codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
+
 echo "Built app bundle: $APP_BUNDLE"
 echo "Version: $APP_VERSION ($BUILD_NUMBER)"
+echo "Architectures: ${BUILD_ARCHS[*]}"
+if [[ "$CODESIGN_IDENTITY" == "-" ]]; then
+  echo "Signing: ad-hoc"
+else
+  echo "Signing identity: $CODESIGN_IDENTITY"
+fi

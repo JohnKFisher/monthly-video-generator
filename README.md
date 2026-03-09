@@ -27,13 +27,30 @@ This creates:
 
 - `dist/Monthly Video Generator.app`
 
-The build also generates a custom macOS `AppIcon.icns` from the repo-local Swift
-icon renderer in `scripts/generate_app_icon.swift` and embeds it into the app bundle.
+The build now produces a release `.app` bundle, generates a custom macOS
+`AppIcon.icns` from the repo-local Swift icon renderer in
+`scripts/generate_app_icon.swift`, packages SwiftPM resource bundles in
+`Contents/Resources`, embeds the required Swift runtime libraries in
+`Contents/Frameworks`, and ad-hoc signs the final app for local distribution
+testing.
+
+By default the script builds a universal app (`arm64` + `x86_64`). Override this
+when needed:
+
+```bash
+APP_ARCHS="arm64" ./scripts/build_app.sh
+```
 
 Optional override:
 
 ```bash
 BUILD_NUMBER=42 ./scripts/build_app.sh
+```
+
+Optional signing override for a real certificate:
+
+```bash
+CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./scripts/build_app.sh
 ```
 
 ## Optional: Bundle FFmpeg For Final Export

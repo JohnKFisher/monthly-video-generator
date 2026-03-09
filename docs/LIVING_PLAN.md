@@ -51,6 +51,7 @@ Open for S4 completion:
 
 Operational updates after first packaged run:
 - Added repeatable `.app` bundling script so each build produces a Finder app bundle.
+- Updated `.app` bundling to produce a release universal bundle, package SwiftPM resources conventionally, embed Swift runtime libraries, and ad-hoc sign the finished app for off-machine testing.
 - Added visible app version/build label in the main window.
 - Patched still-image rendering path to decode and rasterize source images once before frame emission to reduce provider-related crash risk.
 - Hotfix: title card generation now runs on the main actor with a fallback solid-card path to prevent immediate export failure when title card rasterization fails.
@@ -173,6 +174,7 @@ Operational updates after first packaged run:
 - 2026-03-09: Updated the main UI header branding, switched launch defaults to Apple Photos month/year on the most recently completed month, made the opening title text auto-track the selected month/year until manually customized, simplified the opening-title small caption to a single editable field, and tucked technical export settings plus notes/warnings into closed-by-default disclosures.
 - 2026-03-09: Added a bundled header-icon easter egg popover so the top-left app icon can reveal a small photo note without affecting the main render workflow.
 - 2026-03-09: Added a final pre-validation UI polish pass with branded color accents, a compact idle-status treatment, clearer Export labels, and a direct quick-open action for the configured output folder.
+- 2026-03-09: Reworked `scripts/build_app.sh` to produce a release universal `.app`, embed Swift runtimes, package SwiftPM resources conventionally, and ad-hoc sign/verify the final bundle; app resource lookup now resolves packaged assets without depending on a machine-local `.build` path.
 - 2026-03-04: Added `VERSION` file and dynamic build number injection into app `Info.plist`.
 - 2026-03-04: Added version/build label to main UI.
 - 2026-03-04: Reworked still-image rendering to use pre-rasterized CGImage frames for stability.

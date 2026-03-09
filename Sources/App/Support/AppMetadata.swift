@@ -8,6 +8,7 @@ enum AppMetadata {
     static let appName = "Monthly Video Generator"
     static let headerIconResourceName = "AppHeaderIcon"
     static let easterEggImageResourceName = "JohnKennethEasterEgg"
+    private static let appResourceBundleName = "MonthlyVideoGenerator_MonthlyVideoGeneratorApp.bundle"
 
     static var shortVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
@@ -34,11 +35,30 @@ enum AppMetadata {
     }
 
     #if canImport(AppKit)
+    private static var appResourceBundle: Bundle? {
+        let candidateURLs = [
+            Bundle.main.resourceURL?.appendingPathComponent(appResourceBundleName, isDirectory: true),
+            Bundle.main.bundleURL.appendingPathComponent(appResourceBundleName, isDirectory: true),
+            Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent(appResourceBundleName, isDirectory: true)
+        ].compactMap { $0 }
+
+        for url in candidateURLs {
+            if let bundle = Bundle(url: url) {
+                return bundle
+            }
+        }
+
+        return nil
+    }
+
     private static func bundledImage(
         named resourceName: String,
         extension fileExtension: String
     ) -> NSImage? {
-        guard let url = Bundle.module.url(forResource: resourceName, withExtension: fileExtension) else {
+        guard
+            let bundle = appResourceBundle,
+            let url = bundle.url(forResource: resourceName, withExtension: fileExtension)
+        else {
             return nil
         }
         return NSImage(contentsOf: url)
