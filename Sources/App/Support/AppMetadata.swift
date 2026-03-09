@@ -7,6 +7,7 @@ import AppKit
 enum AppMetadata {
     static let appName = "Monthly Video Generator"
     static let headerIconResourceName = "AppHeaderIcon"
+    static let easterEggImageResourceName = "JohnKennethEasterEgg"
 
     static var shortVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
@@ -33,11 +34,22 @@ enum AppMetadata {
     }
 
     #if canImport(AppKit)
-    static let headerIconImage: NSImage? = {
-        guard let url = Bundle.module.url(forResource: headerIconResourceName, withExtension: "png") else {
+    private static func bundledImage(
+        named resourceName: String,
+        extension fileExtension: String
+    ) -> NSImage? {
+        guard let url = Bundle.module.url(forResource: resourceName, withExtension: fileExtension) else {
             return nil
         }
         return NSImage(contentsOf: url)
+    }
+
+    static let headerIconImage: NSImage? = {
+        bundledImage(named: headerIconResourceName, extension: "png")
+    }()
+
+    static let easterEggImage: NSImage? = {
+        bundledImage(named: easterEggImageResourceName, extension: "jpeg")
     }()
     #endif
 }

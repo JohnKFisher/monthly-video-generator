@@ -8,6 +8,7 @@ struct MainWindowView: View {
     @StateObject private var viewModel = MainWindowViewModel()
     @State private var isAdvancedExportSettingsExpanded = false
     @State private var isNotesExpanded = false
+    @State private var isHeaderEasterEggPresented = false
     private let sectionSpacing: CGFloat = 12
     private let rowSpacing: CGFloat = 8
 
@@ -451,10 +452,18 @@ struct MainWindowView: View {
     private var headerIconView: some View {
         #if canImport(AppKit)
         if let headerIconImage = AppMetadata.headerIconImage {
-            Image(nsImage: headerIconImage)
-                .resizable()
-                .interpolation(.high)
-                .frame(width: 48, height: 48)
+            Button {
+                isHeaderEasterEggPresented = true
+            } label: {
+                Image(nsImage: headerIconImage)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 48, height: 48)
+            }
+            .buttonStyle(.plain)
+            .popover(isPresented: $isHeaderEasterEggPresented, arrowEdge: .top) {
+                headerEasterEggPopover
+            }
         } else {
             Color.clear
                 .frame(width: 48, height: 48)
@@ -530,6 +539,28 @@ struct MainWindowView: View {
         Text(text)
             .font(.caption)
             .foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder
+    private var headerEasterEggPopover: some View {
+        VStack(alignment: .center, spacing: 12) {
+            #if canImport(AppKit)
+            if let easterEggImage = AppMetadata.easterEggImage {
+                Image(nsImage: easterEggImage)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(width: 180, height: 180)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+            #endif
+
+            Text("Vibecoded, poorly, by John Kenneth Fisher, 2026.")
+                .font(.callout)
+                .multilineTextAlignment(.center)
+        }
+        .frame(width: 220)
+        .padding(16)
     }
 
     private func statusLine(title: String, value: String) -> some View {
