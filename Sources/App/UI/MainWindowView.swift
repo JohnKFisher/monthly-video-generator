@@ -1,9 +1,13 @@
 import Core
 import SwiftUI
+#if canImport(AppKit)
+import AppKit
+#endif
 
 struct MainWindowView: View {
     @StateObject private var viewModel = MainWindowViewModel()
     @State private var isAdvancedExportSettingsExpanded = false
+    @State private var isNotesExpanded = false
     private let sectionSpacing: CGFloat = 12
     private let rowSpacing: CGFloat = 8
 
@@ -64,10 +68,7 @@ struct MainWindowView: View {
     private var headerBar: some View {
         HStack(alignment: .top, spacing: 16) {
             HStack(alignment: .center, spacing: 12) {
-                Image(AppMetadata.headerIconResourceName, bundle: .module)
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: 48, height: 48)
+                headerIconView
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(AppMetadata.appName)
@@ -432,16 +433,36 @@ struct MainWindowView: View {
     @ViewBuilder
     private var warningsSection: some View {
         if !viewModel.warnings.isEmpty {
-            GroupBox("Warnings") {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(viewModel.warnings, id: \.self) { warning in
-                        Text("• \(warning)")
-                            .foregroundStyle(.orange)
+            GroupBox {
+                DisclosureGroup("Notes & Warnings", isExpanded: $isNotesExpanded) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(viewModel.warnings, id: \.self) { warning in
+                            Text("• \(warning)")
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+
+    @ViewBuilder
+    private var headerIconView: some View {
+        #if canImport(AppKit)
+        if let headerIconImage = AppMetadata.headerIconImage {
+            Image(nsImage: headerIconImage)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 48, height: 48)
+        } else {
+            Color.clear
+                .frame(width: 48, height: 48)
+        }
+        #else
+        Color.clear
+            .frame(width: 48, height: 48)
+        #endif
     }
 
     private var statusSection: some View {

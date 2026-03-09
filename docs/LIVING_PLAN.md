@@ -170,7 +170,7 @@ Operational updates after first packaged run:
 - 2026-03-03: Added tests for recursive discovery, deterministic ordering, duration warning behavior, output collision naming, and month/year boundaries.
 - 2026-03-03: `swift build` and `swift test` passing.
 - 2026-03-04: Added `scripts/build_app.sh` to generate `dist/Monthly Video Generator.app` on every build.
-- 2026-03-09: Updated the main UI header branding, switched launch defaults to Apple Photos month/year on the most recently completed month, simplified the opening-title small caption to a single editable field, and tucked technical export settings into a closed-by-default disclosure.
+- 2026-03-09: Updated the main UI header branding, switched launch defaults to Apple Photos month/year on the most recently completed month, made the opening title text auto-track the selected month/year until manually customized, simplified the opening-title small caption to a single editable field, and tucked technical export settings plus notes/warnings into closed-by-default disclosures.
 - 2026-03-04: Added `VERSION` file and dynamic build number injection into app `Info.plist`.
 - 2026-03-04: Added version/build label to main UI.
 - 2026-03-04: Reworked still-image rendering to use pre-rasterized CGImage frames for stability.

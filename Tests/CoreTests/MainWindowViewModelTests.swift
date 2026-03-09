@@ -126,6 +126,37 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.openingTitleCaptionText, "Fisher Family Videos")
     }
 
+    func testOpeningTitleDefaultsToSelectedMonthYearAndTracksMonthChanges() {
+        let viewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            preferencesStore: makePreferencesStore(),
+            calendar: makeUTCGregorianCalendar(),
+            nowProvider: { self.makeDate(year: 2026, month: 3, day: 9) }
+        )
+
+        XCTAssertEqual(viewModel.openingTitleText, "February 2026")
+
+        viewModel.selectedMonth = 7
+        viewModel.selectedYear = 2025
+
+        XCTAssertEqual(viewModel.openingTitleText, "July 2025")
+    }
+
+    func testManualOpeningTitleIsPreservedWhenMonthChanges() {
+        let viewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            preferencesStore: makePreferencesStore(),
+            calendar: makeUTCGregorianCalendar(),
+            nowProvider: { self.makeDate(year: 2026, month: 3, day: 9) }
+        )
+
+        viewModel.openingTitleText = "Summer Highlights"
+        viewModel.selectedMonth = 7
+        viewModel.selectedYear = 2025
+
+        XCTAssertEqual(viewModel.openingTitleText, "Summer Highlights")
+    }
+
     func testMonthLabelIncludesNumberAndMonthName() {
         let viewModel = makeViewModel(
             coordinator: RenderCoordinatorSpy(preparation: makePreparation()),

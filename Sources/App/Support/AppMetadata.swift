@@ -1,5 +1,8 @@
 import Foundation
 import Core
+#if canImport(AppKit)
+import AppKit
+#endif
 
 enum AppMetadata {
     static let appName = "Monthly Video Generator"
@@ -28,4 +31,13 @@ enum AppMetadata {
     static var versionBuildLabel: String {
         "Version \(versionBuildValue)"
     }
+
+    #if canImport(AppKit)
+    static let headerIconImage: NSImage? = {
+        guard let url = Bundle.module.url(forResource: headerIconResourceName, withExtension: "png") else {
+            return nil
+        }
+        return NSImage(contentsOf: url)
+    }()
+    #endif
 }
