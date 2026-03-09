@@ -19,7 +19,7 @@ struct FFmpegCommand {
 
 struct FFmpegCommandBuilder {
     static let hlgSDRNominalPeak = 1400
-    static let hdrSDRNominalPeak = 203
+    static let hdrSDRNominalPeak = 225
 
     func buildCommand(plan: FFmpegRenderPlan, resolution: FFmpegBinaryResolution) throws -> FFmpegCommand {
         guard !plan.clips.isEmpty else {
