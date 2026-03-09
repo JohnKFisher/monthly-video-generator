@@ -227,7 +227,8 @@ public final class StillImageClipFactory {
         title: String,
         duration: CMTime,
         renderSize: CGSize,
-        frameRate: Int = 30
+        frameRate: Int = 30,
+        dynamicRange: DynamicRange = .sdr
     ) async throws -> URL {
         let descriptor = OpeningTitleCardDescriptor(
             title: title,
@@ -242,7 +243,8 @@ public final class StillImageClipFactory {
             previewAssets: [],
             duration: duration,
             renderSize: renderSize,
-            frameRate: frameRate
+            frameRate: frameRate,
+            dynamicRange: dynamicRange
         )
     }
 
@@ -251,31 +253,36 @@ public final class StillImageClipFactory {
         previewAssets: [TitleCardPreviewAsset],
         duration: CMTime,
         renderSize: CGSize,
-        frameRate: Int = 30
+        frameRate: Int = 30,
+        dynamicRange: DynamicRange = .sdr
     ) async throws -> URL {
         #if canImport(AppKit)
         let resolvedTitle = descriptor.resolvedTitle
         let displayContextLine = descriptor.displayContextLine
+        let titleCardColorConfiguration = titleCardColorConfiguration(for: dynamicRange)
+        let titleCardColorSpace = titleCardColorConfiguration.cgColorSpace
 
         if !previewAssets.isEmpty {
             do {
                 let animatedFrameSet = try await makeAnimatedTitleCardFrameSet(
                     descriptor: descriptor,
                     previewAssets: previewAssets,
-                    renderSize: renderSize
+                    renderSize: renderSize,
+                    colorSpace: titleCardColorSpace
                 )
                 return try await makeVideoClip(
                     duration: duration,
                     renderSize: renderSize,
                     frameRate: frameRate,
-                    colorConfiguration: .bt709()
+                    colorConfiguration: titleCardColorConfiguration
                 ) { [animatedFrameSet] frameIndex, totalFrames in
                     let denominator = max(totalFrames - 1, 1)
                     let progress = CGFloat(frameIndex) / CGFloat(denominator)
                     return try self.makeAnimatedTitleCardFrame(
                         frameSet: animatedFrameSet,
                         progress: progress,
-                        renderSize: renderSize
+                        renderSize: renderSize,
+                        colorSpace: titleCardColorSpace
                     )
                 }
             } catch {
@@ -285,18 +292,18 @@ public final class StillImageClipFactory {
 
         let titleImage: CGImage
         do {
-            titleImage = try await MainActor.run { [renderSize, resolvedTitle, displayContextLine] in
-                try Self.makeStaticTitleCardRasterizedImage(
-                    title: resolvedTitle,
-                    contextLine: displayContextLine,
-                    renderSize: renderSize
-                )
-            }
+            titleImage = try await Self.makeStaticTitleCardRasterizedImage(
+                title: resolvedTitle,
+                contextLine: displayContextLine,
+                renderSize: renderSize,
+                colorSpace: titleCardColorSpace
+            )
         } catch {
             titleImage = try makeFallbackTitleCardImage(
                 renderSize: renderSize,
                 title: resolvedTitle,
-                contextLine: displayContextLine
+                contextLine: displayContextLine,
+                colorSpace: titleCardColorSpace
             )
         }
         return try await makeVideoClip(
@@ -304,7 +311,7 @@ public final class StillImageClipFactory {
             duration: duration,
             renderSize: renderSize,
             frameRate: frameRate,
-            colorConfiguration: .bt709()
+            colorConfiguration: titleCardColorConfiguration
         )
         #else
         throw RenderError.exportFailed("Title card rendering requires AppKit support")
@@ -516,10 +523,15 @@ public final class StillImageClipFactory {
         return RasterizedImagePayload(image: fittedImage, colorConfiguration: colorConfiguration)
     }
 
+    private func titleCardColorConfiguration(for dynamicRange: DynamicRange) -> IntermediateColorConfiguration {
+        dynamicRange == .hdr ? .hlgBT2020() : .bt709()
+    }
+
     private func makeAnimatedTitleCardFrameSet(
         descriptor: OpeningTitleCardDescriptor,
         previewAssets: [TitleCardPreviewAsset],
-        renderSize: CGSize
+        renderSize: CGSize,
+        colorSpace: CGColorSpace
     ) async throws -> AnimatedTitleCardFrameSet {
         let previewImages = try await loadAnimatedPreviewImages(
             from: previewAssets,
@@ -535,7 +547,11 @@ public final class StillImageClipFactory {
         let palette = animatedPalette(using: &generator)
 
         return AnimatedTitleCardFrameSet(
-            backgroundImage: makeBlurredBackgroundImage(from: shuffledPreviews[0].image, renderSize: renderSize),
+            backgroundImage: makeBlurredBackgroundImage(
+                from: shuffledPreviews[0].image,
+                renderSize: renderSize,
+                colorSpace: colorSpace
+            ),
             palette: palette,
             tiles: makeAnimatedTiles(
                 previews: shuffledPreviews,
@@ -679,7 +695,8 @@ public final class StillImageClipFactory {
     private func makeAnimatedTitleCardFrame(
         frameSet: AnimatedTitleCardFrameSet,
         progress: CGFloat,
-        renderSize: CGSize
+        renderSize: CGSize,
+        colorSpace: CGColorSpace
     ) throws -> CIImage {
         let width = max(1, Int(renderSize.width.rounded()))
         let height = max(1, Int(renderSize.height.rounded()))
@@ -690,7 +707,7 @@ public final class StillImageClipFactory {
             height: height,
             bitsPerComponent: 8,
             bytesPerRow: 0,
-            space: IntermediateColorConfiguration.bt709().cgColorSpace,
+            space: colorSpace,
             bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
         ) else {
             throw RenderError.exportFailed("Unable to allocate animated title card frame")
@@ -721,6 +738,7 @@ public final class StillImageClipFactory {
             ],
             start: CGPoint(x: 0, y: renderSize.height),
             end: CGPoint(x: renderSize.width, y: 0),
+            colorSpace: colorSpace,
             context: context,
             rect: fullRect
         )
@@ -902,11 +920,15 @@ public final class StillImageClipFactory {
         colors: [CGColor],
         start: CGPoint,
         end: CGPoint,
+        colorSpace: CGColorSpace,
         context: CGContext,
         rect: CGRect
     ) {
-        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
-              let gradient = CGGradient(colorsSpace: colorSpace, colors: colors as CFArray, locations: [0, 1]) else {
+        let gradientColors = colors.map { color in
+            color.converted(to: colorSpace, intent: .relativeColorimetric, options: nil) ?? color
+        }
+
+        guard let gradient = CGGradient(colorsSpace: colorSpace, colors: gradientColors as CFArray, locations: [0, 1]) else {
             return
         }
 
@@ -917,7 +939,11 @@ public final class StillImageClipFactory {
         context.restoreGState()
     }
 
-    private func makeBlurredBackgroundImage(from image: CGImage, renderSize: CGSize) -> CGImage? {
+    private func makeBlurredBackgroundImage(
+        from image: CGImage,
+        renderSize: CGSize,
+        colorSpace: CGColorSpace
+    ) -> CGImage? {
         let canvasRect = CGRect(origin: .zero, size: renderSize)
         let baseImage = CIImage(cgImage: image)
         let backgroundImage = Self.aspectFillImage(baseImage, renderSize: renderSize)
@@ -932,7 +958,7 @@ public final class StillImageClipFactory {
             blurred,
             from: canvasRect,
             format: .RGBA8,
-            colorSpace: IntermediateColorConfiguration.bt709().cgColorSpace
+            colorSpace: colorSpace
         )
     }
 
@@ -940,7 +966,8 @@ public final class StillImageClipFactory {
     private static func makeStaticTitleCardRasterizedImage(
         title: String,
         contextLine: String?,
-        renderSize: CGSize
+        renderSize: CGSize,
+        colorSpace: CGColorSpace
     ) throws -> CGImage {
         let size = NSSize(width: renderSize.width, height: renderSize.height)
         let image = NSImage(size: size)
@@ -980,7 +1007,7 @@ public final class StillImageClipFactory {
 
         var proposedRect = CGRect(origin: .zero, size: size)
         guard let rawImage = image.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil),
-              let safeImage = Self.rasterizedImage(rawImage, renderSize: renderSize, colorSpace: IntermediateColorConfiguration.bt709().cgColorSpace) else {
+              let safeImage = Self.rasterizedImage(rawImage, renderSize: renderSize, colorSpace: colorSpace) else {
             throw RenderError.exportFailed("Unable to create title card image")
         }
 
@@ -990,7 +1017,8 @@ public final class StillImageClipFactory {
     private func makeFallbackTitleCardImage(
         renderSize: CGSize,
         title: String,
-        contextLine: String?
+        contextLine: String?,
+        colorSpace: CGColorSpace
     ) throws -> CGImage {
         let width = max(1, Int(renderSize.width.rounded()))
         let height = max(1, Int(renderSize.height.rounded()))
@@ -1001,7 +1029,7 @@ public final class StillImageClipFactory {
             height: height,
             bitsPerComponent: 8,
             bytesPerRow: 0,
-            space: IntermediateColorConfiguration.bt709().cgColorSpace,
+            space: colorSpace,
             bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
         ) else {
             throw RenderError.exportFailed("Unable to create fallback title card image at \(width)x\(height)")

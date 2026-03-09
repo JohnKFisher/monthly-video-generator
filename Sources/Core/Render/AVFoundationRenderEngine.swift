@@ -556,7 +556,8 @@ public final class AVFoundationRenderEngine {
                     previewAssets: previewAssets,
                     duration: segment.duration,
                     renderSize: renderSize,
-                    frameRate: frameRate
+                    frameRate: frameRate,
+                    dynamicRange: exportDynamicRange
                 )
                 temporaryURLs.append(titleURL)
                 diagnostics.add(

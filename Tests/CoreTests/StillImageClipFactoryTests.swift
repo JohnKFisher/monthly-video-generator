@@ -152,6 +152,24 @@ final class StillImageClipFactoryTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(Double(nominalFrameRate), 50)
     }
 
+    func testHDRTitleCardClipUsesHLGBT2020ColorTags() async throws {
+        let factory = StillImageClipFactory()
+        let clipURL = try await factory.makeTitleCardClip(
+            title: "HDR",
+            duration: CMTime(seconds: 1, preferredTimescale: 600),
+            renderSize: CGSize(width: 1280, height: 720),
+            dynamicRange: .hdr
+        )
+
+        defer {
+            try? FileManager.default.removeItem(at: clipURL)
+        }
+
+        let colorInfo = try await loadedTrackColorInfo(url: clipURL)
+        XCTAssertEqual(colorInfo.colorPrimaries, AVVideoColorPrimaries_ITU_R_2020)
+        XCTAssertEqual(colorInfo.transferFunction, AVVideoTransferFunction_ITU_R_2100_HLG)
+    }
+
     func testPortraitStillUsesMediaDerivedBackgroundInsteadOfBlackBars() async throws {
         let factory = StillImageClipFactory()
         let imageURL = try makePortraitFixtureImage()
@@ -417,6 +435,31 @@ final class StillImageClipFactoryTests: XCTestCase {
         let preferredTransform = try await videoTrack.load(.preferredTransform)
         let transformed = naturalSize.applying(preferredTransform)
         return CGSize(width: abs(transformed.width), height: abs(transformed.height))
+    }
+
+    private func loadedTrackColorInfo(url: URL) async throws -> ColorInfo {
+        let asset = AVURLAsset(url: url)
+        guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
+            throw NSError(
+                domain: "StillImageClipFactoryTests",
+                code: 6,
+                userInfo: [NSLocalizedDescriptionKey: "Expected generated clip to contain a video track"]
+            )
+        }
+        guard let firstDescription = try await videoTrack.load(.formatDescriptions).first else {
+            throw NSError(
+                domain: "StillImageClipFactoryTests",
+                code: 7,
+                userInfo: [NSLocalizedDescriptionKey: "Expected generated clip to contain a format description"]
+            )
+        }
+
+        let extensions = CMFormatDescriptionGetExtensions(firstDescription as CMFormatDescription) as NSDictionary?
+        return ColorInfo(
+            isHDR: false,
+            colorPrimaries: extensions?[kCMFormatDescriptionExtension_ColorPrimaries] as? String,
+            transferFunction: extensions?[kCMFormatDescriptionExtension_TransferFunction] as? String
+        )
     }
 
     private func renderedFrame(from url: URL, at time: CMTime) async throws -> CGImage {
