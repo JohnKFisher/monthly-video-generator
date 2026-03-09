@@ -114,6 +114,7 @@ Operational updates after first packaged run:
 - Added an `HDR HEVC Encoder` picker with `Default` and strict `VideoToolbox` modes, threaded that selection through FFmpeg capability resolution and completion summaries, and kept `Default` as the persisted Plex/Infuse baseline.
 - Promoted the current release as the new known-good rollback checkpoint (`v0.5.0`): `checkpoint/20260307-known-good-v0-5-0`.
 - Promoted the current release as the new known-good rollback checkpoint (`v0.6.0`): `checkpoint/20260308-known-good-v0-6-0`.
+- Promoted the current release as the new known-good rollback checkpoint (`v0.7.0`): `checkpoint/20260309-known-good-v0-7-0`.
 - 2026-03-07: Replaced the static opening title card with a seeded animated media-collage opener that samples preview assets across the run, adds light source/date context, and falls back to the legacy static card if preview loading or animation fails.
 - 2026-03-07: Added a default-on Style toggle for per-clip capture-date stamps, rendering transparent bottom-right overlay plates for dated photos/videos and compositing them in the FFmpeg path before crossfades.
 - 2026-03-07: Added an automatic final-delivery FFmpeg fade-to-black on the last `2 x` crossfade seconds of video output, while leaving audio unchanged and skipping the fade on intermediate HDR chunk renders.
@@ -270,16 +271,16 @@ Operational updates after first packaged run:
 
 ## Rollback Procedure
 
-To return to the current known-good rollback (`v0.6.0`):
+To return to the current known-good rollback (`v0.7.0`):
 
 1. `git fetch --tags`
 2. `git status`
 3. Optional safety stash if you have local edits: `git stash push -u -m "pre-rollback safety stash"`
-4. Create a recovery branch directly from the checkpoint tag: `git checkout -b codex/recover-known-good-v0-6-0 checkpoint/20260308-known-good-v0-6-0`
+4. Create a recovery branch directly from the checkpoint tag: `git checkout -b codex/recover-known-good-v0-7-0 checkpoint/20260309-known-good-v0-7-0`
 
 To inspect the exact tag without creating a branch:
 
-- `git checkout checkpoint/20260308-known-good-v0-6-0`
+- `git checkout checkpoint/20260309-known-good-v0-7-0`
 
 For the prior release checkpoint, use:
 
