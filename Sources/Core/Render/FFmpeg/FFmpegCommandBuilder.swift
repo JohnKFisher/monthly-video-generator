@@ -340,7 +340,9 @@ struct FFmpegCommandBuilder {
 
     private func sdrToHLGUpliftFilter(for colorInfo: ColorInfo) -> String {
         let primariesIn = colorInfo.isDisplayP3Like ? "smpte432" : "bt709"
-        let liftExpression = "min(val*\(String(format: "%.1f", Self.hdrSDRLuminanceLift)),maxval)"
+        let gain = String(format: "%.1f", Self.hdrSDRLuminanceLift)
+        let shoulder = String(format: "%.1f", max(Self.hdrSDRLuminanceLift - 1.0, 0))
+        let liftExpression = "\(gain)*val*maxval/(maxval+\(shoulder)*val)"
         return "zscale=transferin=bt709:primariesin=\(primariesIn):matrixin=bt709:transfer=linear," +
             "format=gbrpf32le," +
             "lutrgb=r='\(liftExpression)':g='\(liftExpression)':b='\(liftExpression)'," +

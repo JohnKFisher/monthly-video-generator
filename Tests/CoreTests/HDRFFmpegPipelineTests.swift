@@ -397,7 +397,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("overlay=x=(main_w-overlay_w)/2:y=(main_h-overlay_h)/2:shortest=1:format=auto"))
         XCTAssertTrue(joined.contains("zscale="))
         XCTAssertTrue(joined.contains("gbrpf32le"))
-        XCTAssertTrue(joined.contains("lutrgb=r='min(val*2.0,maxval)'"))
+        XCTAssertTrue(joined.contains("lutrgb=r='2.0*val*maxval/(maxval+1.0*val)'"))
         XCTAssertFalse(joined.contains("pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black"))
         XCTAssertTrue(joined.contains("-progress pipe:2"))
         XCTAssertTrue(joined.contains("-stats_period 0.5"))
@@ -1175,7 +1175,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
 
         XCTAssertTrue(joined.contains("transferin=bt709:primariesin=bt709:matrixin=bt709:transfer=linear"))
         XCTAssertTrue(joined.contains("format=gbrpf32le"))
-        XCTAssertTrue(joined.contains("lutrgb=r='min(val*2.0,maxval)':g='min(val*2.0,maxval)':b='min(val*2.0,maxval)'"))
+        XCTAssertTrue(joined.contains("lutrgb=r='2.0*val*maxval/(maxval+1.0*val)':g='2.0*val*maxval/(maxval+1.0*val)':b='2.0*val*maxval/(maxval+1.0*val)'"))
         XCTAssertTrue(joined.contains("zscale=transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc:range=tv:npl=1000"))
     }
 
@@ -1213,7 +1213,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         let joined = command.arguments.joined(separator: " ")
 
         XCTAssertTrue(joined.contains("transferin=bt709:primariesin=smpte432:matrixin=bt709:transfer=linear"))
-        XCTAssertTrue(joined.contains("lutrgb=r='min(val*2.0,maxval)':g='min(val*2.0,maxval)':b='min(val*2.0,maxval)'"))
+        XCTAssertTrue(joined.contains("lutrgb=r='2.0*val*maxval/(maxval+1.0*val)':g='2.0*val*maxval/(maxval+1.0*val)':b='2.0*val*maxval/(maxval+1.0*val)'"))
         XCTAssertTrue(joined.contains("npl=1000"))
     }
 
