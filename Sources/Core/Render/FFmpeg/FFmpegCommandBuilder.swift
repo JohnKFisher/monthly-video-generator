@@ -21,6 +21,8 @@ struct FFmpegCommandBuilder {
     static let hlgSDRNominalPeak = 1400
     static let hdrSDRLuminanceLift = 2.0
     static let hdrSDRNominalPeak = 1000
+    static let hdrSDRContrastCompensation = 1.08
+    static let hdrSDRSaturationCompensation = 1.03
 
     func buildCommand(plan: FFmpegRenderPlan, resolution: FFmpegBinaryResolution) throws -> FFmpegCommand {
         guard !plan.clips.isEmpty else {
@@ -343,10 +345,13 @@ struct FFmpegCommandBuilder {
         let gain = String(format: "%.1f", Self.hdrSDRLuminanceLift)
         let shoulder = String(format: "%.1f", max(Self.hdrSDRLuminanceLift - 1.0, 0))
         let liftExpression = "\(gain)*val*maxval/(maxval+\(shoulder)*val)"
+        let contrast = String(format: "%.2f", Self.hdrSDRContrastCompensation)
+        let saturation = String(format: "%.2f", Self.hdrSDRSaturationCompensation)
         return "zscale=transferin=bt709:primariesin=\(primariesIn):matrixin=bt709:transfer=linear," +
             "format=gbrpf32le," +
             "lutrgb=r='\(liftExpression)':g='\(liftExpression)':b='\(liftExpression)'," +
-            "zscale=transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc:range=tv:npl=\(Self.hdrSDRNominalPeak)"
+            "zscale=transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc:range=tv:npl=\(Self.hdrSDRNominalPeak)," +
+            "eq=contrast=\(contrast):saturation=\(saturation)"
     }
 
     // SDR output needs explicit HDR-to-SDR tone mapping for video clips with HDR

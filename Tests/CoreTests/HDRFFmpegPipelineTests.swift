@@ -1177,6 +1177,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("format=gbrpf32le"))
         XCTAssertTrue(joined.contains("lutrgb=r='2.0*val*maxval/(maxval+1.0*val)':g='2.0*val*maxval/(maxval+1.0*val)':b='2.0*val*maxval/(maxval+1.0*val)'"))
         XCTAssertTrue(joined.contains("zscale=transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc:range=tv:npl=1000"))
+        XCTAssertTrue(joined.contains("eq=contrast=1.08:saturation=1.03"))
     }
 
     func testCommandBuilderUsesLinearUpliftChainForP3SDRInHDROutput() throws {
@@ -1215,6 +1216,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("transferin=bt709:primariesin=smpte432:matrixin=bt709:transfer=linear"))
         XCTAssertTrue(joined.contains("lutrgb=r='2.0*val*maxval/(maxval+1.0*val)':g='2.0*val*maxval/(maxval+1.0*val)':b='2.0*val*maxval/(maxval+1.0*val)'"))
         XCTAssertTrue(joined.contains("npl=1000"))
+        XCTAssertTrue(joined.contains("eq=contrast=1.08:saturation=1.03"))
     }
 
     func testFFprobeSourceMetadataParserDetectsDolbyVision() throws {
