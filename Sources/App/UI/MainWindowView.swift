@@ -11,35 +11,41 @@ struct MainWindowView: View {
     @State private var isHeaderEasterEggPresented = false
     private let sectionSpacing: CGFloat = 12
     private let rowSpacing: CGFloat = 8
+    private let headerCornerRadius: CGFloat = 20
 
     var body: some View {
-        VStack(alignment: .leading, spacing: sectionSpacing) {
-            headerBar
+        ZStack {
+            appBackgroundLayer
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: sectionSpacing) {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(alignment: .top, spacing: sectionSpacing) {
-                            leftColumn
-                            rightColumn
+            VStack(alignment: .leading, spacing: sectionSpacing) {
+                headerBar
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: sectionSpacing) {
+                        ViewThatFits(in: .horizontal) {
+                            HStack(alignment: .top, spacing: sectionSpacing) {
+                                leftColumn
+                                rightColumn
+                            }
+
+                            VStack(alignment: .leading, spacing: sectionSpacing) {
+                                leftColumn
+                                rightColumn
+                            }
                         }
 
-                        VStack(alignment: .leading, spacing: sectionSpacing) {
-                            leftColumn
-                            rightColumn
-                        }
+                        warningsSection
+                        statusArea
+                        actionRow
                     }
-
-                    warningsSection
-                    statusSection
-                    actionRow
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 2)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 2)
             }
+            .padding(16)
         }
-        .padding(16)
         .frame(minWidth: 920, minHeight: 700)
+        .tint(themeTeal)
         .alert("Render Complete", isPresented: $viewModel.showRenderCompleteAlert) {
             Button("Open Folder") {
                 viewModel.openRenderedOutputFolder()
@@ -75,9 +81,10 @@ struct MainWindowView: View {
                     Text(AppMetadata.appName)
                         .font(.title2)
                         .fontWeight(.semibold)
+                        .foregroundStyle(Color.white.opacity(0.96))
                     Text(viewModel.appVersionBuildLabel)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.white.opacity(0.78))
                 }
             }
 
@@ -90,7 +97,27 @@ struct MainWindowView: View {
             }
             .pickerStyle(.segmented)
             .frame(maxWidth: 300)
+            .padding(8)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: headerCornerRadius, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            themeTeal.opacity(0.96),
+                            themeNavy.opacity(0.97)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: headerCornerRadius, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.22), lineWidth: 1)
+        )
     }
 
     private var leftColumn: some View {
@@ -109,7 +136,7 @@ struct MainWindowView: View {
     }
 
     private var inputSection: some View {
-        GroupBox("Input") {
+        GroupBox {
             VStack(alignment: .leading, spacing: rowSpacing) {
                 if viewModel.sourceMode == .folder {
                     HStack(spacing: 10) {
@@ -176,19 +203,21 @@ struct MainWindowView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            sectionLabel("Input", accent: themeTeal)
         }
     }
 
     private var styleSection: some View {
-        GroupBox("Style") {
+        GroupBox {
             VStack(alignment: .leading, spacing: rowSpacing) {
                 Toggle("Opening title card", isOn: $viewModel.includeOpeningTitle)
 
                 if viewModel.includeOpeningTitle {
                     TextField("Title text", text: $viewModel.openingTitleText)
+                    caption("Defaults to the selected month and year until you type a custom title.")
                     TextField("Small caption", text: $viewModel.openingTitleCaptionText)
                     caption("Leave blank to hide the smaller caption.")
-                    caption("If left blank, uses the selected month/year label. The opener now animates a small collage from upcoming media and may modestly increase export time.")
 
                     sliderRow(
                         title: "Title card duration",
@@ -219,47 +248,57 @@ struct MainWindowView: View {
                 caption("Displays each photo or video's capture date in the bottom-right corner using your current local timezone.")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            sectionLabel("Style", accent: themePeach)
         }
     }
 
     private var exportSection: some View {
-        GroupBox("Export") {
+        GroupBox {
             VStack(alignment: .leading, spacing: rowSpacing) {
-                TextField("Show title", text: $viewModel.plexShowTitle)
+                TextField("Series Title", text: $viewModel.plexShowTitle)
                 caption("Used for Plex TV episode filenames and embedded MP4 metadata.")
 
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 10) {
-                        TextField("Output name", text: $viewModel.outputFilename)
+                        TextField("Filename", text: $viewModel.outputFilename)
                         Button(viewModel.isOutputNameAutoManaged ? "Regenerate" : "Use Auto Name") {
                             viewModel.useAutoGeneratedOutputName()
                         }
-                        Button("Output Folder") {
+                        Button("Choose Folder") {
                             viewModel.chooseOutputFolder()
+                        }
+                        Button("Open Folder") {
+                            viewModel.openConfiguredOutputFolder()
                         }
                     }
 
                     VStack(alignment: .leading, spacing: rowSpacing) {
-                        TextField("Output name", text: $viewModel.outputFilename)
+                        TextField("Filename", text: $viewModel.outputFilename)
                         HStack(spacing: 10) {
                             Button(viewModel.isOutputNameAutoManaged ? "Regenerate" : "Use Auto Name") {
                                 viewModel.useAutoGeneratedOutputName()
                             }
-                            Button("Output Folder") {
+                            Button("Choose Folder") {
                                 viewModel.chooseOutputFolder()
+                            }
+                            Button("Open Folder") {
+                                viewModel.openConfiguredOutputFolder()
                             }
                         }
                     }
                 }
 
                 caption(viewModel.outputDirectoryURL.path)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
 
                 caption(viewModel.outputNameAutomationDescription)
 
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 10) {
-                        Text("Description / Synopsis / Comment")
+                        Text("Description")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Spacer(minLength: 8)
@@ -428,6 +467,8 @@ struct MainWindowView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            sectionLabel("Export", accent: themeNavy)
         }
     }
 
@@ -435,7 +476,7 @@ struct MainWindowView: View {
     private var warningsSection: some View {
         if !viewModel.warnings.isEmpty {
             GroupBox {
-                DisclosureGroup("Notes & Warnings", isExpanded: $isNotesExpanded) {
+                DisclosureGroup(isExpanded: $isNotesExpanded) {
                     VStack(alignment: .leading, spacing: 4) {
                         ForEach(viewModel.warnings, id: \.self) { warning in
                             Text("• \(warning)")
@@ -443,6 +484,8 @@ struct MainWindowView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
+                } label: {
+                    sectionLabel("Notes & Warnings", accent: themeAmber)
                 }
             }
         }
@@ -473,8 +516,17 @@ struct MainWindowView: View {
         #endif
     }
 
+    @ViewBuilder
+    private var statusArea: some View {
+        if showsCompactIdleStatus {
+            compactIdleStatus
+        } else {
+            statusSection
+        }
+    }
+
     private var statusSection: some View {
-        GroupBox("Status") {
+        GroupBox {
             VStack(alignment: .leading, spacing: 6) {
                 ProgressView(value: viewModel.progress)
                 Text(viewModel.statusMessage)
@@ -500,20 +552,26 @@ struct MainWindowView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            sectionLabel("Status", accent: themeNavy)
         }
     }
 
     private var actionRow: some View {
         HStack {
-            Button("Generate Video") {
-                viewModel.startRender()
-            }
-            .disabled(viewModel.isRendering)
-
+            Spacer(minLength: 0)
             Button("Cancel") {
                 viewModel.cancelRender()
             }
+            .buttonStyle(.bordered)
             .disabled(!viewModel.isRendering)
+
+            Button("Generate Video") {
+                viewModel.startRender()
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(themePeach)
+            .disabled(viewModel.isRendering)
         }
     }
 
@@ -538,6 +596,79 @@ struct MainWindowView: View {
         Text(text)
             .font(.caption)
             .foregroundStyle(.secondary)
+    }
+
+    private var showsCompactIdleStatus: Bool {
+        !viewModel.isRendering &&
+        viewModel.statusMessage == "Idle" &&
+        viewModel.lastOutputPath.isEmpty &&
+        viewModel.lastDiagnosticsPath.isEmpty &&
+        viewModel.lastBackendSummary.isEmpty
+    }
+
+    private var compactIdleStatus: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(themeTeal.opacity(0.85))
+                .frame(width: 8, height: 8)
+
+            Text("Status: Idle")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 4)
+    }
+
+    private var appBackgroundLayer: some View {
+        ZStack {
+            windowBackgroundColor
+            LinearGradient(
+                colors: [
+                    themeTeal.opacity(0.14),
+                    themeNavy.opacity(0.10),
+                    themePeach.opacity(0.06)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        }
+        .ignoresSafeArea()
+    }
+
+    private var windowBackgroundColor: Color {
+        #if canImport(AppKit)
+        Color(nsColor: .windowBackgroundColor)
+        #else
+        Color.white
+        #endif
+    }
+
+    private var themeTeal: Color {
+        Color(red: 0.12, green: 0.56, blue: 0.58)
+    }
+
+    private var themeNavy: Color {
+        Color(red: 0.15, green: 0.24, blue: 0.46)
+    }
+
+    private var themePeach: Color {
+        Color(red: 0.94, green: 0.63, blue: 0.43)
+    }
+
+    private var themeAmber: Color {
+        Color(red: 0.74, green: 0.58, blue: 0.29)
+    }
+
+    private func sectionLabel(_ title: String, accent: Color) -> some View {
+        HStack(spacing: 8) {
+            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                .fill(accent)
+                .frame(width: 8, height: 18)
+
+            Text(title)
+                .font(.headline)
+                .foregroundStyle(accent)
+        }
     }
 
     @ViewBuilder

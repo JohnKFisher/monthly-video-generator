@@ -172,6 +172,7 @@ Operational updates after first packaged run:
 - 2026-03-04: Added `scripts/build_app.sh` to generate `dist/Monthly Video Generator.app` on every build.
 - 2026-03-09: Updated the main UI header branding, switched launch defaults to Apple Photos month/year on the most recently completed month, made the opening title text auto-track the selected month/year until manually customized, simplified the opening-title small caption to a single editable field, and tucked technical export settings plus notes/warnings into closed-by-default disclosures.
 - 2026-03-09: Added a bundled header-icon easter egg popover so the top-left app icon can reveal a small photo note without affecting the main render workflow.
+- 2026-03-09: Added a final pre-validation UI polish pass with branded color accents, a compact idle-status treatment, clearer Export labels, and a direct quick-open action for the configured output folder.
 - 2026-03-04: Added `VERSION` file and dynamic build number injection into app `Info.plist`.
 - 2026-03-04: Added version/build label to main UI.
 - 2026-03-04: Reworked still-image rendering to use pre-rasterized CGImage frames for stability.

@@ -643,6 +643,12 @@ final class MainWindowViewModel: ObservableObject {
         #endif
     }
 
+    func openConfiguredOutputFolder() {
+        #if canImport(AppKit)
+        NSWorkspace.shared.open(outputDirectoryURL)
+        #endif
+    }
+
     func approveSystemFFmpegFallback() {
         resolveSystemFFmpegFallbackConfirmation(approved: true)
     }
