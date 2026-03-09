@@ -19,10 +19,9 @@ struct FFmpegCommand {
 
 struct FFmpegCommandBuilder {
     static let hlgSDRNominalPeak = 1400
-    static let hdrSDRLuminanceLift = 2.0
     static let hdrSDRNominalPeak = 1000
     static let hdrSDRContrastCompensation = 1.08
-    static let hdrSDRVibranceCompensation = 0.06
+    private let supportFileLocator = FFmpegSupportFileLocator()
 
     func buildCommand(plan: FFmpegRenderPlan, resolution: FFmpegBinaryResolution) throws -> FFmpegCommand {
         guard !plan.clips.isEmpty else {
@@ -129,7 +128,7 @@ struct FFmpegCommandBuilder {
         let downsampledBackgroundHeight = Int(backgroundMetrics.downsampledSize.height.rounded())
         for (index, clip) in plan.clips.enumerated() {
             let clipDuration = max(clip.durationSeconds, 0.01)
-            let normalizeFilter = colorNormalizeFilter(for: clip.colorInfo, outputDynamicRange: plan.dynamicRange)
+            let normalizeFilter = try colorNormalizeFilter(for: clip.colorInfo, outputDynamicRange: plan.dynamicRange)
             guard let videoInputIndex = videoInputIndexForClip[index] else {
                 throw RenderError.exportFailed("FFmpeg command build failed: missing video input index for clip index \(index).")
             }
@@ -297,23 +296,23 @@ struct FFmpegCommandBuilder {
         }
     }
 
-    private func colorNormalizeFilter(for colorInfo: ColorInfo, outputDynamicRange: DynamicRange) -> String {
+    private func colorNormalizeFilter(for colorInfo: ColorInfo, outputDynamicRange: DynamicRange) throws -> String {
         switch outputDynamicRange {
         case .hdr:
-            return hdrColorNormalizeFilter(for: colorInfo)
+            return try hdrColorNormalizeFilter(for: colorInfo)
         case .sdr:
             return sdrColorNormalizeFilter(for: colorInfo)
         }
     }
 
-    private func hdrColorNormalizeFilter(for colorInfo: ColorInfo) -> String {
+    private func hdrColorNormalizeFilter(for colorInfo: ColorInfo) throws -> String {
         switch colorInfo.transferFlavor {
         case .pq:
                 return "zscale=transferin=smpte2084:primariesin=bt2020:matrixin=bt2020nc:transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc"
         case .hlg:
             return "zscale=transferin=arib-std-b67:primariesin=bt2020:matrixin=bt2020nc:transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc"
         case .sdr:
-            return sdrToHLGUpliftFilter(for: colorInfo)
+            return try sdrToHLGUpliftFilter(for: colorInfo)
         }
     }
 
@@ -340,21 +339,18 @@ struct FFmpegCommandBuilder {
         }
     }
 
-    private func sdrToHLGUpliftFilter(for colorInfo: ColorInfo) -> String {
+    private func sdrToHLGUpliftFilter(for colorInfo: ColorInfo) throws -> String {
         let primariesIn = colorInfo.isDisplayP3Like ? "smpte432" : "bt709"
-        let gain = String(format: "%.1f", Self.hdrSDRLuminanceLift)
-        let shoulder = String(format: "%.1f", max(Self.hdrSDRLuminanceLift - 1.0, 0))
-        let liftExpression = "\(gain)*val*maxval/(maxval+\(shoulder)*val)"
         let contrast = String(format: "%.2f", Self.hdrSDRContrastCompensation)
-        let vibrance = String(format: "%.2f", Self.hdrSDRVibranceCompensation)
+        let lutURL = try supportFileLocator.sdrLumaLiftLUTURL()
         return "zscale=transferin=bt709:primariesin=\(primariesIn):matrixin=bt709:transfer=linear," +
             "format=gbrpf32le," +
-            "lutrgb=r='\(liftExpression)':g='\(liftExpression)':b='\(liftExpression)'," +
+            // Apply the SDR uplift through a precomputed luma-driven 3D LUT so
+            // bright colors keep their hue/detail without the heavy per-pixel
+            // geq cost of evaluating the same transform at render time.
+            "lut3d=file=\(lutURL.path):interp=tetrahedral," +
             "zscale=transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc:range=tv:npl=\(Self.hdrSDRNominalPeak)," +
-            // Recover some SDR contrast, then add a small selective chroma lift
-            // so bright pastel regions do not wash out toward white.
-            "eq=contrast=\(contrast)," +
-            "vibrance=intensity=\(vibrance)"
+            "eq=contrast=\(contrast)"
     }
 
     // SDR output needs explicit HDR-to-SDR tone mapping for video clips with HDR
