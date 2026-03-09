@@ -118,6 +118,7 @@ Operational updates after first packaged run:
 - 2026-03-07: Added a default-on Style toggle for per-clip capture-date stamps, rendering transparent bottom-right overlay plates for dated photos/videos and compositing them in the FFmpeg path before crossfades.
 - 2026-03-07: Added an automatic final-delivery FFmpeg fade-to-black on the last `2 x` crossfade seconds of video output, while leaving audio unchanged and skipping the fade on intermediate HDR chunk renders.
 - 2026-03-09: Removed the temporary batch-render matrix UI and support code so the app now exposes only the standard single-render export flow.
+- 2026-03-09: Switched the initial source selection to Apple Photos and replaced month picker numerals with `N - MonthName` labels in the month/year UI.
 
 ## Decisions Log
 

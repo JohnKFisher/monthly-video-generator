@@ -133,7 +133,7 @@ final class MainWindowViewModel: ObservableObject {
         let requestedProfile: ExportProfile
     }
 
-    @Published var sourceMode: SourceMode = .folder {
+    @Published var sourceMode: SourceMode = .photos {
         didSet {
             refreshPhotoAlbumsIfNeeded()
             resetManualMonthYearOverride()
@@ -473,6 +473,14 @@ final class MainWindowViewModel: ObservableObject {
             return "The slideshow was exported successfully."
         }
         return lastOutputPath
+    }
+
+    func monthLabel(for month: Int) -> String {
+        let clampedMonth = min(max(month, 1), 12)
+        let formatter = DateFormatter()
+        formatter.locale = Locale.current
+        let monthName = formatter.monthSymbols[clampedMonth - 1]
+        return "\(clampedMonth) - \(monthName)"
     }
 
     func resetExportSettingsToPlexDefaults() {

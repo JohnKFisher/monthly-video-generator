@@ -110,7 +110,7 @@ struct MainWindowView: View {
                         HStack(spacing: 10) {
                             Picker("Month", selection: $viewModel.selectedMonth) {
                                 ForEach(viewModel.months, id: \.self) { month in
-                                    Text(String(month)).tag(month)
+                                    Text(viewModel.monthLabel(for: month)).tag(month)
                                 }
                             }
                             Picker("Year", selection: $viewModel.selectedYear) {
@@ -356,7 +356,7 @@ struct MainWindowView: View {
                             HStack(spacing: 10) {
                                 Picker("Month", selection: $viewModel.manualMonthYearOverrideMonth) {
                                     ForEach(viewModel.months, id: \.self) { month in
-                                        Text(String(month)).tag(month)
+                                        Text(viewModel.monthLabel(for: month)).tag(month)
                                     }
                                 }
 
@@ -374,7 +374,7 @@ struct MainWindowView: View {
                             VStack(alignment: .leading, spacing: rowSpacing) {
                                 Picker("Month", selection: $viewModel.manualMonthYearOverrideMonth) {
                                     ForEach(viewModel.months, id: \.self) { month in
-                                        Text(String(month)).tag(month)
+                                        Text(viewModel.monthLabel(for: month)).tag(month)
                                     }
                                 }
 

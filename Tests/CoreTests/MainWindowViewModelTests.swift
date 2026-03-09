@@ -6,6 +6,15 @@ import XCTest
 
 @MainActor
 final class MainWindowViewModelTests: XCTestCase {
+    func testInitialSourceDefaultsToApplePhotos() {
+        let viewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            preferencesStore: makePreferencesStore()
+        )
+
+        XCTAssertEqual(viewModel.sourceMode, .photos)
+    }
+
     func testInitialOutputNameUsesPlexTVFormat() {
         let viewModel = makeViewModel(
             coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
@@ -17,6 +26,16 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.isOutputNameAutoManaged)
         XCTAssertEqual(viewModel.plexDescriptionText, expectedDescription(monthYear: monthYear))
         XCTAssertTrue(viewModel.isPlexDescriptionAutoManaged)
+    }
+
+    func testMonthLabelIncludesNumberAndMonthName() {
+        let viewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            preferencesStore: makePreferencesStore()
+        )
+
+        XCTAssertEqual(viewModel.monthLabel(for: 1), "1 - January")
+        XCTAssertEqual(viewModel.monthLabel(for: 12), "12 - December")
     }
 
     func testOutputNameAutoSyncStopsAfterManualEditAndCanBeRestored() {
@@ -103,6 +122,7 @@ final class MainWindowViewModelTests: XCTestCase {
 
         viewModel.selectedMonth = 6
         viewModel.selectedYear = 2025
+        viewModel.sourceMode = .folder
         viewModel.selectedFolderURL = directory
         viewModel.outputDirectoryURL = directory
 
@@ -151,6 +171,7 @@ final class MainWindowViewModelTests: XCTestCase {
 
         viewModel.selectedMonth = 6
         viewModel.selectedYear = 2025
+        viewModel.sourceMode = .folder
         viewModel.selectedFolderURL = directory
         viewModel.outputDirectoryURL = directory
 
@@ -194,6 +215,7 @@ final class MainWindowViewModelTests: XCTestCase {
         let directory = makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
+        viewModel.sourceMode = .folder
         viewModel.selectedFolderURL = directory
         viewModel.outputDirectoryURL = directory
 
@@ -260,6 +282,7 @@ final class MainWindowViewModelTests: XCTestCase {
         let directory = makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
+        viewModel.sourceMode = .folder
         viewModel.selectedFolderURL = directory
         viewModel.outputDirectoryURL = directory
         viewModel.selectedDynamicRange = .hdr
@@ -335,6 +358,7 @@ final class MainWindowViewModelTests: XCTestCase {
         let directory = makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
+        viewModel.sourceMode = .folder
         viewModel.selectedFolderURL = directory
         viewModel.outputDirectoryURL = directory
         viewModel.selectedDynamicRange = .hdr
