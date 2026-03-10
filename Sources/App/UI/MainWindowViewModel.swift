@@ -28,6 +28,7 @@ protocol RenderCoordinating: AnyObject, Sendable {
         systemFFmpegFallbackHandler: SystemFFmpegFallbackHandler?
     ) async throws -> RenderResult
     func cancelCurrentRender()
+    func requestPauseAfterCheckpoint()
 }
 
 extension RenderCoordinator: RenderCoordinating {}
@@ -206,6 +207,7 @@ final class MainWindowViewModel: ObservableObject {
     enum QueuedRenderJobState: String, Equatable, Sendable {
         case queued
         case running
+        case paused
         case completed
         case failed
 
@@ -215,6 +217,8 @@ final class MainWindowViewModel: ObservableObject {
                 return "Queued"
             case .running:
                 return "Running"
+            case .paused:
+                return "Paused"
             case .completed:
                 return "Completed"
             case .failed:
@@ -368,6 +372,7 @@ final class MainWindowViewModel: ObservableObject {
     @Published var isRendering: Bool = false
     @Published var progress: Double = 0
     @Published var statusMessage: String = "Idle"
+    @Published private(set) var isPauseRequested: Bool = false
     @Published var warnings: [String] = []
     @Published var lastOutputPath: String = ""
     @Published var lastDiagnosticsPath: String = ""
@@ -599,6 +604,10 @@ final class MainWindowViewModel: ObservableObject {
         !isRendering && !queuedRenderJobs.isEmpty
     }
 
+    var canPauseRender: Bool {
+        isRendering && !isPauseRequested && selectedDynamicRange == .hdr && selectedVideoCodec == .hevc
+    }
+
     var queueStatusDescription: String {
         if queuedRenderJobs.isEmpty {
             return "Snapshot the current form into queued jobs, then start the queue when you're ready."
@@ -606,10 +615,14 @@ final class MainWindowViewModel: ObservableObject {
 
         let completedCount = queuedRenderJobs.filter { $0.state == .completed }.count
         let failedCount = queuedRenderJobs.filter { $0.state == .failed }.count
+        let pausedCount = queuedRenderJobs.filter { $0.state == .paused }.count
         let queuedCount = queuedRenderJobs.filter { $0.state == .queued }.count
 
         if isQueueRunning {
             return "Queue running. Completed \(completedCount) of \(queuedRenderJobs.count) job(s)."
+        }
+        if pausedCount > 0 {
+            return "Queue paused by user. Paused \(pausedCount) job(s), queued \(queuedCount) job(s)."
         }
         if failedCount > 0 {
             return "Queue paused for review. Failed \(failedCount) job(s), queued \(queuedCount) job(s)."
@@ -808,11 +821,22 @@ final class MainWindowViewModel: ObservableObject {
 
     func cancelRender() {
         isCancellingRender = true
+        isPauseRequested = false
         renderTask?.cancel()
         resolveSystemFFmpegFallbackConfirmation(approved: false)
         photoMaterializer.cancelPendingRequests()
         coordinator.cancelCurrentRender()
         statusMessage = "Cancelling render..."
+    }
+
+    func pauseRender() {
+        guard isRendering, !isPauseRequested else {
+            return
+        }
+        isPauseRequested = true
+        coordinator.requestPauseAfterCheckpoint()
+        renderStatusDetail = "Pausing after current safe HDR checkpoint..."
+        updateRenderingStatusMessage()
     }
 
     func openRenderedOutputFolder() {
@@ -857,6 +881,10 @@ final class MainWindowViewModel: ObservableObject {
             )
             finishSuccessfulSingleRun(status: "Render complete")
         } catch {
+            if case let RenderError.paused(message) = error {
+                finishPausedSingleRun(message)
+                return
+            }
             finishFailedRun(error)
         }
     }
@@ -899,6 +927,12 @@ final class MainWindowViewModel: ObservableObject {
                     queuedRenderJobs[index].state = .queued
                     queuedRenderJobs[index].lastResultMessage = ""
                     finishCancelledQueueRun()
+                    return
+                }
+                if case let RenderError.paused(message) = error {
+                    queuedRenderJobs[index].state = .paused
+                    queuedRenderJobs[index].lastResultMessage = compactQueueMessage(from: message)
+                    finishUserPausedQueueRun(pausedJob: queuedRenderJobs[index], message: message)
                     return
                 }
 
@@ -1060,6 +1094,9 @@ final class MainWindowViewModel: ObservableObject {
     private func nextQueuedRenderStartIndex() -> Int? {
         if let failedIndex = queuedRenderJobs.firstIndex(where: { $0.state == .failed }) {
             return failedIndex
+        }
+        if let pausedIndex = queuedRenderJobs.firstIndex(where: { $0.state == .paused }) {
+            return pausedIndex
         }
         return queuedRenderJobs.firstIndex(where: { $0.state == .queued })
     }
@@ -1339,6 +1376,7 @@ final class MainWindowViewModel: ObservableObject {
     private func beginRenderRun(status: String, initialProgress: Double) {
         isRendering = true
         isCancellingRender = false
+        isPauseRequested = false
         isQueueRunning = false
         queueRunContext = nil
         progress = initialProgress
@@ -1373,6 +1411,7 @@ final class MainWindowViewModel: ObservableObject {
         pendingSystemFFmpegFallbackConfirmation = nil
         systemFFmpegFallbackContinuation = nil
         hasApprovedSystemFFmpegFallbackForCurrentRun = false
+        isPauseRequested = false
         isQueueRunning = false
         isCancellingRender = false
         isRendering = false
@@ -1390,6 +1429,25 @@ final class MainWindowViewModel: ObservableObject {
         pendingSystemFFmpegFallbackConfirmation = nil
         systemFFmpegFallbackContinuation = nil
         hasApprovedSystemFFmpegFallbackForCurrentRun = false
+        isPauseRequested = false
+        isQueueRunning = false
+        isCancellingRender = false
+        isRendering = false
+    }
+
+    private func finishPausedSingleRun(_ message: String) {
+        renderStatusDetail = nil
+        queueRunContext = nil
+        progress = 0
+        statusMessage = message
+        lastSingleRenderCompletionSummary = nil
+        lastQueueCompletionSummary = nil
+        renderCompleteAlertTitle = "Render Complete"
+        showRenderCompleteAlert = false
+        pendingSystemFFmpegFallbackConfirmation = nil
+        systemFFmpegFallbackContinuation = nil
+        hasApprovedSystemFFmpegFallbackForCurrentRun = false
+        isPauseRequested = false
         isQueueRunning = false
         isCancellingRender = false
         isRendering = false
@@ -1420,6 +1478,7 @@ final class MainWindowViewModel: ObservableObject {
         pendingSystemFFmpegFallbackConfirmation = nil
         systemFFmpegFallbackContinuation = nil
         hasApprovedSystemFFmpegFallbackForCurrentRun = false
+        isPauseRequested = false
         isQueueRunning = false
         isCancellingRender = false
         isRendering = false
@@ -1437,6 +1496,25 @@ final class MainWindowViewModel: ObservableObject {
         pendingSystemFFmpegFallbackConfirmation = nil
         systemFFmpegFallbackContinuation = nil
         hasApprovedSystemFFmpegFallbackForCurrentRun = false
+        isPauseRequested = false
+        isQueueRunning = false
+        isCancellingRender = false
+        isRendering = false
+    }
+
+    private func finishUserPausedQueueRun(pausedJob: QueuedRenderJob, message: String) {
+        renderStatusDetail = nil
+        queueRunContext = nil
+        progress = 0
+        statusMessage = "Queue paused by user\n\(pausedJob.sourceSummary)\n\(message)"
+        lastSingleRenderCompletionSummary = nil
+        lastQueueCompletionSummary = nil
+        renderCompleteAlertTitle = "Queue Complete"
+        showRenderCompleteAlert = false
+        pendingSystemFFmpegFallbackConfirmation = nil
+        systemFFmpegFallbackContinuation = nil
+        hasApprovedSystemFFmpegFallbackForCurrentRun = false
+        isPauseRequested = false
         isQueueRunning = false
         isCancellingRender = false
         isRendering = false
@@ -1454,6 +1532,7 @@ final class MainWindowViewModel: ObservableObject {
         pendingSystemFFmpegFallbackConfirmation = nil
         systemFFmpegFallbackContinuation = nil
         hasApprovedSystemFFmpegFallbackForCurrentRun = false
+        isPauseRequested = false
         isQueueRunning = false
         isCancellingRender = false
         isRendering = false

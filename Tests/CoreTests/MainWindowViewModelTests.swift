@@ -1197,6 +1197,107 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.statusMessage, "Render cancelled")
     }
 
+    func testPauseRenderRequestsCheckpointPauseForHDRHEVCRender() async throws {
+        let coordinator = RenderCoordinatorSpy(
+            preparation: makePreparation(),
+            pausedRenderIndices: [0],
+            suspendRenderUntilResumed: true
+        )
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            preferencesStore: makePreferencesStore()
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.sourceMode = .folder
+        viewModel.selectedFolderURL = directory
+        viewModel.outputDirectoryURL = directory
+        viewModel.selectedDynamicRange = .hdr
+        viewModel.selectedVideoCodec = .hevc
+
+        viewModel.startRender()
+        await waitUntil(
+            message: "Timed out waiting for HDR render to start."
+        ) {
+            coordinator.renderRequests.count == 1 && viewModel.isRendering
+        }
+
+        XCTAssertTrue(viewModel.canPauseRender)
+
+        viewModel.pauseRender()
+
+        XCTAssertEqual(coordinator.pauseAfterCheckpointCallCount, 1)
+        XCTAssertTrue(viewModel.isPauseRequested)
+        XCTAssertFalse(viewModel.canPauseRender)
+        XCTAssertTrue(viewModel.statusMessage.contains("Pausing after current safe HDR checkpoint..."))
+
+        coordinator.resumeRender()
+        await waitUntil(
+            message: "Timed out waiting for paused single render to settle."
+        ) {
+            !viewModel.isRendering
+        }
+
+        XCTAssertEqual(
+            viewModel.statusMessage,
+            "Render paused after a safe HDR checkpoint. Reopen the app and start the same render again to resume."
+        )
+        XCTAssertFalse(viewModel.showRenderCompleteAlert)
+        XCTAssertFalse(viewModel.isPauseRequested)
+    }
+
+    func testPausedQueuedJobRetriesBeforeLaterQueuedJobs() async throws {
+        let coordinator = RenderCoordinatorSpy(
+            preparation: makePreparation(),
+            pausedRenderIndices: [0]
+        )
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            preferencesStore: makePreferencesStore()
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.sourceMode = .folder
+        viewModel.selectedFolderURL = directory
+        viewModel.outputDirectoryURL = directory
+        viewModel.selectedDynamicRange = .hdr
+        viewModel.selectedVideoCodec = .hevc
+        viewModel.outputFilename = "Paused First"
+        viewModel.addCurrentSettingsToQueue()
+        viewModel.outputFilename = "Queued Second"
+        viewModel.addCurrentSettingsToQueue()
+
+        viewModel.startQueue()
+        await waitUntil(
+            message: "Timed out waiting for queued pause."
+        ) {
+            !viewModel.isRendering && viewModel.queuedRenderJobs.first?.state == .paused
+        }
+
+        XCTAssertEqual(viewModel.queuedRenderJobs.map(\.state), [.paused, .queued])
+        XCTAssertEqual(
+            viewModel.queueStatusDescription,
+            "Queue paused by user. Paused 1 job(s), queued 1 job(s)."
+        )
+
+        coordinator.pausedRenderIndices = []
+        viewModel.startQueue()
+        await waitUntil(
+            timeout: 5.0,
+            message: "Timed out waiting for paused queue retry to finish."
+        ) {
+            !viewModel.isRendering && viewModel.queuedRenderJobs.allSatisfy { $0.state == .completed }
+        }
+
+        XCTAssertEqual(
+            coordinator.renderRequests.map(\.output.baseFilename),
+            ["Paused First", "Paused First", "Queued Second"]
+        )
+        XCTAssertEqual(viewModel.queuedRenderJobs.map(\.state), [.completed, .completed])
+    }
+
     func testSystemFFmpegFallbackApprovalLetsQueueContinue() async throws {
         let coordinator = RenderCoordinatorSpy(
             preparation: makePreparation(),
@@ -1378,6 +1479,7 @@ final class MainWindowViewModelTests: XCTestCase {
 private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendable {
     let preparation: RenderPreparation
     var failedRenderIndices: Set<Int>
+    var pausedRenderIndices: Set<Int>
     let suspendRenderUntilResumed: Bool
     let renderDelay: Duration?
     let renderResultBuilder: ((RenderPreparation, RenderRequest, Int) -> RenderResult)?
@@ -1385,11 +1487,13 @@ private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendabl
     private(set) var prepareFolderRequests: [RenderRequest] = []
     private(set) var renderRequests: [RenderRequest] = []
     private(set) var cancelCurrentRenderCallCount: Int = 0
+    private(set) var pauseAfterCheckpointCallCount: Int = 0
     private var suspendedRenderContinuation: CheckedContinuation<Void, Never>?
 
     init(
         preparation: RenderPreparation,
         failedRenderIndices: Set<Int> = [],
+        pausedRenderIndices: Set<Int> = [],
         suspendRenderUntilResumed: Bool = false,
         renderDelay: Duration? = nil,
         systemFallbackReason: String? = nil,
@@ -1397,6 +1501,7 @@ private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendabl
     ) {
         self.preparation = preparation
         self.failedRenderIndices = failedRenderIndices
+        self.pausedRenderIndices = pausedRenderIndices
         self.suspendRenderUntilResumed = suspendRenderUntilResumed
         self.renderDelay = renderDelay
         self.systemFallbackReason = systemFallbackReason
@@ -1456,6 +1561,9 @@ private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendabl
         if failedRenderIndices.contains(index) {
             throw RenderError.exportFailed("Simulated failure \(index)")
         }
+        if pausedRenderIndices.contains(index) {
+            throw RenderError.paused("Render paused after a safe HDR checkpoint. Reopen the app and start the same render again to resume.")
+        }
 
         let outputURL = request.output.directory
             .appendingPathComponent(request.output.baseFilename)
@@ -1481,6 +1589,10 @@ private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendabl
 
     func cancelCurrentRender() {
         cancelCurrentRenderCallCount += 1
+    }
+
+    func requestPauseAfterCheckpoint() {
+        pauseAfterCheckpointCallCount += 1
     }
 
     func resumeRender() {

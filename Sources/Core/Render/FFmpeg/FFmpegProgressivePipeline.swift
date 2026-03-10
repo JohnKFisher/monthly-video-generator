@@ -119,6 +119,15 @@ struct FFmpegHDRProgressivePipelineBuilder {
         )
     }
 
+    func requiresProgressiveExecution(for finalPlan: FFmpegRenderPlan) -> Bool {
+        guard finalPlan.dynamicRange == .hdr,
+              finalPlan.videoCodec == .hevc,
+              finalPlan.renderIntent == .finalDelivery else {
+            return false
+        }
+        return activationPlanner.plan(for: finalPlan).requiresChunking
+    }
+
     private func makeAssemblySlices(
         clips: [FFmpegRenderClip],
         transitionDurationSeconds: Double

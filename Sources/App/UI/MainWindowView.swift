@@ -618,6 +618,12 @@ struct MainWindowView: View {
     private var actionRow: some View {
         HStack {
             Spacer(minLength: 0)
+            Button("Pause After Checkpoint") {
+                viewModel.pauseRender()
+            }
+            .buttonStyle(.bordered)
+            .disabled(!viewModel.canPauseRender)
+
             Button("Cancel") {
                 viewModel.cancelRender()
             }
@@ -765,6 +771,8 @@ struct MainWindowView: View {
             return themeNavy
         case .running:
             return themeTeal
+        case .paused:
+            return themeAmber
         case .completed:
             return Color.green.opacity(0.8)
         case .failed:

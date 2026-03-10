@@ -9,20 +9,41 @@ public final class AVFoundationRenderEngine {
     private let ffmpegHDRRenderer: FFmpegHDRRenderer
     private let ffmpegCommandBuilder: FFmpegCommandBuilder
     private let ffmpegProgressivePipelineBuilder: FFmpegHDRProgressivePipelineBuilder
+    private let ffmpegProgressiveResumeStore: FFmpegProgressiveResumeStore
+    private let ffmpegProgressivePauseState: FFmpegProgressivePauseState
 
-    public init(
+    public convenience init(
         stillImageClipFactory: StillImageClipFactory = StillImageClipFactory(),
         captureDateOverlayFactory: CaptureDateOverlayFactory = CaptureDateOverlayFactory()
+    ) {
+        self.init(
+            stillImageClipFactory: stillImageClipFactory,
+            captureDateOverlayFactory: captureDateOverlayFactory,
+            ffmpegProgressiveResumeStore: FFmpegProgressiveResumeStore()
+        )
+    }
+
+    init(
+        stillImageClipFactory: StillImageClipFactory,
+        captureDateOverlayFactory: CaptureDateOverlayFactory,
+        ffmpegProgressiveResumeStore: FFmpegProgressiveResumeStore
     ) {
         self.stillImageClipFactory = stillImageClipFactory
         self.captureDateOverlayFactory = captureDateOverlayFactory
         self.ffmpegHDRRenderer = FFmpegHDRRenderer()
         self.ffmpegCommandBuilder = FFmpegCommandBuilder()
         self.ffmpegProgressivePipelineBuilder = FFmpegHDRProgressivePipelineBuilder()
+        self.ffmpegProgressiveResumeStore = ffmpegProgressiveResumeStore
+        self.ffmpegProgressivePauseState = FFmpegProgressivePauseState()
     }
 
     public func cancelCurrentRender() {
+        ffmpegProgressivePauseState.reset()
         ffmpegHDRRenderer.cancelCurrentRender()
+    }
+
+    public func requestPauseAfterCheckpoint() {
+        ffmpegProgressivePauseState.requestPause()
     }
 
     public func render(
@@ -82,6 +103,7 @@ public final class AVFoundationRenderEngine {
         let renderSize = constrainedRenderSizeForExport(requestedSize: requestedRenderSize, profile: exportProfile)
         diagnostics.add("Render size: \(Int(renderSize.width))x\(Int(renderSize.height))")
         diagnostics.add("Resolved output frame rate: \(resolvedFrameRate) fps")
+        ffmpegProgressivePauseState.reset()
         if let liveDiagnosticsLogURL {
             _ = writeDiagnosticsReport(
                 diagnostics.renderReport(outcome: "in_progress", error: nil),
@@ -89,6 +111,8 @@ public final class AVFoundationRenderEngine {
             )
         }
         var temporaryURLs: [URL] = []
+        var progressiveResumeSession: FFmpegProgressiveResumeSession?
+        var renderedOutputURL: URL?
 
         do {
             reportStatus("Preparing media clips...", handler: statusHandler)
@@ -126,55 +150,85 @@ public final class AVFoundationRenderEngine {
                 transitionDuration: transitionDuration,
                 container: exportProfile.container
             )
-            let chapterMetadataURL = try makeChapterMetadataFileIfNeeded(
-                chapters: resolvedChapters,
-                temporaryURLs: &temporaryURLs,
-                diagnostics: diagnostics
-            )
-            let outputURL = try OutputPathResolver.resolveUniqueURL(target: outputTarget, container: exportProfile.container)
-            diagnostics.add("Resolved output URL: \(outputURL.path)")
             reportStatus("Configuring \(exportProfile.dynamicRange == .hdr ? "HDR" : "SDR") encode...", handler: statusHandler)
             diagnostics.add(
                 "\(exportProfile.dynamicRange == .hdr ? "HDR" : "SDR") export selected; routing to FFmpeg backend " +
                 "(mode=\(exportProfile.hdrFFmpegBinaryMode.rawValue), codec=\(exportProfile.videoCodec.rawValue))."
             )
-            let ffmpegPlan = makeFFmpegRenderPlan(
+            let candidateOutputURL = try OutputPathResolver.resolveUniqueURL(target: outputTarget, container: exportProfile.container)
+            let provisionalPlan = makeFFmpegRenderPlan(
                 clips: clips,
                 transitionDuration: transitionDuration,
                 endFadeToBlackDurationSeconds: max(style.crossfadeDurationSeconds * 2, 0),
-                outputURL: outputURL,
+                outputURL: candidateOutputURL,
                 renderSize: renderSize,
                 frameRate: resolvedFrameRate,
                 exportProfile: exportProfile,
                 embeddedMetadata: plexTVMetadata?.embedded,
                 chapters: resolvedChapters,
-                chapterMetadataURL: chapterMetadataURL
+                chapterMetadataURL: nil
             )
 
             let binaryResolution: FFmpegBinaryResolution
-            if let progressiveExecutionPlan = ffmpegProgressivePipelineBuilder.makeExecutionPlan(
-                for: ffmpegPlan,
-                presentationOutputURL: { _ in
-                    let url = self.temporaryRenderURL(fileType: .mov)
-                    temporaryURLs.append(url)
-                    return url
-                },
-                batchOutputURL: { _ in
-                    let url = self.temporaryRenderURL(fileType: .mov)
-                    temporaryURLs.append(url)
-                    return url
-                },
-                concatListURL: {
-                    let url = self.temporaryArtifactURL(pathExtension: "ffconcat")
-                    temporaryURLs.append(url)
-                    return url
-                },
-                concatOutputURL: {
-                    let url = self.temporaryRenderURL(fileType: .mov)
-                    temporaryURLs.append(url)
-                    return url
+            if ffmpegProgressivePipelineBuilder.requiresProgressiveExecution(for: provisionalPlan) {
+                ffmpegProgressiveResumeStore.pruneStaleSessions()
+                let planSignature = FFmpegProgressiveResumeStore.planSignature(
+                    for: provisionalPlan,
+                    outputTarget: outputTarget
+                )
+                var resumeSession: FFmpegProgressiveResumeSession
+                if let pausedSession = ffmpegProgressiveResumeStore.findPausedSession(
+                    planSignature: planSignature,
+                    outputTarget: outputTarget
+                ) {
+                    resumeSession = pausedSession
+                } else {
+                    resumeSession = try ffmpegProgressiveResumeStore.createSession(
+                        planSignature: planSignature,
+                        outputTarget: outputTarget,
+                        finalOutputURL: candidateOutputURL
+                    )
                 }
-            ) {
+                progressiveResumeSession = resumeSession
+                renderedOutputURL = resumeSession.finalOutputURL
+                diagnostics.add("Resolved output URL: \(resumeSession.finalOutputURL.path)")
+                if resumeSession.state == .paused {
+                    diagnostics.add(
+                        "Resuming paused HDR progressive session: sessionID=\(resumeSession.sessionID.uuidString), workDirectory=\(resumeSession.workDirectoryURL.path)"
+                    )
+                    reportStatus("Resuming paused HDR encode...", handler: statusHandler)
+                }
+
+                let chapterMetadataURL = try makeChapterMetadataFileIfNeeded(
+                    chapters: resolvedChapters,
+                    temporaryURLs: &temporaryURLs,
+                    diagnostics: diagnostics,
+                    preferredURL: resolvedChapters.isEmpty ? nil : resumeSession.chapterMetadataURL,
+                    preservePreferredURL: true
+                )
+                let ffmpegPlan = makeFFmpegRenderPlan(
+                    clips: clips,
+                    transitionDuration: transitionDuration,
+                    endFadeToBlackDurationSeconds: max(style.crossfadeDurationSeconds * 2, 0),
+                    outputURL: resumeSession.finalOutputURL,
+                    renderSize: renderSize,
+                    frameRate: resolvedFrameRate,
+                    exportProfile: exportProfile,
+                    embeddedMetadata: plexTVMetadata?.embedded,
+                    chapters: resolvedChapters,
+                    chapterMetadataURL: chapterMetadataURL
+                )
+                guard let progressiveExecutionPlan = ffmpegProgressivePipelineBuilder.makeExecutionPlan(
+                    for: ffmpegPlan,
+                    presentationOutputURL: { resumeSession.presentationOutputURL(for: $0) },
+                    batchOutputURL: { resumeSession.batchOutputURL(for: $0) },
+                    concatListURL: { resumeSession.concatListURL },
+                    concatOutputURL: { resumeSession.concatOutputURL }
+                ) else {
+                    ffmpegProgressiveResumeStore.removeSession(resumeSession)
+                    progressiveResumeSession = nil
+                    throw RenderError.exportFailed("Progressive HDR resume session could not be reconstructed.")
+                }
                 diagnostics.add(
                     "HDR progressive batching enabled: true (activationChunks=\(progressiveExecutionPlan.activationChunkPlan.chunks.count), " +
                     "presentationIntermediates=\(progressiveExecutionPlan.presentationPlans.count), " +
@@ -194,6 +248,7 @@ public final class AVFoundationRenderEngine {
                 binaryResolution = try await executeProgressiveFFmpegPlan(
                     ffmpegPlan,
                     executionPlan: progressiveExecutionPlan,
+                    resumeSession: &resumeSession,
                     binaryMode: exportProfile.hdrFFmpegBinaryMode,
                     diagnostics: diagnostics,
                     temporaryURLs: &temporaryURLs,
@@ -201,7 +256,28 @@ public final class AVFoundationRenderEngine {
                     statusHandler: statusHandler,
                     systemFFmpegFallbackHandler: systemFFmpegFallbackHandler
                 )
+                ffmpegProgressiveResumeStore.removeSession(resumeSession)
+                progressiveResumeSession = nil
             } else {
+                let chapterMetadataURL = try makeChapterMetadataFileIfNeeded(
+                    chapters: resolvedChapters,
+                    temporaryURLs: &temporaryURLs,
+                    diagnostics: diagnostics
+                )
+                let ffmpegPlan = makeFFmpegRenderPlan(
+                    clips: clips,
+                    transitionDuration: transitionDuration,
+                    endFadeToBlackDurationSeconds: max(style.crossfadeDurationSeconds * 2, 0),
+                    outputURL: candidateOutputURL,
+                    renderSize: renderSize,
+                    frameRate: resolvedFrameRate,
+                    exportProfile: exportProfile,
+                    embeddedMetadata: plexTVMetadata?.embedded,
+                    chapters: resolvedChapters,
+                    chapterMetadataURL: chapterMetadataURL
+                )
+                renderedOutputURL = candidateOutputURL
+                diagnostics.add("Resolved output URL: \(candidateOutputURL.path)")
                 let chunkingReason: String
                 if ffmpegPlan.dynamicRange != .hdr || ffmpegPlan.videoCodec != .hevc {
                     chunkingReason = "not_applicable"
@@ -236,7 +312,7 @@ public final class AVFoundationRenderEngine {
                 diagnosticsLogURL = nil
             }
             return RenderResult(
-                outputURL: outputURL,
+                outputURL: renderedOutputURL ?? candidateOutputURL,
                 diagnosticsLogURL: diagnosticsLogURL,
                 backendSummary: binaryResolution.backendSummary(
                     codec: exportProfile.videoCodec,
@@ -255,12 +331,27 @@ public final class AVFoundationRenderEngine {
                 )
             )
         } catch {
+            if let progressiveResumeSession,
+               case RenderError.paused = error {
+                diagnostics.add(
+                    "Render paused with resumable HDR session preserved: sessionID=\(progressiveResumeSession.sessionID.uuidString), " +
+                        "workDirectory=\(progressiveResumeSession.workDirectoryURL.path)"
+                )
+            } else if let progressiveResumeSession {
+                ffmpegProgressiveResumeStore.removeSession(progressiveResumeSession)
+            }
             diagnostics.add("Render failed with error: \(describe(error))")
             cleanupTemporaryFiles(&temporaryURLs, diagnostics: diagnostics)
             let diagnosticURL: URL?
+            let isPausedError: Bool
+            if case RenderError.paused = error {
+                isPausedError = true
+            } else {
+                isPausedError = false
+            }
             if writeDiagnosticsLog {
                 diagnosticURL = persistDiagnosticsReport(
-                    diagnostics.renderReport(outcome: "failure", error: error),
+                    diagnostics.renderReport(outcome: isPausedError ? "paused" : "failure", error: error),
                     outputTarget: outputTarget,
                     preferredURL: liveDiagnosticsLogURL
                 )
@@ -268,6 +359,12 @@ public final class AVFoundationRenderEngine {
                 diagnosticURL = nil
             }
             let baseMessage = userFacingMessage(from: error)
+            if isPausedError {
+                if let diagnosticURL {
+                    throw RenderError.paused("\(baseMessage)\nDiagnostics file: \(diagnosticURL.path)")
+                }
+                throw RenderError.paused(baseMessage)
+            }
             if let diagnosticURL {
                 throw RenderError.exportFailed("\(baseMessage)\nDiagnostics file: \(diagnosticURL.path)")
             }
@@ -338,17 +435,21 @@ public final class AVFoundationRenderEngine {
     private func makeChapterMetadataFileIfNeeded(
         chapters: [RenderChapter],
         temporaryURLs: inout [URL],
-        diagnostics: RenderDiagnostics
+        diagnostics: RenderDiagnostics,
+        preferredURL: URL? = nil,
+        preservePreferredURL: Bool = false
     ) throws -> URL? {
         guard !chapters.isEmpty else {
             return nil
         }
 
-        let metadataURL = temporaryArtifactURL(pathExtension: "ffmeta")
+        let metadataURL = preferredURL ?? temporaryArtifactURL(pathExtension: "ffmeta")
         let contents = makeChapterMetadataContents(chapters: chapters)
         do {
             try contents.write(to: metadataURL, atomically: true, encoding: .utf8)
-            temporaryURLs.append(metadataURL)
+            if !(preservePreferredURL && preferredURL == metadataURL) {
+                temporaryURLs.append(metadataURL)
+            }
             diagnostics.add("Chapter metadata file prepared: \(metadataURL.path) (chapters=\(chapters.count))")
             return metadataURL
         } catch {
@@ -458,6 +559,7 @@ public final class AVFoundationRenderEngine {
     private func executeProgressiveFFmpegPlan(
         _ finalPlan: FFmpegRenderPlan,
         executionPlan: FFmpegHDRProgressiveExecutionPlan,
+        resumeSession: inout FFmpegProgressiveResumeSession,
         binaryMode: HDRFFmpegBinaryMode,
         diagnostics: RenderDiagnostics,
         temporaryURLs: inout [URL],
@@ -465,6 +567,7 @@ public final class AVFoundationRenderEngine {
         statusHandler: (@MainActor @Sendable (String) -> Void)?,
         systemFFmpegFallbackHandler: SystemFFmpegFallbackHandler?
     ) async throws -> FFmpegBinaryResolution {
+        try ffmpegProgressiveResumeStore.markActive(&resumeSession)
         let resolution = try await ffmpegHDRRenderer.resolveBinary(
             requirements: progressiveCapabilityRequirements(for: finalPlan),
             binaryMode: binaryMode,
@@ -487,15 +590,44 @@ public final class AVFoundationRenderEngine {
                 packagingWeight,
             0.01
         )
-        var completedWeight = 0.0
+        let completedPresentationIndices = Set(
+            resumeSession.completedPresentationIndices.filter {
+                executionPlan.presentationPlans.indices.contains($0) &&
+                    FileManager.default.fileExists(atPath: executionPlan.presentationPlans[$0].outputURL.path)
+            }
+        )
+        let completedBatchIndices = Set(
+            resumeSession.completedBatchIndices.filter {
+                executionPlan.batchPlans.indices.contains($0) &&
+                    FileManager.default.fileExists(atPath: executionPlan.batchPlans[$0].plan.outputURL.path)
+            }
+        )
+        let concatAlreadyCompleted = resumeSession.concatCompleted &&
+            FileManager.default.fileExists(atPath: executionPlan.concatOutputURL.path)
+        var completedWeight = completedPresentationIndices.reduce(0) { partialResult, index in
+            partialResult + presentationWeights[index]
+        }
+        completedWeight += completedBatchIndices.reduce(0) { partialResult, index in
+            partialResult + batchWeights[index]
+        }
+        if concatAlreadyCompleted {
+            completedWeight += concatWeight
+        }
 
         diagnostics.add(
             "HDR progressive execution started: presentationIntermediates=\(executionPlan.presentationPlans.count), " +
-            "finalBatches=\(executionPlan.batchPlans.count), concatList=\(executionPlan.concatListURL.path), concatOutput=\(executionPlan.concatOutputURL.path)"
+            "finalBatches=\(executionPlan.batchPlans.count), concatList=\(executionPlan.concatListURL.path), concatOutput=\(executionPlan.concatOutputURL.path), " +
+            "completedPresentations=\(completedPresentationIndices.count), completedBatches=\(completedBatchIndices.count), concatCompleted=\(concatAlreadyCompleted)"
         )
 
         for (index, plan) in executionPlan.presentationPlans.enumerated() {
             let stageWeight = presentationWeights[index]
+            if completedPresentationIndices.contains(index) {
+                diagnostics.add(
+                    "HDR presentation intermediate skipped: index=\(index + 1)/\(executionPlan.presentationPlans.count), output=\(plan.outputURL.path)"
+                )
+                continue
+            }
             diagnostics.add(
                 "HDR presentation intermediate started: index=\(index + 1)/\(executionPlan.presentationPlans.count), output=\(plan.outputURL.path)"
             )
@@ -515,11 +647,24 @@ public final class AVFoundationRenderEngine {
             diagnostics.add(
                 "HDR presentation intermediate completed: index=\(index + 1)/\(executionPlan.presentationPlans.count), output=\(plan.outputURL.path)"
             )
+            try ffmpegProgressiveResumeStore.markPresentationCompleted(index, session: &resumeSession)
             completedWeight += stageWeight
+            try pauseProgressiveRenderIfRequested(session: &resumeSession, diagnostics: diagnostics)
         }
 
         for batch in executionPlan.batchPlans {
             let stageWeight = batchWeights[batch.sequenceIndex]
+            if completedBatchIndices.contains(batch.sequenceIndex) {
+                diagnostics.add(
+                    "HDR final batch skipped: index=\(batch.sequenceIndex + 1)/\(executionPlan.batchPlans.count), output=\(batch.plan.outputURL.path)"
+                )
+                for sourceClipIndex in batch.sourceClipIndices
+                    where executionPlan.lastBatchIndexBySourceClip[sourceClipIndex] == batch.sequenceIndex {
+                    let presentationURL = executionPlan.presentationPlans[sourceClipIndex].outputURL
+                    removePersistentArtifact(presentationURL, diagnostics: diagnostics)
+                }
+                continue
+            }
             diagnostics.add(
                 "HDR final batch started: index=\(batch.sequenceIndex + 1)/\(executionPlan.batchPlans.count), " +
                 "sourceClips=\(batch.sourceClipIndices.count), output=\(batch.plan.outputURL.path)"
@@ -540,69 +685,77 @@ public final class AVFoundationRenderEngine {
             diagnostics.add(
                 "HDR final batch completed: index=\(batch.sequenceIndex + 1)/\(executionPlan.batchPlans.count), output=\(batch.plan.outputURL.path)"
             )
+            try ffmpegProgressiveResumeStore.markBatchCompleted(batch.sequenceIndex, session: &resumeSession)
             completedWeight += stageWeight
 
             for sourceClipIndex in batch.sourceClipIndices
                 where executionPlan.lastBatchIndexBySourceClip[sourceClipIndex] == batch.sequenceIndex {
                 let presentationURL = executionPlan.presentationPlans[sourceClipIndex].outputURL
-                removeTemporaryFile(presentationURL, temporaryURLs: &temporaryURLs, diagnostics: diagnostics)
+                removePersistentArtifact(presentationURL, diagnostics: diagnostics)
             }
+            try pauseProgressiveRenderIfRequested(session: &resumeSession, diagnostics: diagnostics)
         }
 
-        try writeConcatFileList(
-            batchPlans: executionPlan.batchPlans,
-            to: executionPlan.concatListURL
-        )
-        diagnostics.add("HDR concat list prepared: \(executionPlan.concatListURL.path) (batches=\(executionPlan.batchPlans.count))")
+        if concatAlreadyCompleted {
+            diagnostics.add("HDR concat copy skipped: output=\(executionPlan.concatOutputURL.path)")
+        } else {
+            try writeConcatFileList(
+                batchPlans: executionPlan.batchPlans,
+                to: executionPlan.concatListURL
+            )
+            diagnostics.add("HDR concat list prepared: \(executionPlan.concatListURL.path) (batches=\(executionPlan.batchPlans.count))")
 
-        let concatCommand = ffmpegCommandBuilder.buildConcatCommand(
-            executableURL: resolution.selectedBinary.ffmpegURL,
-            concatListURL: executionPlan.concatListURL,
-            outputURL: executionPlan.concatOutputURL
-        )
-        try await executeFFmpegCommand(
-            concatCommand,
-            context: FFmpegHDRRenderer.CommandExecutionContext(
-                dynamicRange: finalPlan.dynamicRange,
-                renderIntent: .concatCopy,
-                outputURL: executionPlan.concatOutputURL,
-                clipCount: executionPlan.batchPlans.count,
-                chapterCount: 0,
-                renderSize: finalPlan.renderSize,
-                frameRate: finalPlan.frameRate,
-                bitrateMode: finalPlan.bitrateMode,
-                videoCodec: finalPlan.videoCodec,
-                audioBitrate: 48_000 * max(finalPlan.audioLayout.outputChannelCount ?? 2, 1) * 16,
-                audioLayout: finalPlan.audioLayout,
-                expectedDurationSeconds: finalDuration,
-                encoderDescription: "copy",
-                profileSummary: "intent=concatCopy encoder=copy audio=copy",
-                requiresHDRToSDRToneMapping: false,
-                hdrToSDRToneMapClips: [],
-                captureDateOverlayCount: 0,
-                summaryLine:
-                    "FFmpeg concat summary: output=\(executionPlan.concatOutputURL.path), clips=\(executionPlan.batchPlans.count), chapters=0, " +
-                    "renderSize=\(Int(finalPlan.renderSize.width.rounded()))x\(Int(finalPlan.renderSize.height.rounded())), frameRate=\(finalPlan.frameRate), " +
-                    "container=mov, codec=\(finalPlan.videoCodec.rawValue), dynamicRange=\(finalPlan.dynamicRange.rawValue), " +
-                    "audioLayout=\(finalPlan.audioLayout.rawValue), expectedDuration=\(String(format: "%.2fs", finalDuration))",
-                endpointLine: nil
-            ),
-            resolution: resolution,
-            diagnostics: diagnostics,
-            progressRange: progressRangeForFFmpegStage(
-                completedWeight: completedWeight,
-                stageWeight: concatWeight,
-                totalWeight: totalWeight
-            ),
-            statusPrefix: "HDR concat copy",
-            progressHandler: progressHandler,
-            statusHandler: statusHandler
-        )
-        completedWeight += concatWeight
-        for batch in executionPlan.batchPlans {
-            removeTemporaryFile(batch.plan.outputURL, temporaryURLs: &temporaryURLs, diagnostics: diagnostics)
+            let concatCommand = ffmpegCommandBuilder.buildConcatCommand(
+                executableURL: resolution.selectedBinary.ffmpegURL,
+                concatListURL: executionPlan.concatListURL,
+                outputURL: executionPlan.concatOutputURL
+            )
+            try await executeFFmpegCommand(
+                concatCommand,
+                context: FFmpegHDRRenderer.CommandExecutionContext(
+                    dynamicRange: finalPlan.dynamicRange,
+                    renderIntent: .concatCopy,
+                    outputURL: executionPlan.concatOutputURL,
+                    clipCount: executionPlan.batchPlans.count,
+                    chapterCount: 0,
+                    renderSize: finalPlan.renderSize,
+                    frameRate: finalPlan.frameRate,
+                    bitrateMode: finalPlan.bitrateMode,
+                    videoCodec: finalPlan.videoCodec,
+                    audioBitrate: 48_000 * max(finalPlan.audioLayout.outputChannelCount ?? 2, 1) * 16,
+                    audioLayout: finalPlan.audioLayout,
+                    expectedDurationSeconds: finalDuration,
+                    encoderDescription: "copy",
+                    profileSummary: "intent=concatCopy encoder=copy audio=copy",
+                    requiresHDRToSDRToneMapping: false,
+                    hdrToSDRToneMapClips: [],
+                    captureDateOverlayCount: 0,
+                    summaryLine:
+                        "FFmpeg concat summary: output=\(executionPlan.concatOutputURL.path), clips=\(executionPlan.batchPlans.count), chapters=0, " +
+                        "renderSize=\(Int(finalPlan.renderSize.width.rounded()))x\(Int(finalPlan.renderSize.height.rounded())), frameRate=\(finalPlan.frameRate), " +
+                        "container=mov, codec=\(finalPlan.videoCodec.rawValue), dynamicRange=\(finalPlan.dynamicRange.rawValue), " +
+                        "audioLayout=\(finalPlan.audioLayout.rawValue), expectedDuration=\(String(format: "%.2fs", finalDuration))",
+                    endpointLine: nil
+                ),
+                resolution: resolution,
+                diagnostics: diagnostics,
+                progressRange: progressRangeForFFmpegStage(
+                    completedWeight: completedWeight,
+                    stageWeight: concatWeight,
+                    totalWeight: totalWeight
+                ),
+                statusPrefix: "HDR concat copy",
+                progressHandler: progressHandler,
+                statusHandler: statusHandler
+            )
+            try ffmpegProgressiveResumeStore.markConcatCompleted(&resumeSession)
+            completedWeight += concatWeight
+            for batch in executionPlan.batchPlans {
+                removePersistentArtifact(batch.plan.outputURL, diagnostics: diagnostics)
+            }
+            removePersistentArtifact(executionPlan.concatListURL, diagnostics: diagnostics)
+            try pauseProgressiveRenderIfRequested(session: &resumeSession, diagnostics: diagnostics)
         }
-        removeTemporaryFile(executionPlan.concatListURL, temporaryURLs: &temporaryURLs, diagnostics: diagnostics)
 
         let packagingCommand = try ffmpegCommandBuilder.buildPackagingCommand(
             executableURL: resolution.selectedBinary.ffmpegURL,
@@ -647,7 +800,7 @@ public final class AVFoundationRenderEngine {
             progressHandler: progressHandler,
             statusHandler: statusHandler
         )
-        removeTemporaryFile(executionPlan.concatOutputURL, temporaryURLs: &temporaryURLs, diagnostics: diagnostics)
+        removePersistentArtifact(executionPlan.concatOutputURL, diagnostics: diagnostics)
         diagnostics.add("HDR progressive execution completed: output=\(finalPlan.outputURL.path)")
         return resolution
     }
@@ -695,6 +848,37 @@ public final class AVFoundationRenderEngine {
         }
 
         temporaryURLs.removeAll { $0 == url }
+    }
+
+    private func removePersistentArtifact(
+        _ url: URL,
+        diagnostics: RenderDiagnostics
+    ) {
+        let fileManager = FileManager.default
+        do {
+            if fileManager.fileExists(atPath: url.path) {
+                try fileManager.removeItem(at: url)
+                diagnostics.add("Removed persistent artifact: \(url.path)")
+            }
+        } catch {
+            diagnostics.add("Persistent artifact cleanup skipped for \(url.path): \(describe(error))")
+        }
+    }
+
+    private func pauseProgressiveRenderIfRequested(
+        session: inout FFmpegProgressiveResumeSession,
+        diagnostics: RenderDiagnostics
+    ) throws {
+        guard ffmpegProgressivePauseState.isPauseRequested else {
+            return
+        }
+        try ffmpegProgressiveResumeStore.markPaused(&session)
+        diagnostics.add(
+            "HDR progressive pause checkpoint reached: sessionID=\(session.sessionID.uuidString), workDirectory=\(session.workDirectoryURL.path)"
+        )
+        throw RenderError.paused(
+            "Render paused after a safe HDR checkpoint. Reopen the app and start the same render again to resume."
+        )
     }
 
     private func progressRangeForFFmpegStage(

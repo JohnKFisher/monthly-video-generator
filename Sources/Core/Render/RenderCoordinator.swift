@@ -144,6 +144,10 @@ public final class RenderCoordinator: @unchecked Sendable {
         renderEngine.cancelCurrentRender()
     }
 
+    public func requestPauseAfterCheckpoint() {
+        renderEngine.requestPauseAfterCheckpoint()
+    }
+
     private func formatDuration(_ duration: CMTime) -> String {
         let seconds = Int(duration.seconds.rounded())
         let minutes = seconds / 60

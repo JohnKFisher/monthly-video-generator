@@ -130,6 +130,7 @@ Operational updates after first packaged run:
 - Promoted the current release as the new known-good rollback checkpoint (`v0.9.0`): `checkpoint/20260310-known-good-v0-9-0`.
 - 2026-03-10: Bumped the shipped app version to `0.9.1` and promoted the current diagnostics/stability state as the new known-good rollback checkpoint: `checkpoint/20260310-known-good-v0-9-1`.
 - 2026-03-10: Replaced the large-job HDR “chunk then giant final merge” path with a progressive presentation-intermediate -> bounded `libx265` final-batch -> concat-copy -> final-packaging pipeline, and locked a hard invariant that no new color/tone/background/overlay math may run after the existing per-source normalization stage.
+- 2026-03-10: Added checkpointed pause/resume for progressive HDR renders only: the UI can now request “pause after current safe checkpoint,” the engine persists completed presentation/batch/concat milestones to app-owned resumable-render storage, and restarting the same large HDR job resumes from the next unfinished checkpoint instead of restarting from zero.
 
 ## Decisions Log
 
@@ -170,6 +171,7 @@ Operational updates after first packaged run:
 - 2026-03-06: Approved moving SDR final export onto the shared FFmpeg backend while keeping AVFoundation for discovery and still/title intermediate generation.
 - 2026-03-06: Approved a space-efficiency UI pass so the full control set remains visible without vertically clipping the window.
 - 2026-03-10: Approved progressive HDR assembly for large HEVC/HDR exports, with VideoToolbox allowed only for pre-final presentation intermediates and a non-negotiable frozen-color invariant after source normalization.
+- 2026-03-10: Approved resumable large HDR exports only at explicit safe checkpoints between progressive pipeline stages/batches; no attempt will be made to pause and resume an in-flight FFmpeg command mid-batch.
 
 ## Changes Since Last Update
 
@@ -188,6 +190,7 @@ Operational updates after first packaged run:
 - 2026-03-10: Added HDR final-delivery `libx265` thread/pool caps so large FFmpeg HEVC renders are less likely to be killed by macOS under memory or CPU pressure; intermediate chunk behavior remains unchanged.
 - 2026-03-10: Enriched FFmpeg failure reporting so diagnostics logs and surfaced render errors now include structured encoder/binary/progress/output context, cleaner stderr filtering, richer report headers, and no duplicate localized-description lines in the UI alert text.
 - 2026-03-10: Added a progressive HDR execution planner/builder for large HEVC/HDR renders, including per-source presentation intermediates, bounded assembly slices/final batches, concat-copy packaging, eager temp cleanup, and regression tests that block any post-normalization color/background/overlay filters from reappearing in batch assembly commands.
+- 2026-03-10: Added resumable progressive HDR execution state with persisted session manifests, safe-checkpoint pause requests, queue-aware paused-job handling, eager preservation of unfinished progressive artifacts on pause, and tests that lock in resume-state persistence plus paused-job retry ordering.
 - 2026-03-04: Added `VERSION` file and dynamic build number injection into app `Info.plist`.
 - 2026-03-04: Added version/build label to main UI.
 - 2026-03-04: Reworked still-image rendering to use pre-rasterized CGImage frames for stability.
