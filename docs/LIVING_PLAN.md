@@ -129,6 +129,7 @@ Operational updates after first packaged run:
 - 2026-03-10: Updated fresh/reset style defaults to `7.5s` opening title, `1.0s` crossfade, and `5.0s` still-image duration, and bumped the shipped app version to `0.9.0`.
 - Promoted the current release as the new known-good rollback checkpoint (`v0.9.0`): `checkpoint/20260310-known-good-v0-9-0`.
 - 2026-03-10: Bumped the shipped app version to `0.9.1` and promoted the current diagnostics/stability state as the new known-good rollback checkpoint: `checkpoint/20260310-known-good-v0-9-1`.
+- 2026-03-10: Replaced the large-job HDR “chunk then giant final merge” path with a progressive presentation-intermediate -> bounded `libx265` final-batch -> concat-copy -> final-packaging pipeline, and locked a hard invariant that no new color/tone/background/overlay math may run after the existing per-source normalization stage.
 
 ## Decisions Log
 
@@ -168,6 +169,7 @@ Operational updates after first packaged run:
 - 2026-03-05: Approved temporary testing-only output naming plus a removable mega-test batch UI for Resolution/FPS/Range/Audio matrix exports.
 - 2026-03-06: Approved moving SDR final export onto the shared FFmpeg backend while keeping AVFoundation for discovery and still/title intermediate generation.
 - 2026-03-06: Approved a space-efficiency UI pass so the full control set remains visible without vertically clipping the window.
+- 2026-03-10: Approved progressive HDR assembly for large HEVC/HDR exports, with VideoToolbox allowed only for pre-final presentation intermediates and a non-negotiable frozen-color invariant after source normalization.
 
 ## Changes Since Last Update
 
@@ -185,6 +187,7 @@ Operational updates after first packaged run:
 - 2026-03-09: Reworked `scripts/build_app.sh` to produce a release universal `.app`, embed Swift runtimes, package SwiftPM resources conventionally, and ad-hoc sign/verify the final bundle; app resource lookup now resolves packaged assets without depending on a machine-local `.build` path.
 - 2026-03-10: Added HDR final-delivery `libx265` thread/pool caps so large FFmpeg HEVC renders are less likely to be killed by macOS under memory or CPU pressure; intermediate chunk behavior remains unchanged.
 - 2026-03-10: Enriched FFmpeg failure reporting so diagnostics logs and surfaced render errors now include structured encoder/binary/progress/output context, cleaner stderr filtering, richer report headers, and no duplicate localized-description lines in the UI alert text.
+- 2026-03-10: Added a progressive HDR execution planner/builder for large HEVC/HDR renders, including per-source presentation intermediates, bounded assembly slices/final batches, concat-copy packaging, eager temp cleanup, and regression tests that block any post-normalization color/background/overlay filters from reappearing in batch assembly commands.
 - 2026-03-04: Added `VERSION` file and dynamic build number injection into app `Info.plist`.
 - 2026-03-04: Added version/build label to main UI.
 - 2026-03-04: Reworked still-image rendering to use pre-rasterized CGImage frames for stability.

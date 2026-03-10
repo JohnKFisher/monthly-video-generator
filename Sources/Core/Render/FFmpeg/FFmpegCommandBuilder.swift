@@ -54,18 +54,17 @@ struct FFmpegCommandBuilder {
             )
         }
 
-        var arguments: [String] = [
-            "-hide_banner",
-            "-y",
-            // Route progress to stderr so it travels over the same stream we
-            // already drain for ffmpeg logs in GUI app runs.
-            "-progress", "pipe:2",
-            "-stats_period", "0.5",
-            "-nostats",
-            "-nostdin",
-            "-ignore_unknown",
-            "-dn"
-        ]
+        if plan.assemblySlices != nil {
+            return try buildAssemblyCommand(
+                plan: plan,
+                executableURL: resolution.selectedBinary.ffmpegURL,
+                selectedEncoder: selectedEncoder,
+                outputChannelLayout: outputChannelLayout,
+                outputChannelCount: outputChannelCount
+            )
+        }
+
+        var arguments = baseArguments()
 
         if let threadLimit = ffmpegThreadLimit(for: selectedEncoder, plan: plan) {
             arguments.append(contentsOf: ["-threads", String(threadLimit)])
@@ -264,7 +263,79 @@ struct FFmpegCommandBuilder {
         return FFmpegCommand(executableURL: resolution.selectedBinary.ffmpegURL, arguments: arguments)
     }
 
+    func buildConcatCommand(
+        executableURL: URL,
+        concatListURL: URL,
+        outputURL: URL
+    ) -> FFmpegCommand {
+        var arguments = baseArguments()
+        arguments.append(contentsOf: [
+            "-safe", "0",
+            "-f", "concat",
+            "-i", concatListURL.path,
+            "-c", "copy",
+            "-movflags", "+write_colr",
+            outputURL.path
+        ])
+        return FFmpegCommand(executableURL: executableURL, arguments: arguments)
+    }
+
+    func buildPackagingCommand(
+        executableURL: URL,
+        concatenatedURL: URL,
+        finalPlan: FFmpegRenderPlan
+    ) throws -> FFmpegCommand {
+        guard let outputChannelCount = finalPlan.audioLayout.outputChannelCount,
+              let audioBitrate = finalPlan.audioLayout.aacBitrate else {
+            throw RenderError.exportFailed("FFmpeg packaging command build failed: audio layout must be resolved before packaging.")
+        }
+
+        var arguments = baseArguments()
+        arguments.append(contentsOf: ["-i", concatenatedURL.path])
+
+        var chapterInputIndex: Int?
+        if finalPlan.container == .mp4,
+           !finalPlan.chapters.isEmpty,
+           let chapterMetadataURL = finalPlan.chapterMetadataURL {
+            chapterInputIndex = 1
+            arguments.append(contentsOf: [
+                "-f", "ffmetadata",
+                "-i", chapterMetadataURL.path
+            ])
+        }
+
+        arguments.append(contentsOf: [
+            "-map", "0:v:0",
+            "-map", "0:a:0"
+        ])
+        if let chapterInputIndex {
+            arguments.append(contentsOf: ["-map_chapters", String(chapterInputIndex)])
+        }
+
+        arguments.append(contentsOf: [
+            "-c:v", "copy",
+            "-tag:v", "hvc1",
+            "-c:a", "aac",
+            "-ar", "48000",
+            "-ac", String(outputChannelCount),
+            "-b:a", audioBitrateArgument(audioBitrate)
+        ])
+        appendEmbeddedMetadataArguments(for: finalPlan.finalDeliveryEquivalent, arguments: &arguments)
+        arguments.append(contentsOf: [
+            "-movflags", movflags(for: finalPlan.finalDeliveryEquivalent),
+            "-colorspace", outputColorspace(for: finalPlan.dynamicRange),
+            "-color_primaries", outputColorPrimaries(for: finalPlan.dynamicRange),
+            "-color_trc", outputColorTransfer(for: finalPlan.dynamicRange),
+            finalPlan.outputURL.path
+        ])
+        return FFmpegCommand(executableURL: executableURL, arguments: arguments)
+    }
+
     func expectedDurationSeconds(for plan: FFmpegRenderPlan) -> Double {
+        if let assemblySlices = plan.assemblySlices {
+            let total = assemblySlices.reduce(0) { $0 + max($1.outputDurationSeconds, 0.01) }
+            return max(total, 0.01)
+        }
         let total = plan.clips.reduce(0) { $0 + max($1.durationSeconds, 0.01) }
         let transitions = max(plan.transitionDurationSeconds, 0) * Double(max(plan.clips.count - 1, 0))
         return max(total - transitions, 0.01)
@@ -289,19 +360,189 @@ struct FFmpegCommandBuilder {
             case .hevcVideoToolbox:
                 return "intent=finalDelivery encoder=hevc_videotoolbox bitrate=\(estimatedBitrate(for: plan.renderSize, frameRate: plan.frameRate, bitrateMode: plan.bitrateMode, encoder: encoder, dynamicRange: plan.dynamicRange)) audio=aac"
             }
-        case .intermediateChunk:
+        case .intermediateChunk, .presentationIntermediate:
             let bitrate = intermediateBitrate(for: plan.renderSize, frameRate: plan.frameRate)
             switch encoder {
             case .hevcVideoToolbox:
-                return "intent=intermediateChunk encoder=hevc_videotoolbox bitrate=\(bitrate) audio=pcm_s16le"
+                return "intent=\(plan.renderIntent.rawValue) encoder=hevc_videotoolbox bitrate=\(bitrate) audio=pcm_s16le"
             case .libx265:
-                return "intent=intermediateChunk encoder=libx265 preset=medium bitrate=\(bitrate) audio=pcm_s16le"
+                return "intent=\(plan.renderIntent.rawValue) encoder=libx265 preset=medium bitrate=\(bitrate) audio=pcm_s16le"
             case .h264VideoToolbox:
-                return "intent=intermediateChunk encoder=h264_videotoolbox audio=pcm_s16le"
+                return "intent=\(plan.renderIntent.rawValue) encoder=h264_videotoolbox audio=pcm_s16le"
             case .libx264:
-                return "intent=intermediateChunk encoder=libx264 audio=pcm_s16le"
+                return "intent=\(plan.renderIntent.rawValue) encoder=libx264 audio=pcm_s16le"
+            }
+        case .finalBatch:
+            switch encoder {
+            case .libx265:
+                var summary = "intent=finalBatch encoder=libx265 preset=\(x265Preset(for: plan.bitrateMode)) crf=\(x265CRF(for: plan.bitrateMode, dynamicRange: plan.dynamicRange)) audio=pcm_s16le"
+                if let threadLimit = ffmpegThreadLimit(for: encoder, plan: plan) {
+                    let frameThreads = x265FrameThreadLimit(for: plan)
+                    summary += " threads=\(threadLimit) x265=pools=\(threadLimit):frame-threads=\(frameThreads)"
+                }
+                return summary
+            case .libx264:
+                return "intent=finalBatch encoder=libx264 preset=\(x264Preset(for: plan.bitrateMode)) crf=\(x264CRF(for: plan.bitrateMode)) audio=pcm_s16le"
+            case .hevcVideoToolbox:
+                return "intent=finalBatch encoder=hevc_videotoolbox bitrate=\(estimatedBitrate(for: plan.renderSize, frameRate: plan.frameRate, bitrateMode: plan.bitrateMode, encoder: encoder, dynamicRange: plan.dynamicRange)) audio=pcm_s16le"
+            case .h264VideoToolbox:
+                return "intent=finalBatch encoder=h264_videotoolbox bitrate=\(estimatedBitrate(for: plan.renderSize, frameRate: plan.frameRate, bitrateMode: plan.bitrateMode, encoder: encoder, dynamicRange: plan.dynamicRange)) audio=pcm_s16le"
+            }
+        case .concatCopy:
+            return "intent=concatCopy encoder=copy"
+        case .finalPackaging:
+            return "intent=finalPackaging encoder=copy audio=aac"
+        }
+    }
+
+    private func buildAssemblyCommand(
+        plan: FFmpegRenderPlan,
+        executableURL: URL,
+        selectedEncoder: FFmpegVideoEncoder,
+        outputChannelLayout: String,
+        outputChannelCount: Int
+    ) throws -> FFmpegCommand {
+        guard let assemblySlices = plan.assemblySlices, !assemblySlices.isEmpty else {
+            throw RenderError.exportFailed("FFmpeg assembly command build failed: no assembly slices were provided.")
+        }
+
+        var arguments = baseArguments()
+        if let threadLimit = ffmpegThreadLimit(for: selectedEncoder, plan: plan) {
+            arguments.append(contentsOf: ["-threads", String(threadLimit)])
+        }
+
+        for clip in plan.clips {
+            arguments.append(contentsOf: ["-i", clip.url.path])
+        }
+
+        var filterParts: [String] = []
+        var sliceVideoLabels: [String] = []
+        var sliceAudioLabels: [String] = []
+
+        // Assembly batches operate only on already-normalized presentation
+        // intermediates. Do not add new color, tone-map, background, or overlay
+        // filters here.
+        for slice in assemblySlices {
+            switch slice.kind {
+            case .body:
+                guard let segment = slice.segments.first else {
+                    throw RenderError.exportFailed("FFmpeg assembly command build failed: body slice \(slice.sequenceIndex) is missing its segment.")
+                }
+                let videoLabel = "sv\(slice.sequenceIndex)"
+                let audioLabel = "sa\(slice.sequenceIndex)"
+                filterParts.append(
+                    "[\(segment.clipIndex):v]trim=start=\(formatSeconds(segment.startTimeSeconds)):duration=\(formatSeconds(segment.durationSeconds))," +
+                    "setpts=PTS-STARTPTS[\(videoLabel)]"
+                )
+                filterParts.append(
+                    "[\(segment.clipIndex):a:0]atrim=start=\(formatSeconds(segment.startTimeSeconds)):duration=\(formatSeconds(segment.durationSeconds))," +
+                    "asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=\(outputChannelLayout)[\(audioLabel)]"
+                )
+                sliceVideoLabels.append(videoLabel)
+                sliceAudioLabels.append(audioLabel)
+
+            case .bridge:
+                guard slice.segments.count == 2 else {
+                    throw RenderError.exportFailed("FFmpeg assembly command build failed: bridge slice \(slice.sequenceIndex) must have exactly two segments.")
+                }
+                let left = slice.segments[0]
+                let right = slice.segments[1]
+                let leftVideoLabel = "svl\(slice.sequenceIndex)"
+                let rightVideoLabel = "svr\(slice.sequenceIndex)"
+                let videoLabel = "sv\(slice.sequenceIndex)"
+                let leftAudioLabel = "sal\(slice.sequenceIndex)"
+                let rightAudioLabel = "sar\(slice.sequenceIndex)"
+                let audioLabel = "sa\(slice.sequenceIndex)"
+
+                filterParts.append(
+                    "[\(left.clipIndex):v]trim=start=\(formatSeconds(left.startTimeSeconds)):duration=\(formatSeconds(left.durationSeconds))," +
+                    "setpts=PTS-STARTPTS[\(leftVideoLabel)]"
+                )
+                filterParts.append(
+                    "[\(right.clipIndex):v]trim=start=\(formatSeconds(right.startTimeSeconds)):duration=\(formatSeconds(right.durationSeconds))," +
+                    "setpts=PTS-STARTPTS[\(rightVideoLabel)]"
+                )
+                filterParts.append(
+                    "[\(leftVideoLabel)][\(rightVideoLabel)]xfade=transition=fade:duration=\(formatSeconds(slice.outputDurationSeconds)):offset=0[\(videoLabel)]"
+                )
+
+                filterParts.append(
+                    "[\(left.clipIndex):a:0]atrim=start=\(formatSeconds(left.startTimeSeconds)):duration=\(formatSeconds(left.durationSeconds))," +
+                    "asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=\(outputChannelLayout)[\(leftAudioLabel)]"
+                )
+                filterParts.append(
+                    "[\(right.clipIndex):a:0]atrim=start=\(formatSeconds(right.startTimeSeconds)):duration=\(formatSeconds(right.durationSeconds))," +
+                    "asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=\(outputChannelLayout)[\(rightAudioLabel)]"
+                )
+                filterParts.append(
+                    "[\(leftAudioLabel)][\(rightAudioLabel)]acrossfade=d=\(formatSeconds(slice.outputDurationSeconds)):c1=tri:c2=tri[\(audioLabel)]"
+                )
+
+                sliceVideoLabels.append(videoLabel)
+                sliceAudioLabels.append(audioLabel)
             }
         }
+
+        let concatenatedVideoLabel: String
+        let concatenatedAudioLabel: String
+        if sliceVideoLabels.count == 1,
+           let videoLabel = sliceVideoLabels.first,
+           let audioLabel = sliceAudioLabels.first {
+            concatenatedVideoLabel = videoLabel
+            concatenatedAudioLabel = audioLabel
+        } else {
+            let concatInputs = zip(sliceVideoLabels, sliceAudioLabels)
+                .map { "[\($0)][\($1)]" }
+                .joined()
+            let videoLabel = "vconcat"
+            let audioLabel = "aconcat"
+            filterParts.append(
+                "\(concatInputs)concat=n=\(sliceVideoLabels.count):v=1:a=1[\(videoLabel)][\(audioLabel)]"
+            )
+            concatenatedVideoLabel = videoLabel
+            concatenatedAudioLabel = audioLabel
+        }
+
+        let totalDurationSeconds = expectedDurationSeconds(for: plan)
+        let endFadeDurationSeconds = min(max(plan.endFadeToBlackDurationSeconds, 0), totalDurationSeconds)
+        let composedVideoLabel: String
+        if endFadeDurationSeconds > 0 {
+            let endFadeStartSeconds = max(totalDurationSeconds - endFadeDurationSeconds, 0)
+            let fadedVideoLabel = "vfaded"
+            filterParts.append(
+                "[\(concatenatedVideoLabel)]fade=t=out:st=\(formatSeconds(endFadeStartSeconds)):d=\(formatSeconds(endFadeDurationSeconds)):color=black[\(fadedVideoLabel)]"
+            )
+            composedVideoLabel = fadedVideoLabel
+        } else {
+            composedVideoLabel = concatenatedVideoLabel
+        }
+
+        filterParts.append("[\(composedVideoLabel)]format=\(finalPixelFormat(for: plan.dynamicRange, encoder: selectedEncoder))[vfinal]")
+        filterParts.append(
+            "[\(concatenatedAudioLabel)]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=\(outputChannelLayout)[afinal]"
+        )
+
+        arguments.append(contentsOf: [
+            "-filter_complex", filterParts.joined(separator: ";"),
+            "-map", "[vfinal]",
+            "-map", "[afinal]"
+        ])
+        appendEncoderArguments(for: selectedEncoder, plan: plan, arguments: &arguments)
+        appendAudioArguments(
+            for: plan,
+            outputChannelCount: outputChannelCount,
+            audioBitrate: nil,
+            arguments: &arguments
+        )
+        arguments.append(contentsOf: [
+            "-movflags", movflags(for: plan),
+            "-colorspace", outputColorspace(for: plan.dynamicRange),
+            "-color_primaries", outputColorPrimaries(for: plan.dynamicRange),
+            "-color_trc", outputColorTransfer(for: plan.dynamicRange),
+            plan.outputURL.path
+        ])
+
+        return FFmpegCommand(executableURL: executableURL, arguments: arguments)
     }
 
     private func colorNormalizeFilter(for colorInfo: ColorInfo, outputDynamicRange: DynamicRange) throws -> String {
@@ -492,7 +733,7 @@ struct FFmpegCommandBuilder {
     }
 
     private func appendEncoderArguments(for encoder: FFmpegVideoEncoder, plan: FFmpegRenderPlan, arguments: inout [String]) {
-        if plan.renderIntent == .intermediateChunk {
+        if plan.renderIntent == .intermediateChunk || plan.renderIntent == .presentationIntermediate {
             appendIntermediateEncoderArguments(for: encoder, plan: plan, arguments: &arguments)
             return
         }
@@ -605,19 +846,21 @@ struct FFmpegCommandBuilder {
                 "-ac", String(outputChannelCount),
                 "-b:a", audioBitrateArgument(audioBitrate)
             ])
-        case .intermediateChunk:
+        case .intermediateChunk, .presentationIntermediate, .finalBatch:
             arguments.append(contentsOf: [
                 "-c:a", "pcm_s16le",
                 "-ar", "48000",
                 "-ac", String(outputChannelCount)
             ])
+        case .concatCopy, .finalPackaging:
+            return
         }
     }
 
     private func ffmpegThreadLimit(for encoder: FFmpegVideoEncoder, plan: FFmpegRenderPlan) -> Int? {
         guard
             encoder == .libx265,
-            plan.renderIntent == .finalDelivery,
+            (plan.renderIntent == .finalDelivery || plan.renderIntent == .finalBatch),
             plan.dynamicRange == .hdr
         else {
             return nil
@@ -627,7 +870,7 @@ struct FFmpegCommandBuilder {
     }
 
     private func x265FrameThreadLimit(for plan: FFmpegRenderPlan) -> Int {
-        guard plan.renderIntent == .finalDelivery, plan.dynamicRange == .hdr else {
+        guard (plan.renderIntent == .finalDelivery || plan.renderIntent == .finalBatch), plan.dynamicRange == .hdr else {
             return 0
         }
 
@@ -709,6 +952,21 @@ struct FFmpegCommandBuilder {
         return "+write_colr+use_metadata_tags"
     }
 
+    private func baseArguments() -> [String] {
+        [
+            "-hide_banner",
+            "-y",
+            // Route progress to stderr so it travels over the same stream we
+            // already drain for ffmpeg logs in GUI app runs.
+            "-progress", "pipe:2",
+            "-stats_period", "0.5",
+            "-nostats",
+            "-nostdin",
+            "-ignore_unknown",
+            "-dn"
+        ]
+    }
+
     private func metadataTimestamp(from date: Date) -> String {
         let formatter = ISO8601DateFormatter()
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
@@ -781,6 +1039,7 @@ private extension FFmpegRenderPlan {
     var finalDeliveryEquivalent: FFmpegRenderPlan {
         FFmpegRenderPlan(
             clips: clips,
+            assemblySlices: assemblySlices,
             transitionDurationSeconds: transitionDurationSeconds,
             endFadeToBlackDurationSeconds: endFadeToBlackDurationSeconds,
             outputURL: outputURL,

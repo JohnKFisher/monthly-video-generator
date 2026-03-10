@@ -36,6 +36,10 @@ enum FFmpegVideoEncoder: String, Codable, Sendable {
 enum FFmpegRenderIntent: String, Equatable, Sendable {
     case finalDelivery
     case intermediateChunk
+    case presentationIntermediate
+    case finalBatch
+    case concatCopy
+    case finalPackaging
 }
 
 struct FFmpegBinary: Equatable, Sendable {
@@ -215,7 +219,7 @@ struct FFmpegCapabilities: Equatable, Sendable {
             case (.sdr, .h264, _):
                 return [.h264VideoToolbox, .libx264]
             }
-        case .intermediateChunk:
+        case .intermediateChunk, .presentationIntermediate:
             switch (dynamicRange, codec) {
             case (.hdr, .hevc), (.sdr, .hevc):
                 return [.hevcVideoToolbox, .libx265]
@@ -224,6 +228,19 @@ struct FFmpegCapabilities: Equatable, Sendable {
             case (.hdr, .h264):
                 return []
             }
+        case .finalBatch:
+            switch (dynamicRange, codec, hdrHEVCEncoderMode) {
+            case (.hdr, .hevc, _):
+                return [.libx265]
+            case (.sdr, .hevc, _):
+                return [.libx265]
+            case (.sdr, .h264, _):
+                return [.libx264]
+            case (.hdr, .h264, _):
+                return []
+            }
+        case .concatCopy, .finalPackaging:
+            return []
         }
     }
 
@@ -234,14 +251,22 @@ struct FFmpegCapabilities: Equatable, Sendable {
         renderIntent: FFmpegRenderIntent
     ) -> String {
         switch (renderIntent, dynamicRange, codec, hdrHEVCEncoderMode) {
-        case (.intermediateChunk, .hdr, .hevc, _):
+        case (.intermediateChunk, .hdr, .hevc, _), (.presentationIntermediate, .hdr, .hevc, _):
             return "HEVC Main10 intermediate encoder (hevc_videotoolbox or libx265)"
-        case (.intermediateChunk, .sdr, .hevc, _):
+        case (.intermediateChunk, .sdr, .hevc, _), (.presentationIntermediate, .sdr, .hevc, _):
             return "HEVC intermediate encoder (hevc_videotoolbox or libx265)"
-        case (.intermediateChunk, .sdr, .h264, _):
+        case (.intermediateChunk, .sdr, .h264, _), (.presentationIntermediate, .sdr, .h264, _):
             return "H.264 intermediate encoder (h264_videotoolbox or libx264)"
-        case (.intermediateChunk, .hdr, .h264, _):
+        case (.intermediateChunk, .hdr, .h264, _), (.presentationIntermediate, .hdr, .h264, _):
             return "HDR HEVC Main10 intermediate encoder (hevc_videotoolbox or libx265)"
+        case (.finalBatch, .hdr, .hevc, _):
+            return "libx265 HEVC Main10 final-batch encoder"
+        case (.finalBatch, .sdr, .hevc, _):
+            return "libx265 HEVC final-batch encoder"
+        case (.finalBatch, .sdr, .h264, _):
+            return "libx264 H.264 final-batch encoder"
+        case (.finalBatch, .hdr, .h264, _):
+            return "HDR final-batch encoder"
         case (.finalDelivery, .hdr, .hevc, .videoToolbox):
             return "hevc_videotoolbox HEVC Main10 encoder"
         case (.finalDelivery, .hdr, .hevc, .automatic):
@@ -252,6 +277,10 @@ struct FFmpegCapabilities: Equatable, Sendable {
             return "HEVC encoder (hevc_videotoolbox or libx265)"
         case (.finalDelivery, .sdr, .h264, _):
             return "H.264 encoder (h264_videotoolbox or libx264)"
+        case (.concatCopy, _, _, _):
+            return "copy"
+        case (.finalPackaging, _, _, _):
+            return "copy + AAC packaging"
         }
     }
 }
@@ -327,6 +356,33 @@ struct FFmpegRenderClip: Equatable, Sendable {
     }
 }
 
+struct FFmpegAssemblySegment: Equatable, Sendable {
+    let clipIndex: Int
+    let startTimeSeconds: Double
+    let durationSeconds: Double
+}
+
+enum FFmpegAssemblySliceKind: String, Equatable, Sendable {
+    case body
+    case bridge
+}
+
+struct FFmpegAssemblySlice: Equatable, Sendable {
+    let sequenceIndex: Int
+    let kind: FFmpegAssemblySliceKind
+    let segments: [FFmpegAssemblySegment]
+    let outputDurationSeconds: Double
+
+    var sourceClipIndices: [Int] {
+        var seen: Set<Int> = []
+        var ordered: [Int] = []
+        for segment in segments where seen.insert(segment.clipIndex).inserted {
+            ordered.append(segment.clipIndex)
+        }
+        return ordered
+    }
+}
+
 struct FFmpegCapabilityRequirements: Equatable, Sendable {
     let codec: VideoCodec
     let dynamicRange: DynamicRange
@@ -364,6 +420,7 @@ struct FFmpegHDRToSDRToneMapClip: Equatable, Sendable {
 
 struct FFmpegRenderPlan: Equatable, Sendable {
     let clips: [FFmpegRenderClip]
+    let assemblySlices: [FFmpegAssemblySlice]?
     let transitionDurationSeconds: Double
     let endFadeToBlackDurationSeconds: Double
     let outputURL: URL
@@ -382,6 +439,7 @@ struct FFmpegRenderPlan: Equatable, Sendable {
 
     init(
         clips: [FFmpegRenderClip],
+        assemblySlices: [FFmpegAssemblySlice]? = nil,
         transitionDurationSeconds: Double,
         endFadeToBlackDurationSeconds: Double = 0,
         outputURL: URL,
@@ -399,6 +457,7 @@ struct FFmpegRenderPlan: Equatable, Sendable {
         renderIntent: FFmpegRenderIntent = .finalDelivery
     ) {
         self.clips = clips
+        self.assemblySlices = assemblySlices
         self.transitionDurationSeconds = transitionDurationSeconds
         self.endFadeToBlackDurationSeconds = max(endFadeToBlackDurationSeconds, 0)
         self.outputURL = outputURL
@@ -451,7 +510,7 @@ struct FFmpegRenderPlan: Equatable, Sendable {
     }
 
     var requiresGeneratedBackgroundComposite: Bool {
-        true
+        assemblySlices == nil
     }
 }
 

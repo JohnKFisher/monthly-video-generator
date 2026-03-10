@@ -60,7 +60,7 @@ final class FFmpegHDRRenderer {
     struct FailureSnapshot: Equatable {
         let dynamicRange: DynamicRange
         let terminationSummary: String
-        let selectedEncoder: FFmpegVideoEncoder
+        let selectedEncoder: String
         let binarySource: FFmpegBinarySource
         let binaryPath: String
         let renderIntent: FFmpegRenderIntent
@@ -78,6 +78,28 @@ final class FFmpegHDRRenderer {
         let stalledOutTimeMicroseconds: Int64?
         let stalledOutputSizeBytes: UInt64?
         let stderrTail: [String]
+    }
+
+    struct CommandExecutionContext {
+        let dynamicRange: DynamicRange
+        let renderIntent: FFmpegRenderIntent
+        let outputURL: URL
+        let clipCount: Int
+        let chapterCount: Int
+        let renderSize: CGSize
+        let frameRate: Int
+        let bitrateMode: BitrateMode
+        let videoCodec: VideoCodec
+        let audioBitrate: Int?
+        let audioLayout: AudioLayout
+        let expectedDurationSeconds: Double
+        let encoderDescription: String
+        let profileSummary: String
+        let requiresHDRToSDRToneMapping: Bool
+        let hdrToSDRToneMapClips: [FFmpegHDRToSDRToneMapClip]
+        let captureDateOverlayCount: Int
+        let summaryLine: String
+        let endpointLine: String?
     }
 
     private final class ActivityTracker: @unchecked Sendable {
@@ -180,25 +202,74 @@ final class FFmpegHDRRenderer {
         statusHandler: @escaping (String) -> Void = { _ in },
         systemFFmpegFallbackHandler: SystemFFmpegFallbackHandler? = nil
     ) async throws -> FFmpegBinaryResolution {
-        let callbacks = CallbackRelay(
+        let resolution = try await resolveBinary(
+            plan: plan,
+            binaryMode: binaryMode,
             diagnostics: diagnostics,
-            progress: progressHandler,
-            status: statusHandler
+            statusHandler: statusHandler,
+            systemFFmpegFallbackHandler: systemFFmpegFallbackHandler
         )
-        if fileManager.fileExists(atPath: plan.outputURL.path) {
-            try fileManager.removeItem(at: plan.outputURL)
-        }
+        try await render(
+            plan: plan,
+            resolution: resolution,
+            diagnostics: diagnostics,
+            progressHandler: progressHandler,
+            statusHandler: statusHandler
+        )
+        return resolution
+    }
 
+    func resolveBinary(
+        plan: FFmpegRenderPlan,
+        binaryMode: HDRFFmpegBinaryMode,
+        diagnostics: @escaping (String) -> Void,
+        statusHandler: @escaping (String) -> Void = { _ in },
+        systemFFmpegFallbackHandler: SystemFFmpegFallbackHandler? = nil
+    ) async throws -> FFmpegBinaryResolution {
         let resolution = try resolver.resolve(
             mode: binaryMode,
             plan: plan,
             diagnostics: diagnostics
         )
+        return try await confirmResolvedBinary(
+            resolution,
+            binaryMode: binaryMode,
+            statusHandler: statusHandler,
+            systemFFmpegFallbackHandler: systemFFmpegFallbackHandler
+        )
+    }
+
+    func resolveBinary(
+        requirements: FFmpegCapabilityRequirements,
+        binaryMode: HDRFFmpegBinaryMode,
+        diagnostics: @escaping (String) -> Void,
+        statusHandler: @escaping (String) -> Void = { _ in },
+        systemFFmpegFallbackHandler: SystemFFmpegFallbackHandler? = nil
+    ) async throws -> FFmpegBinaryResolution {
+        let resolution = try resolver.resolve(
+            mode: binaryMode,
+            requirements: requirements,
+            diagnostics: diagnostics
+        )
+        return try await confirmResolvedBinary(
+            resolution,
+            binaryMode: binaryMode,
+            statusHandler: statusHandler,
+            systemFFmpegFallbackHandler: systemFFmpegFallbackHandler
+        )
+    }
+
+    private func confirmResolvedBinary(
+        _ resolution: FFmpegBinaryResolution,
+        binaryMode: HDRFFmpegBinaryMode,
+        statusHandler: @escaping (String) -> Void,
+        systemFFmpegFallbackHandler: SystemFFmpegFallbackHandler?
+    ) async throws -> FFmpegBinaryResolution {
         if binaryMode == .bundledPreferred,
            resolution.selectedBinary.source == .system,
            let fallbackReason = resolution.fallbackReason,
            let systemFFmpegFallbackHandler {
-            callbacks.updateStatus("Awaiting system FFmpeg fallback confirmation...")
+            statusHandler("Awaiting system FFmpeg fallback confirmation...")
             let approved = await systemFFmpegFallbackHandler(
                 SystemFFmpegFallbackRequest(reason: fallbackReason)
             )
@@ -206,6 +277,16 @@ final class FFmpegHDRRenderer {
                 throw RenderError.exportFailed("Render cancelled because system FFmpeg fallback was not approved.")
             }
         }
+        return resolution
+    }
+
+    func render(
+        plan: FFmpegRenderPlan,
+        resolution: FFmpegBinaryResolution,
+        diagnostics: @escaping (String) -> Void,
+        progressHandler: @escaping (Double) -> Void,
+        statusHandler: @escaping (String) -> Void = { _ in }
+    ) async throws {
         guard let selectedEncoder = resolution.selectedCapabilities.preferredEncoder(
             for: plan.videoCodec,
             dynamicRange: plan.dynamicRange,
@@ -217,6 +298,33 @@ final class FFmpegHDRRenderer {
             )
         }
         let command = try commandBuilder.buildCommand(plan: plan, resolution: resolution)
+        try await execute(
+            command: command,
+            resolution: resolution,
+            context: makeExecutionContext(for: plan, selectedEncoder: selectedEncoder),
+            diagnostics: diagnostics,
+            progressHandler: progressHandler,
+            statusHandler: statusHandler
+        )
+    }
+
+    func execute(
+        command: FFmpegCommand,
+        resolution: FFmpegBinaryResolution,
+        context: CommandExecutionContext,
+        diagnostics: @escaping (String) -> Void,
+        progressHandler: @escaping (Double) -> Void,
+        statusHandler: @escaping (String) -> Void = { _ in }
+    ) async throws {
+        let callbacks = CallbackRelay(
+            diagnostics: diagnostics,
+            progress: progressHandler,
+            status: statusHandler
+        )
+        if fileManager.fileExists(atPath: context.outputURL.path) {
+            try fileManager.removeItem(at: context.outputURL)
+        }
+
         callbacks.log("FFmpeg version: \(resolution.selectedCapabilities.versionDescription)")
         if let systemCaps = resolution.systemCapabilities {
             callbacks.log(
@@ -232,36 +340,28 @@ final class FFmpegHDRRenderer {
                 "overlay=\(bundledCaps.hasOverlay), libx265=\(bundledCaps.hasLibx265), hevc_videotoolbox=\(bundledCaps.hasHEVCVideoToolbox)"
             )
         }
-        if plan.requiresHDRToSDRToneMapping {
+        if context.requiresHDRToSDRToneMapping {
             callbacks.log(
-                "HDR-to-SDR tone mapping enabled: true (operator=mobius:desat=2, hlg_npl=\(FFmpegCommandBuilder.hlgSDRNominalPeak), clips=\(plan.hdrToSDRToneMapClips.count))"
+                "HDR-to-SDR tone mapping enabled: true (operator=mobius:desat=2, hlg_npl=\(FFmpegCommandBuilder.hlgSDRNominalPeak), clips=\(context.hdrToSDRToneMapClips.count))"
             )
-            for clip in plan.hdrToSDRToneMapClips {
+            for clip in context.hdrToSDRToneMapClips {
                 callbacks.log("HDR-to-SDR tone-map clip: \(clip.sourceDescription) [transfer=\(clip.transferFlavor.rawValue)]")
             }
         } else {
             callbacks.log("HDR-to-SDR tone mapping enabled: false")
         }
-        callbacks.log("FFmpeg render intent: \(plan.renderIntent.rawValue)")
-        callbacks.log("Capture-date overlays enabled: \(plan.requiresCaptureDateOverlay) (clips=\(plan.clips.filter { $0.captureDateOverlayURL != nil }.count))")
-        callbacks.log(
-            "FFmpeg plan summary: output=\(plan.outputURL.path), clips=\(plan.clips.count), chapters=\(plan.chapters.count), " +
-            "renderSize=\(Int(plan.renderSize.width.rounded()))x\(Int(plan.renderSize.height.rounded())), frameRate=\(plan.frameRate), " +
-            "container=\(plan.container.rawValue), codec=\(plan.videoCodec.rawValue), dynamicRange=\(plan.dynamicRange.rawValue), " +
-            "audioLayout=\(plan.audioLayout.rawValue), expectedDuration=\(String(format: "%.2fs", commandBuilder.expectedDurationSeconds(for: plan)))"
-        )
-        if let firstClip = plan.clips.first, let lastClip = plan.clips.last {
-            callbacks.log(
-                "FFmpeg clip endpoints: first=\(firstClip.sourceDescription) [\(String(format: "%.2fs", firstClip.durationSeconds))], " +
-                "last=\(lastClip.sourceDescription) [\(String(format: "%.2fs", lastClip.durationSeconds))]"
-            )
+        callbacks.log("FFmpeg render intent: \(context.renderIntent.rawValue)")
+        callbacks.log("Capture-date overlays enabled: \(context.captureDateOverlayCount > 0) (clips=\(context.captureDateOverlayCount))")
+        callbacks.log(context.summaryLine)
+        if let endpointLine = context.endpointLine {
+            callbacks.log(endpointLine)
         }
         callbacks.log("FFmpeg selected binary: \(resolution.selectedBinary.ffmpegURL.path) [\(resolution.selectedBinary.source.rawValue)]")
-        callbacks.log("FFmpeg encoder profile: \(commandBuilder.profileSummary(for: plan, encoder: selectedEncoder))")
-        if plan.renderIntent == .intermediateChunk,
-           selectedEncoder != .hevcVideoToolbox,
+        callbacks.log("FFmpeg encoder profile: \(context.profileSummary)")
+        if (context.renderIntent == .intermediateChunk || context.renderIntent == .presentationIntermediate),
+           context.encoderDescription != FFmpegVideoEncoder.hevcVideoToolbox.rawValue,
            resolution.selectedCapabilities.hasHEVCVideoToolbox == false {
-            callbacks.log("FFmpeg intermediate encoder fallback: hevc_videotoolbox unavailable; using \(selectedEncoder.rawValue).")
+            callbacks.log("FFmpeg intermediate encoder fallback: hevc_videotoolbox unavailable; using \(context.encoderDescription).")
         }
         callbacks.log("FFmpeg command: \(command.printableCommand)")
         if let fallbackReason = resolution.fallbackReason {
@@ -281,16 +381,16 @@ final class FFmpegHDRRenderer {
         Self.closeUnusedPipeWriteEnds(stdoutPipe: stdoutPipe, stderrPipe: stderrPipe)
         setCurrentProcess(process)
         callbacks.report(0.01)
-        callbacks.updateStatus("\(plan.dynamicRange == .hdr ? "HDR" : "SDR") encode: starting...")
+        callbacks.updateStatus("\(context.dynamicRange == .hdr ? "HDR" : "SDR") encode: starting...")
 
         defer {
             clearCurrentProcess(process)
         }
 
-        let totalDurationMicroseconds = Int64(commandBuilder.expectedDurationSeconds(for: plan) * 1_000_000)
-        let estimatedOutputBytes = estimatedFinalOutputBytes(for: plan)
+        let totalDurationMicroseconds = Int64(context.expectedDurationSeconds * 1_000_000)
+        let estimatedOutputBytes = estimatedFinalOutputBytes(for: context)
         let renderStartedAt = Date()
-        let activityTracker = ActivityTracker(initialOutputSizeBytes: currentOutputSizeBytes(at: plan.outputURL) ?? 0)
+        let activityTracker = ActivityTracker(initialOutputSizeBytes: currentOutputSizeBytes(at: context.outputURL) ?? 0)
 
         let stdoutHandle = stdoutPipe.fileHandleForReading
         let stderrHandle = stderrPipe.fileHandleForReading
@@ -302,7 +402,7 @@ final class FFmpegHDRRenderer {
         async let stderrTask: [String] = Self.consumeStderr(
             handle: stderrHandle,
             callbacks: callbacks,
-            dynamicRange: plan.dynamicRange,
+            dynamicRange: context.dynamicRange,
             activityTracker: activityTracker,
             totalDurationMicroseconds: totalDurationMicroseconds,
             estimatedOutputBytes: estimatedOutputBytes,
@@ -313,8 +413,8 @@ final class FFmpegHDRRenderer {
             try Task.checkCancellation()
             return try await waitForTermination(
                 of: process,
-                outputURL: plan.outputURL,
-                dynamicRange: plan.dynamicRange,
+                outputURL: context.outputURL,
+                dynamicRange: context.dynamicRange,
                 activityTracker: activityTracker,
                 callbacks: callbacks,
                 totalDurationMicroseconds: totalDurationMicroseconds,
@@ -335,17 +435,17 @@ final class FFmpegHDRRenderer {
             let terminationSummary = terminationDescription(status: termination.status, reason: termination.reason)
             let activitySnapshot = activityTracker.snapshot()
             let failureSnapshot = FailureSnapshot(
-                dynamicRange: plan.dynamicRange,
+                dynamicRange: context.dynamicRange,
                 terminationSummary: terminationSummary,
-                selectedEncoder: selectedEncoder,
+                selectedEncoder: context.encoderDescription,
                 binarySource: resolution.selectedBinary.source,
                 binaryPath: resolution.selectedBinary.ffmpegURL.path,
-                renderIntent: plan.renderIntent,
-                outputPath: plan.outputURL.path,
-                clipCount: plan.clips.count,
-                chapterCount: plan.chapters.count,
-                renderSize: plan.renderSize,
-                frameRate: plan.frameRate,
+                renderIntent: context.renderIntent,
+                outputPath: context.outputURL.path,
+                clipCount: context.clipCount,
+                chapterCount: context.chapterCount,
+                renderSize: context.renderSize,
+                frameRate: context.frameRate,
                 elapsedSeconds: Date().timeIntervalSince(renderStartedAt),
                 latestOutTimeMicroseconds: activitySnapshot.latestOutTimeMicroseconds,
                 latestOutputSizeBytes: activitySnapshot.latestOutputSizeBytes,
@@ -366,14 +466,55 @@ final class FFmpegHDRRenderer {
         let finalSnapshot = activityTracker.snapshot()
         callbacks.updateStatus(
             Self.statusLine(
-                dynamicRange: plan.dynamicRange,
+                dynamicRange: context.dynamicRange,
                 progress: 1.0,
                 elapsed: Date().timeIntervalSince(renderStartedAt),
                 outputSizeBytes: finalSnapshot.latestOutputSizeBytes,
                 speed: nil
             )
         )
-        return resolution
+    }
+
+    private func makeExecutionContext(
+        for plan: FFmpegRenderPlan,
+        selectedEncoder: FFmpegVideoEncoder
+    ) -> CommandExecutionContext {
+        let overlayCount = plan.clips.filter { $0.captureDateOverlayURL != nil }.count
+        let expectedDurationSeconds = commandBuilder.expectedDurationSeconds(for: plan)
+        let endpointLine: String?
+        if let firstClip = plan.clips.first, let lastClip = plan.clips.last {
+            endpointLine =
+                "FFmpeg clip endpoints: first=\(firstClip.sourceDescription) [\(String(format: "%.2fs", firstClip.durationSeconds))], " +
+                "last=\(lastClip.sourceDescription) [\(String(format: "%.2fs", lastClip.durationSeconds))]"
+        } else {
+            endpointLine = nil
+        }
+
+        return CommandExecutionContext(
+            dynamicRange: plan.dynamicRange,
+            renderIntent: plan.renderIntent,
+            outputURL: plan.outputURL,
+            clipCount: plan.clips.count,
+            chapterCount: plan.chapters.count,
+            renderSize: plan.renderSize,
+            frameRate: plan.frameRate,
+            bitrateMode: plan.bitrateMode,
+            videoCodec: plan.videoCodec,
+            audioBitrate: estimatedAudioBitrate(for: plan),
+            audioLayout: plan.audioLayout,
+            expectedDurationSeconds: expectedDurationSeconds,
+            encoderDescription: selectedEncoder.rawValue,
+            profileSummary: commandBuilder.profileSummary(for: plan, encoder: selectedEncoder),
+            requiresHDRToSDRToneMapping: plan.requiresHDRToSDRToneMapping,
+            hdrToSDRToneMapClips: plan.hdrToSDRToneMapClips,
+            captureDateOverlayCount: overlayCount,
+            summaryLine:
+                "FFmpeg plan summary: output=\(plan.outputURL.path), clips=\(plan.clips.count), chapters=\(plan.chapters.count), " +
+                "renderSize=\(Int(plan.renderSize.width.rounded()))x\(Int(plan.renderSize.height.rounded())), frameRate=\(plan.frameRate), " +
+                "container=\(plan.container.rawValue), codec=\(plan.videoCodec.rawValue), dynamicRange=\(plan.dynamicRange.rawValue), " +
+                "audioLayout=\(plan.audioLayout.rawValue), expectedDuration=\(String(format: "%.2fs", expectedDurationSeconds))",
+            endpointLine: endpointLine
+        )
     }
 
     private static func consumeStdout(
@@ -684,7 +825,7 @@ final class FFmpegHDRRenderer {
             lines.append("FFmpeg \(rangeLabel) render failed (\(snapshot.terminationSummary)).")
         }
 
-        lines.append("Encoder: \(snapshot.selectedEncoder.rawValue)")
+        lines.append("Encoder: \(snapshot.selectedEncoder)")
         lines.append("Binary: \(snapshot.binarySource.rawValue) (\(snapshot.binaryPath))")
         lines.append(
             "Plan: intent=\(snapshot.renderIntent.rawValue) | clips=\(snapshot.clipCount) | chapters=\(snapshot.chapterCount) | " +
@@ -712,7 +853,7 @@ final class FFmpegHDRRenderer {
 
     static func failureDiagnosticLines(from snapshot: FailureSnapshot) -> [String] {
         var lines: [String] = [
-            "FFmpeg failure summary: encoder=\(snapshot.selectedEncoder.rawValue), binary=\(snapshot.binarySource.rawValue), termination=\(snapshot.terminationSummary)",
+            "FFmpeg failure summary: encoder=\(snapshot.selectedEncoder), binary=\(snapshot.binarySource.rawValue), termination=\(snapshot.terminationSummary)",
             "FFmpeg failure plan: intent=\(snapshot.renderIntent.rawValue), clips=\(snapshot.clipCount), chapters=\(snapshot.chapterCount), " +
                 "renderSize=\(Int(snapshot.renderSize.width.rounded()))x\(Int(snapshot.renderSize.height.rounded())), fps=\(snapshot.frameRate), output=\(snapshot.outputPath)",
             "FFmpeg failure progress: elapsed=\(formatElapsed(snapshot.elapsedSeconds)), last_out_time=\(formatFFmpegOutTime(snapshot.latestOutTimeMicroseconds)), " +
@@ -916,18 +1057,32 @@ final class FFmpegHDRRenderer {
         return min(elapsed / 240.0 * 0.05, 0.05)
     }
 
-    private func estimatedFinalOutputBytes(for plan: FFmpegRenderPlan) -> UInt64 {
-        let durationSeconds = max(commandBuilder.expectedDurationSeconds(for: plan), 0.01)
-        let pixelsPerFrame = max(plan.renderSize.width * plan.renderSize.height, 1)
+    private func estimatedFinalOutputBytes(for context: CommandExecutionContext) -> UInt64 {
+        let durationSeconds = max(context.expectedDurationSeconds, 0.01)
+        let pixelsPerFrame = max(context.renderSize.width * context.renderSize.height, 1)
         let bitsPerPixel = estimatedBitsPerPixel(
-            for: plan.bitrateMode,
-            codec: plan.videoCodec,
-            dynamicRange: plan.dynamicRange
+            for: context.bitrateMode,
+            codec: context.videoCodec,
+            dynamicRange: context.dynamicRange
         )
-        let videoBits = pixelsPerFrame * Double(max(plan.frameRate, 24)) * durationSeconds * bitsPerPixel
-        let audioBits = Double(plan.audioLayout.aacBitrate ?? 192_000) * durationSeconds
+        let videoBits = pixelsPerFrame * Double(max(context.frameRate, 24)) * durationSeconds * bitsPerPixel
+        let audioBits = Double(context.audioBitrate ?? 192_000) * durationSeconds
         let totalBytes = max((videoBits + audioBits) / 8.0, 1)
         return UInt64(totalBytes.rounded())
+    }
+
+    private func estimatedAudioBitrate(for plan: FFmpegRenderPlan) -> Int {
+        let outputChannelCount = max(plan.audioLayout.outputChannelCount ?? 2, 1)
+        switch plan.renderIntent {
+        case .finalDelivery:
+            return plan.audioLayout.aacBitrate ?? 192_000
+        case .intermediateChunk, .presentationIntermediate, .finalBatch:
+            return 48_000 * outputChannelCount * 16
+        case .concatCopy:
+            return 48_000 * outputChannelCount * 16
+        case .finalPackaging:
+            return plan.audioLayout.aacBitrate ?? 192_000
+        }
     }
 
     private func estimatedBitsPerPixel(for mode: BitrateMode, codec: VideoCodec, dynamicRange: DynamicRange) -> Double {

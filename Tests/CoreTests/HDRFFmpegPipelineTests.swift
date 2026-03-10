@@ -1116,7 +1116,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         let snapshot = FFmpegHDRRenderer.FailureSnapshot(
             dynamicRange: .hdr,
             terminationSummary: "signal 9 (SIGKILL)",
-            selectedEncoder: .libx265,
+            selectedEncoder: "libx265",
             binarySource: .bundled,
             binaryPath: "/tmp/ffmpeg",
             renderIntent: .finalDelivery,

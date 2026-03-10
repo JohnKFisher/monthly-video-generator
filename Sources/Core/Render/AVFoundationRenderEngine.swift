@@ -8,7 +8,7 @@ public final class AVFoundationRenderEngine {
     private let captureDateOverlayFactory: CaptureDateOverlayFactory
     private let ffmpegHDRRenderer: FFmpegHDRRenderer
     private let ffmpegCommandBuilder: FFmpegCommandBuilder
-    private let ffmpegChunkPipelineBuilder: FFmpegHDRChunkPipelineBuilder
+    private let ffmpegProgressivePipelineBuilder: FFmpegHDRProgressivePipelineBuilder
 
     public init(
         stillImageClipFactory: StillImageClipFactory = StillImageClipFactory(),
@@ -18,7 +18,7 @@ public final class AVFoundationRenderEngine {
         self.captureDateOverlayFactory = captureDateOverlayFactory
         self.ffmpegHDRRenderer = FFmpegHDRRenderer()
         self.ffmpegCommandBuilder = FFmpegCommandBuilder()
-        self.ffmpegChunkPipelineBuilder = FFmpegHDRChunkPipelineBuilder()
+        self.ffmpegProgressivePipelineBuilder = FFmpegHDRProgressivePipelineBuilder()
     }
 
     public func cancelCurrentRender() {
@@ -152,78 +152,55 @@ public final class AVFoundationRenderEngine {
             )
 
             let binaryResolution: FFmpegBinaryResolution
-            if let chunkExecutionPlan = ffmpegChunkPipelineBuilder.makeExecutionPlan(
+            if let progressiveExecutionPlan = ffmpegProgressivePipelineBuilder.makeExecutionPlan(
                 for: ffmpegPlan,
-                intermediateOutputURL: { _ in
+                presentationOutputURL: { _ in
+                    let url = self.temporaryRenderURL(fileType: .mov)
+                    temporaryURLs.append(url)
+                    return url
+                },
+                batchOutputURL: { _ in
+                    let url = self.temporaryRenderURL(fileType: .mov)
+                    temporaryURLs.append(url)
+                    return url
+                },
+                concatListURL: {
+                    let url = self.temporaryArtifactURL(pathExtension: "ffconcat")
+                    temporaryURLs.append(url)
+                    return url
+                },
+                concatOutputURL: {
                     let url = self.temporaryRenderURL(fileType: .mov)
                     temporaryURLs.append(url)
                     return url
                 }
             ) {
                 diagnostics.add(
-                    "HDR chunking enabled: true (chunks=\(chunkExecutionPlan.chunkPlan.chunks.count), " +
-                    "maxClipsPerChunk=\(ffmpegChunkPipelineBuilder.planner.maxClipsPerChunk), " +
-                    "maxChunkDuration=\(String(format: "%.2fs", ffmpegChunkPipelineBuilder.planner.maxChunkDurationSeconds)))"
+                    "HDR progressive batching enabled: true (activationChunks=\(progressiveExecutionPlan.activationChunkPlan.chunks.count), " +
+                    "presentationIntermediates=\(progressiveExecutionPlan.presentationPlans.count), " +
+                    "slices=\(progressiveExecutionPlan.slices.count), " +
+                    "finalBatches=\(progressiveExecutionPlan.batchPlans.count), " +
+                    "maxBatchClips=\(ffmpegProgressivePipelineBuilder.maxUniqueSourceClipsPerBatch), " +
+                    "maxBatchDuration=\(String(format: "%.2fs", ffmpegProgressivePipelineBuilder.maxBatchDurationSeconds)))"
                 )
-                for chunk in chunkExecutionPlan.chunkPlan.chunks {
+                for batch in progressiveExecutionPlan.batchPlans {
                     diagnostics.add(
-                        "HDR chunk plan: index=\(chunk.sequenceIndex + 1), clips=\(chunk.clips.count), " +
-                        "expectedDuration=\(String(format: "%.2fs", chunk.expectedDurationSeconds)), " +
-                        "output=\(chunkExecutionPlan.chunkPlans[chunk.sequenceIndex].outputURL.path)"
+                        "HDR final batch plan: index=\(batch.sequenceIndex + 1), sourceClips=\(batch.sourceClipIndices.count), " +
+                        "slices=\(batch.plan.assemblySlices?.count ?? 0), expectedDuration=\(String(format: "%.2fs", ffmpegCommandBuilder.expectedDurationSeconds(for: batch.plan))), " +
+                        "output=\(batch.plan.outputURL.path)"
                     )
                 }
-                reportStatus("Configuring chunked HDR encode...", handler: statusHandler)
-
-                let stagePlans = chunkExecutionPlan.chunkPlans + [chunkExecutionPlan.finalPlan]
-                let stageWeights = stagePlans.map { ffmpegCommandBuilder.expectedDurationSeconds(for: $0) }
-                let totalWeight = max(stageWeights.reduce(0, +), 0.01)
-                var completedWeight = 0.0
-
-                for (index, chunkPlan) in chunkExecutionPlan.chunkPlans.enumerated() {
-                    let stageWeight = stageWeights[index]
-                    let progressRange = progressRangeForFFmpegStage(
-                        completedWeight: completedWeight,
-                        stageWeight: stageWeight,
-                        totalWeight: totalWeight
-                    )
-                    diagnostics.add(
-                        "HDR chunk render started: index=\(index + 1)/\(chunkExecutionPlan.chunkPlans.count), output=\(chunkPlan.outputURL.path)"
-                    )
-                    _ = try await executeFFmpegPlan(
-                        chunkPlan,
-                        binaryMode: exportProfile.hdrFFmpegBinaryMode,
-                        diagnostics: diagnostics,
-                        progressRange: progressRange,
-                        statusPrefix: "HDR chunk \(index + 1)/\(chunkExecutionPlan.chunkPlans.count)",
-                        progressHandler: progressHandler,
-                        statusHandler: statusHandler,
-                        systemFFmpegFallbackHandler: systemFFmpegFallbackHandler
-                    )
-                    diagnostics.add(
-                        "HDR chunk render completed: index=\(index + 1)/\(chunkExecutionPlan.chunkPlans.count), output=\(chunkPlan.outputURL.path)"
-                    )
-                    completedWeight += stageWeight
-                }
-
-                let finalStageWeight = stageWeights.last ?? 0.01
-                diagnostics.add(
-                    "HDR final merge started: clips=\(chunkExecutionPlan.finalPlan.clips.count), output=\(chunkExecutionPlan.finalPlan.outputURL.path)"
-                )
-                binaryResolution = try await executeFFmpegPlan(
-                    chunkExecutionPlan.finalPlan,
+                reportStatus("Configuring progressive HDR encode...", handler: statusHandler)
+                binaryResolution = try await executeProgressiveFFmpegPlan(
+                    ffmpegPlan,
+                    executionPlan: progressiveExecutionPlan,
                     binaryMode: exportProfile.hdrFFmpegBinaryMode,
                     diagnostics: diagnostics,
-                    progressRange: progressRangeForFFmpegStage(
-                        completedWeight: completedWeight,
-                        stageWeight: finalStageWeight,
-                        totalWeight: totalWeight
-                    ),
-                    statusPrefix: "HDR final merge",
+                    temporaryURLs: &temporaryURLs,
                     progressHandler: progressHandler,
                     statusHandler: statusHandler,
                     systemFFmpegFallbackHandler: systemFFmpegFallbackHandler
                 )
-                diagnostics.add("HDR final merge completed: output=\(chunkExecutionPlan.finalPlan.outputURL.path)")
             } else {
                 let chunkingReason: String
                 if ffmpegPlan.dynamicRange != .hdr || ffmpegPlan.videoCodec != .hevc {
@@ -231,7 +208,7 @@ public final class AVFoundationRenderEngine {
                 } else {
                     chunkingReason = "single_pass_plan"
                 }
-                diagnostics.add("HDR chunking enabled: false (reason=\(chunkingReason))")
+                diagnostics.add("HDR progressive batching enabled: false (reason=\(chunkingReason))")
                 binaryResolution = try await executeFFmpegPlan(
                     ffmpegPlan,
                     binaryMode: exportProfile.hdrFFmpegBinaryMode,
@@ -426,6 +403,298 @@ public final class AVFoundationRenderEngine {
             },
             systemFFmpegFallbackHandler: systemFFmpegFallbackHandler
         )
+    }
+
+    private func executeFFmpegPlan(
+        _ plan: FFmpegRenderPlan,
+        resolution: FFmpegBinaryResolution,
+        diagnostics: RenderDiagnostics,
+        progressRange: ClosedRange<Double>,
+        statusPrefix: String?,
+        progressHandler: (@MainActor @Sendable (Double) -> Void)?,
+        statusHandler: (@MainActor @Sendable (String) -> Void)?
+    ) async throws {
+        try await ffmpegHDRRenderer.render(
+            plan: plan,
+            resolution: resolution,
+            diagnostics: { diagnostics.add($0) },
+            progressHandler: { ffmpegProgress in
+                let mapped = progressRange.lowerBound + min(max(ffmpegProgress, 0), 1) * (progressRange.upperBound - progressRange.lowerBound)
+                self.reportProgress(mapped, handler: progressHandler)
+            },
+            statusHandler: { ffmpegStatus in
+                let status = statusPrefix.map { "\($0): \(ffmpegStatus)" } ?? ffmpegStatus
+                self.reportStatus(status, handler: statusHandler)
+            }
+        )
+    }
+
+    private func executeFFmpegCommand(
+        _ command: FFmpegCommand,
+        context: FFmpegHDRRenderer.CommandExecutionContext,
+        resolution: FFmpegBinaryResolution,
+        diagnostics: RenderDiagnostics,
+        progressRange: ClosedRange<Double>,
+        statusPrefix: String?,
+        progressHandler: (@MainActor @Sendable (Double) -> Void)?,
+        statusHandler: (@MainActor @Sendable (String) -> Void)?
+    ) async throws {
+        try await ffmpegHDRRenderer.execute(
+            command: command,
+            resolution: resolution,
+            context: context,
+            diagnostics: { diagnostics.add($0) },
+            progressHandler: { ffmpegProgress in
+                let mapped = progressRange.lowerBound + min(max(ffmpegProgress, 0), 1) * (progressRange.upperBound - progressRange.lowerBound)
+                self.reportProgress(mapped, handler: progressHandler)
+            },
+            statusHandler: { ffmpegStatus in
+                let status = statusPrefix.map { "\($0): \(ffmpegStatus)" } ?? ffmpegStatus
+                self.reportStatus(status, handler: statusHandler)
+            }
+        )
+    }
+
+    private func executeProgressiveFFmpegPlan(
+        _ finalPlan: FFmpegRenderPlan,
+        executionPlan: FFmpegHDRProgressiveExecutionPlan,
+        binaryMode: HDRFFmpegBinaryMode,
+        diagnostics: RenderDiagnostics,
+        temporaryURLs: inout [URL],
+        progressHandler: (@MainActor @Sendable (Double) -> Void)?,
+        statusHandler: (@MainActor @Sendable (String) -> Void)?,
+        systemFFmpegFallbackHandler: SystemFFmpegFallbackHandler?
+    ) async throws -> FFmpegBinaryResolution {
+        let resolution = try await ffmpegHDRRenderer.resolveBinary(
+            requirements: progressiveCapabilityRequirements(for: finalPlan),
+            binaryMode: binaryMode,
+            diagnostics: { diagnostics.add($0) },
+            statusHandler: { status in
+                self.reportStatus(status, handler: statusHandler)
+            },
+            systemFFmpegFallbackHandler: systemFFmpegFallbackHandler
+        )
+
+        let finalDuration = ffmpegCommandBuilder.expectedDurationSeconds(for: finalPlan)
+        let presentationWeights = executionPlan.presentationPlans.map { ffmpegCommandBuilder.expectedDurationSeconds(for: $0) }
+        let batchWeights = executionPlan.batchPlans.map { ffmpegCommandBuilder.expectedDurationSeconds(for: $0.plan) }
+        let concatWeight = max(finalDuration * 0.02, 5)
+        let packagingWeight = max(finalDuration * 0.05, 5)
+        let totalWeight = max(
+            presentationWeights.reduce(0, +) +
+                batchWeights.reduce(0, +) +
+                concatWeight +
+                packagingWeight,
+            0.01
+        )
+        var completedWeight = 0.0
+
+        diagnostics.add(
+            "HDR progressive execution started: presentationIntermediates=\(executionPlan.presentationPlans.count), " +
+            "finalBatches=\(executionPlan.batchPlans.count), concatList=\(executionPlan.concatListURL.path), concatOutput=\(executionPlan.concatOutputURL.path)"
+        )
+
+        for (index, plan) in executionPlan.presentationPlans.enumerated() {
+            let stageWeight = presentationWeights[index]
+            diagnostics.add(
+                "HDR presentation intermediate started: index=\(index + 1)/\(executionPlan.presentationPlans.count), output=\(plan.outputURL.path)"
+            )
+            try await executeFFmpegPlan(
+                plan,
+                resolution: resolution,
+                diagnostics: diagnostics,
+                progressRange: progressRangeForFFmpegStage(
+                    completedWeight: completedWeight,
+                    stageWeight: stageWeight,
+                    totalWeight: totalWeight
+                ),
+                statusPrefix: "HDR prep \(index + 1)/\(executionPlan.presentationPlans.count)",
+                progressHandler: progressHandler,
+                statusHandler: statusHandler
+            )
+            diagnostics.add(
+                "HDR presentation intermediate completed: index=\(index + 1)/\(executionPlan.presentationPlans.count), output=\(plan.outputURL.path)"
+            )
+            completedWeight += stageWeight
+        }
+
+        for batch in executionPlan.batchPlans {
+            let stageWeight = batchWeights[batch.sequenceIndex]
+            diagnostics.add(
+                "HDR final batch started: index=\(batch.sequenceIndex + 1)/\(executionPlan.batchPlans.count), " +
+                "sourceClips=\(batch.sourceClipIndices.count), output=\(batch.plan.outputURL.path)"
+            )
+            try await executeFFmpegPlan(
+                batch.plan,
+                resolution: resolution,
+                diagnostics: diagnostics,
+                progressRange: progressRangeForFFmpegStage(
+                    completedWeight: completedWeight,
+                    stageWeight: stageWeight,
+                    totalWeight: totalWeight
+                ),
+                statusPrefix: "HDR final batch \(batch.sequenceIndex + 1)/\(executionPlan.batchPlans.count)",
+                progressHandler: progressHandler,
+                statusHandler: statusHandler
+            )
+            diagnostics.add(
+                "HDR final batch completed: index=\(batch.sequenceIndex + 1)/\(executionPlan.batchPlans.count), output=\(batch.plan.outputURL.path)"
+            )
+            completedWeight += stageWeight
+
+            for sourceClipIndex in batch.sourceClipIndices
+                where executionPlan.lastBatchIndexBySourceClip[sourceClipIndex] == batch.sequenceIndex {
+                let presentationURL = executionPlan.presentationPlans[sourceClipIndex].outputURL
+                removeTemporaryFile(presentationURL, temporaryURLs: &temporaryURLs, diagnostics: diagnostics)
+            }
+        }
+
+        try writeConcatFileList(
+            batchPlans: executionPlan.batchPlans,
+            to: executionPlan.concatListURL
+        )
+        diagnostics.add("HDR concat list prepared: \(executionPlan.concatListURL.path) (batches=\(executionPlan.batchPlans.count))")
+
+        let concatCommand = ffmpegCommandBuilder.buildConcatCommand(
+            executableURL: resolution.selectedBinary.ffmpegURL,
+            concatListURL: executionPlan.concatListURL,
+            outputURL: executionPlan.concatOutputURL
+        )
+        try await executeFFmpegCommand(
+            concatCommand,
+            context: FFmpegHDRRenderer.CommandExecutionContext(
+                dynamicRange: finalPlan.dynamicRange,
+                renderIntent: .concatCopy,
+                outputURL: executionPlan.concatOutputURL,
+                clipCount: executionPlan.batchPlans.count,
+                chapterCount: 0,
+                renderSize: finalPlan.renderSize,
+                frameRate: finalPlan.frameRate,
+                bitrateMode: finalPlan.bitrateMode,
+                videoCodec: finalPlan.videoCodec,
+                audioBitrate: 48_000 * max(finalPlan.audioLayout.outputChannelCount ?? 2, 1) * 16,
+                audioLayout: finalPlan.audioLayout,
+                expectedDurationSeconds: finalDuration,
+                encoderDescription: "copy",
+                profileSummary: "intent=concatCopy encoder=copy audio=copy",
+                requiresHDRToSDRToneMapping: false,
+                hdrToSDRToneMapClips: [],
+                captureDateOverlayCount: 0,
+                summaryLine:
+                    "FFmpeg concat summary: output=\(executionPlan.concatOutputURL.path), clips=\(executionPlan.batchPlans.count), chapters=0, " +
+                    "renderSize=\(Int(finalPlan.renderSize.width.rounded()))x\(Int(finalPlan.renderSize.height.rounded())), frameRate=\(finalPlan.frameRate), " +
+                    "container=mov, codec=\(finalPlan.videoCodec.rawValue), dynamicRange=\(finalPlan.dynamicRange.rawValue), " +
+                    "audioLayout=\(finalPlan.audioLayout.rawValue), expectedDuration=\(String(format: "%.2fs", finalDuration))",
+                endpointLine: nil
+            ),
+            resolution: resolution,
+            diagnostics: diagnostics,
+            progressRange: progressRangeForFFmpegStage(
+                completedWeight: completedWeight,
+                stageWeight: concatWeight,
+                totalWeight: totalWeight
+            ),
+            statusPrefix: "HDR concat copy",
+            progressHandler: progressHandler,
+            statusHandler: statusHandler
+        )
+        completedWeight += concatWeight
+        for batch in executionPlan.batchPlans {
+            removeTemporaryFile(batch.plan.outputURL, temporaryURLs: &temporaryURLs, diagnostics: diagnostics)
+        }
+        removeTemporaryFile(executionPlan.concatListURL, temporaryURLs: &temporaryURLs, diagnostics: diagnostics)
+
+        let packagingCommand = try ffmpegCommandBuilder.buildPackagingCommand(
+            executableURL: resolution.selectedBinary.ffmpegURL,
+            concatenatedURL: executionPlan.concatOutputURL,
+            finalPlan: finalPlan
+        )
+        try await executeFFmpegCommand(
+            packagingCommand,
+            context: FFmpegHDRRenderer.CommandExecutionContext(
+                dynamicRange: finalPlan.dynamicRange,
+                renderIntent: .finalPackaging,
+                outputURL: finalPlan.outputURL,
+                clipCount: 1,
+                chapterCount: finalPlan.chapters.count,
+                renderSize: finalPlan.renderSize,
+                frameRate: finalPlan.frameRate,
+                bitrateMode: finalPlan.bitrateMode,
+                videoCodec: finalPlan.videoCodec,
+                audioBitrate: finalPlan.audioLayout.aacBitrate ?? 192_000,
+                audioLayout: finalPlan.audioLayout,
+                expectedDurationSeconds: finalDuration,
+                encoderDescription: "copy",
+                profileSummary: "intent=finalPackaging encoder=copy audio=aac",
+                requiresHDRToSDRToneMapping: false,
+                hdrToSDRToneMapClips: [],
+                captureDateOverlayCount: 0,
+                summaryLine:
+                    "FFmpeg packaging summary: output=\(finalPlan.outputURL.path), clips=1, chapters=\(finalPlan.chapters.count), " +
+                    "renderSize=\(Int(finalPlan.renderSize.width.rounded()))x\(Int(finalPlan.renderSize.height.rounded())), frameRate=\(finalPlan.frameRate), " +
+                    "container=\(finalPlan.container.rawValue), codec=\(finalPlan.videoCodec.rawValue), dynamicRange=\(finalPlan.dynamicRange.rawValue), " +
+                    "audioLayout=\(finalPlan.audioLayout.rawValue), expectedDuration=\(String(format: "%.2fs", finalDuration))",
+                endpointLine: nil
+            ),
+            resolution: resolution,
+            diagnostics: diagnostics,
+            progressRange: progressRangeForFFmpegStage(
+                completedWeight: completedWeight,
+                stageWeight: packagingWeight,
+                totalWeight: totalWeight
+            ),
+            statusPrefix: "HDR final package",
+            progressHandler: progressHandler,
+            statusHandler: statusHandler
+        )
+        removeTemporaryFile(executionPlan.concatOutputURL, temporaryURLs: &temporaryURLs, diagnostics: diagnostics)
+        diagnostics.add("HDR progressive execution completed: output=\(finalPlan.outputURL.path)")
+        return resolution
+    }
+
+    private func progressiveCapabilityRequirements(for finalPlan: FFmpegRenderPlan) -> FFmpegCapabilityRequirements {
+        FFmpegCapabilityRequirements(
+            codec: finalPlan.videoCodec,
+            dynamicRange: finalPlan.dynamicRange,
+            hdrHEVCEncoderMode: finalPlan.hdrHEVCEncoderMode,
+            renderIntent: .finalBatch,
+            requiresHDRToSDRToneMapping: finalPlan.requiresHDRToSDRToneMapping,
+            requiresOverlay: true
+        )
+    }
+
+    private func writeConcatFileList(
+        batchPlans: [FFmpegProgressiveBatchPlan],
+        to url: URL
+    ) throws {
+        let contents = batchPlans
+            .map { "file '\(escapeConcatFilePath($0.plan.outputURL.path))'" }
+            .joined(separator: "\n") + "\n"
+        try contents.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private func escapeConcatFilePath(_ path: String) -> String {
+        path
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "'", with: "\\'")
+    }
+
+    private func removeTemporaryFile(
+        _ url: URL,
+        temporaryURLs: inout [URL],
+        diagnostics: RenderDiagnostics
+    ) {
+        let fileManager = FileManager.default
+        do {
+            if fileManager.fileExists(atPath: url.path) {
+                try fileManager.removeItem(at: url)
+                diagnostics.add("Removed temporary artifact: \(url.path)")
+            }
+        } catch {
+            diagnostics.add("Temporary artifact cleanup skipped for \(url.path): \(describe(error))")
+        }
+
+        temporaryURLs.removeAll { $0 == url }
     }
 
     private func progressRangeForFFmpegStage(

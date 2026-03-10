@@ -28,7 +28,7 @@ struct FFmpegBinaryResolver {
         hdrHEVCEncoderMode: HDRHEVCEncoderMode = .automatic,
         diagnostics: (String) -> Void
     ) throws -> FFmpegBinaryResolution {
-        try resolve(
+        try resolveRequirements(
             mode: mode,
             requirements: FFmpegCapabilityRequirements(
                 codec: codec,
@@ -44,9 +44,21 @@ struct FFmpegBinaryResolver {
         plan: FFmpegRenderPlan,
         diagnostics: (String) -> Void
     ) throws -> FFmpegBinaryResolution {
-        try resolve(
+        try resolveRequirements(
             mode: mode,
             requirements: plan.capabilityRequirements,
+            diagnostics: diagnostics
+        )
+    }
+
+    func resolve(
+        mode: HDRFFmpegBinaryMode,
+        requirements: FFmpegCapabilityRequirements,
+        diagnostics: (String) -> Void
+    ) throws -> FFmpegBinaryResolution {
+        try resolveRequirements(
+            mode: mode,
+            requirements: requirements,
             diagnostics: diagnostics
         )
     }
@@ -82,7 +94,7 @@ struct FFmpegBinaryResolver {
         }
     }
 
-    private func resolve(
+    private func resolveRequirements(
         mode: HDRFFmpegBinaryMode,
         requirements: FFmpegCapabilityRequirements,
         diagnostics: (String) -> Void

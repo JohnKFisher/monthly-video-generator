@@ -188,11 +188,3 @@ struct FFmpegHDRChunkPipelineBuilder {
         )
     }
 }
-
-private extension ColorInfo {
-    static let hlgBT2020Intermediate = ColorInfo(
-        isHDR: true,
-        colorPrimaries: "ITU_R_2020",
-        transferFunction: "ITU_R_2100_HLG"
-    )
-}
