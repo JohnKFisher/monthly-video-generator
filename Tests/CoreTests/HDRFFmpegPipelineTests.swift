@@ -582,6 +582,41 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("fade=t=out:st=1.500000:d=1.500000:color=black"))
     }
 
+    func testHDRLibx265FinalDeliveryAddsThreadCapsForStability() throws {
+        let builder = FFmpegCommandBuilder()
+        let plan = FFmpegRenderPlan(
+            clips: [
+                FFmpegRenderClip(
+                    url: URL(fileURLWithPath: "/tmp/hdr.mov"),
+                    durationSeconds: 3.0,
+                    includeAudio: true,
+                    hasAudioTrack: true,
+                    colorInfo: ColorInfo(isHDR: true, colorPrimaries: "ITU_R_2020", transferFunction: "ITU_R_2100_HLG"),
+                    sourceDescription: "hdr"
+                )
+            ],
+            transitionDurationSeconds: 0,
+            outputURL: URL(fileURLWithPath: "/tmp/out.mp4"),
+            renderSize: CGSize(width: 3840, height: 2160),
+            frameRate: 60,
+            audioLayout: .stereo,
+            bitrateMode: .balanced,
+            container: .mp4,
+            videoCodec: .hevc,
+            dynamicRange: .hdr,
+            hdrHEVCEncoderMode: .automatic
+        )
+
+        let command = try builder.buildCommand(plan: plan, resolution: makeCapableResolution())
+        let joined = command.arguments.joined(separator: " ")
+        let expectedThreadLimit = min(max(ProcessInfo.processInfo.activeProcessorCount, 1), 4)
+        let expectedFrameThreads = min(max(ProcessInfo.processInfo.activeProcessorCount, 1), 2)
+
+        XCTAssertTrue(joined.contains("-threads \(expectedThreadLimit)"))
+        XCTAssertTrue(joined.contains("pools=\(expectedThreadLimit)"))
+        XCTAssertTrue(joined.contains("frame-threads=\(expectedFrameThreads)"))
+    }
+
     func testCommandBuilderClampsEndFadeToOutputDuration() throws {
         let builder = FFmpegCommandBuilder()
         let plan = FFmpegRenderPlan(
@@ -773,6 +808,9 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("-bufsize 218972160"))
         XCTAssertTrue(joined.contains("-c:a pcm_s16le"))
         XCTAssertFalse(joined.contains("-crf"))
+        XCTAssertFalse(joined.contains("-threads "))
+        XCTAssertFalse(joined.contains("frame-threads="))
+        XCTAssertFalse(joined.contains("pools="))
     }
 
     func testCommandBuilderIncludesBT709MetadataForSDRH264() throws {

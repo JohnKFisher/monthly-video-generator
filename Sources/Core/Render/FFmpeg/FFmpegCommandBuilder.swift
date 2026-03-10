@@ -67,6 +67,10 @@ struct FFmpegCommandBuilder {
             "-dn"
         ]
 
+        if let threadLimit = ffmpegThreadLimit(for: selectedEncoder, plan: plan) {
+            arguments.append(contentsOf: ["-threads", String(threadLimit)])
+        }
+
         var videoInputIndexForClip: [Int: Int] = [:]
         var overlayInputIndexForClip: [Int: Int] = [:]
         var audioInputIndexForClip: [Int: Int] = [:]
@@ -275,7 +279,13 @@ struct FFmpegCommandBuilder {
             case .h264VideoToolbox:
                 return "intent=finalDelivery encoder=h264_videotoolbox bitrate=\(estimatedBitrate(for: plan.renderSize, frameRate: plan.frameRate, bitrateMode: plan.bitrateMode, encoder: encoder, dynamicRange: plan.dynamicRange)) audio=aac"
             case .libx265:
-                return "intent=finalDelivery encoder=libx265 preset=\(x265Preset(for: plan.bitrateMode)) crf=\(x265CRF(for: plan.bitrateMode, dynamicRange: plan.dynamicRange)) audio=aac"
+                var summary = "intent=finalDelivery encoder=libx265 preset=\(x265Preset(for: plan.bitrateMode)) crf=\(x265CRF(for: plan.bitrateMode, dynamicRange: plan.dynamicRange))"
+                if let threadLimit = ffmpegThreadLimit(for: encoder, plan: plan) {
+                    let frameThreads = x265FrameThreadLimit(for: plan)
+                    summary += " threads=\(threadLimit) x265=pools=\(threadLimit):frame-threads=\(frameThreads)"
+                }
+                summary += " audio=aac"
+                return summary
             case .hevcVideoToolbox:
                 return "intent=finalDelivery encoder=hevc_videotoolbox bitrate=\(estimatedBitrate(for: plan.renderSize, frameRate: plan.frameRate, bitrateMode: plan.bitrateMode, encoder: encoder, dynamicRange: plan.dynamicRange)) audio=aac"
             }
@@ -521,15 +531,7 @@ struct FFmpegCommandBuilder {
                 "-pix_fmt", plan.dynamicRange == .hdr ? "yuv420p10le" : "yuv420p",
                 "-tag:v", "hvc1"
             ]
-            if plan.dynamicRange == .hdr {
-                values.append(contentsOf: [
-                    "-x265-params", "colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc:repeat-headers=1"
-                ])
-            } else {
-                values.append(contentsOf: [
-                    "-x265-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709:repeat-headers=1"
-                ])
-            }
+            values.append(contentsOf: ["-x265-params", x265ParameterString(for: plan)])
             arguments.append(contentsOf: values)
 
         case .hevcVideoToolbox:
@@ -576,15 +578,7 @@ struct FFmpegCommandBuilder {
                 "-pix_fmt", plan.dynamicRange == .hdr ? "yuv420p10le" : "yuv420p",
                 "-tag:v", "hvc1"
             ]
-            if plan.dynamicRange == .hdr {
-                values.append(contentsOf: [
-                    "-x265-params", "colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc:repeat-headers=1"
-                ])
-            } else {
-                values.append(contentsOf: [
-                    "-x265-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709:repeat-headers=1"
-                ])
-            }
+            values.append(contentsOf: ["-x265-params", x265ParameterString(for: plan)])
             arguments.append(contentsOf: values)
 
         case .h264VideoToolbox, .libx264:
@@ -618,6 +612,52 @@ struct FFmpegCommandBuilder {
                 "-ac", String(outputChannelCount)
             ])
         }
+    }
+
+    private func ffmpegThreadLimit(for encoder: FFmpegVideoEncoder, plan: FFmpegRenderPlan) -> Int? {
+        guard
+            encoder == .libx265,
+            plan.renderIntent == .finalDelivery,
+            plan.dynamicRange == .hdr
+        else {
+            return nil
+        }
+
+        return min(max(ProcessInfo.processInfo.activeProcessorCount, 1), 4)
+    }
+
+    private func x265FrameThreadLimit(for plan: FFmpegRenderPlan) -> Int {
+        guard plan.renderIntent == .finalDelivery, plan.dynamicRange == .hdr else {
+            return 0
+        }
+
+        return min(max(ProcessInfo.processInfo.activeProcessorCount, 1), 2)
+    }
+
+    private func x265ParameterString(for plan: FFmpegRenderPlan) -> String {
+        var parameters: [String]
+        if plan.dynamicRange == .hdr {
+            parameters = [
+                "colorprim=bt2020",
+                "transfer=arib-std-b67",
+                "colormatrix=bt2020nc",
+                "repeat-headers=1"
+            ]
+        } else {
+            parameters = [
+                "colorprim=bt709",
+                "transfer=bt709",
+                "colormatrix=bt709",
+                "repeat-headers=1"
+            ]
+        }
+
+        if let threadLimit = ffmpegThreadLimit(for: .libx265, plan: plan) {
+            parameters.append("pools=\(threadLimit)")
+            parameters.append("frame-threads=\(x265FrameThreadLimit(for: plan))")
+        }
+
+        return parameters.joined(separator: ":")
     }
 
     private func appendEmbeddedMetadataArguments(for plan: FFmpegRenderPlan, arguments: inout [String]) {
