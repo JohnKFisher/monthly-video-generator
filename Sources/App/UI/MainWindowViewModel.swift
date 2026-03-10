@@ -303,7 +303,7 @@ final class MainWindowViewModel: ObservableObject {
     @Published var openingTitleText: String {
         didSet { handleOpeningTitleEditedIfNeeded() }
     }
-    @Published var titleDurationSeconds: Double = 2.5 {
+    @Published var titleDurationSeconds: Double = MainWindowViewModel.defaultTitleDurationSeconds {
         didSet { handleRenderSettingChange() }
     }
     @Published var openingTitleCaptionMode: OpeningTitleCaptionMode = .custom {
@@ -312,10 +312,10 @@ final class MainWindowViewModel: ObservableObject {
     @Published var openingTitleCaptionText: String = MainWindowViewModel.defaultOpeningTitleCaptionText {
         didSet { handleRenderSettingChange() }
     }
-    @Published var crossfadeDurationSeconds: Double = 0.75 {
+    @Published var crossfadeDurationSeconds: Double = MainWindowViewModel.defaultCrossfadeDurationSeconds {
         didSet { handleRenderSettingChange() }
     }
-    @Published var stillImageDurationSeconds: Double = 3.0 {
+    @Published var stillImageDurationSeconds: Double = MainWindowViewModel.defaultStillImageDurationSeconds {
         didSet { handleRenderSettingChange() }
     }
     @Published var showCaptureDateOverlay: Bool = true {
@@ -410,6 +410,9 @@ final class MainWindowViewModel: ObservableObject {
     private static let defaultExportProfile = ExportProfileManager().defaultProfile()
     private static let defaultPlexShowTitle = "Family Videos"
     private static let defaultOpeningTitleCaptionText = "Fisher Family Videos"
+    private static let defaultTitleDurationSeconds = 7.5
+    private static let defaultCrossfadeDurationSeconds = 1.0
+    private static let defaultStillImageDurationSeconds = 5.0
     private static let renderSettingsDefaultsKey = "MainWindowViewModel.renderSettings.v1"
 
     init(
@@ -715,6 +718,9 @@ final class MainWindowViewModel: ObservableObject {
         applyOpeningTitleText(defaultOpeningTitleText(), autoManaged: true)
         openingTitleCaptionMode = .custom
         openingTitleCaptionText = Self.defaultOpeningTitleCaptionText
+        titleDurationSeconds = Self.defaultTitleDurationSeconds
+        crossfadeDurationSeconds = Self.defaultCrossfadeDurationSeconds
+        stillImageDurationSeconds = Self.defaultStillImageDurationSeconds
         selectedContainer = profile.container
         selectedVideoCodec = profile.videoCodec
         selectedFrameRatePolicy = profile.frameRate
@@ -2182,7 +2188,7 @@ final class MainWindowViewModel: ObservableObject {
             calendar: calendar
         )
         applyOpeningTitleText(settings.openingTitleText, autoManaged: isOpeningTitleAutoManaged)
-        titleDurationSeconds = min(max(settings.titleDurationSeconds ?? 2.5, 1), 10)
+        titleDurationSeconds = min(max(settings.titleDurationSeconds ?? Self.defaultTitleDurationSeconds, 1), 10)
         openingTitleCaptionMode = .custom
         openingTitleCaptionText = Self.normalizedOpeningTitleCaptionText(
             mode: settings.openingTitleCaptionMode,

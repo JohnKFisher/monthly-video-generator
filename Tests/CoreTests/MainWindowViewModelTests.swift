@@ -126,6 +126,17 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.openingTitleCaptionText, "Fisher Family Videos")
     }
 
+    func testStyleDurationDefaultsUseRequestedValues() {
+        let viewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            preferencesStore: makePreferencesStore()
+        )
+
+        XCTAssertEqual(viewModel.titleDurationSeconds, 7.5, accuracy: 0.0001)
+        XCTAssertEqual(viewModel.crossfadeDurationSeconds, 1.0, accuracy: 0.0001)
+        XCTAssertEqual(viewModel.stillImageDurationSeconds, 5.0, accuracy: 0.0001)
+    }
+
     func testOpeningTitleDefaultsToSelectedMonthYearAndTracksMonthChanges() {
         let viewModel = makeViewModel(
             coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
@@ -247,12 +258,18 @@ final class MainWindowViewModelTests: XCTestCase {
         )
 
         viewModel.openingTitleCaptionText = "Cape Cod at dusk"
+        viewModel.titleDurationSeconds = 3.0
+        viewModel.crossfadeDurationSeconds = 0.5
+        viewModel.stillImageDurationSeconds = 2.0
         viewModel.writeDiagnosticsLog = true
 
         viewModel.resetExportSettingsToPlexDefaults()
 
         XCTAssertEqual(viewModel.openingTitleCaptionMode, .custom)
         XCTAssertEqual(viewModel.openingTitleCaptionText, "Fisher Family Videos")
+        XCTAssertEqual(viewModel.titleDurationSeconds, 7.5, accuracy: 0.0001)
+        XCTAssertEqual(viewModel.crossfadeDurationSeconds, 1.0, accuracy: 0.0001)
+        XCTAssertEqual(viewModel.stillImageDurationSeconds, 5.0, accuracy: 0.0001)
         XCTAssertFalse(viewModel.writeDiagnosticsLog)
     }
 
@@ -831,7 +848,7 @@ final class MainWindowViewModelTests: XCTestCase {
             preferencesStore: preferencesStore
         )
 
-        XCTAssertEqual(viewModel.titleDurationSeconds, 2.5, accuracy: 0.0001)
+        XCTAssertEqual(viewModel.titleDurationSeconds, 7.5, accuracy: 0.0001)
         XCTAssertEqual(viewModel.openingTitleCaptionMode, .custom)
         XCTAssertEqual(viewModel.openingTitleCaptionText, "Fisher Family Videos")
     }

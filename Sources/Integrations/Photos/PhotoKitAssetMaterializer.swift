@@ -17,6 +17,7 @@ public enum PhotoMaterializerError: LocalizedError {
     case missingAsset(String)
     case noImageData(String)
     case noVideoURL(String)
+    case noVideoResource(String)
 
     public var errorDescription: String? {
         switch self {
@@ -26,48 +27,79 @@ public enum PhotoMaterializerError: LocalizedError {
             return "Unable to read image data for asset: \(identifier)"
         case let .noVideoURL(identifier):
             return "Unable to materialize video URL for asset: \(identifier)"
+        case let .noVideoResource(identifier):
+            return "Unable to find a playable video resource for asset: \(identifier)"
         }
     }
 }
 
 public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecked Sendable {
-    typealias VideoAssetLoader = @Sendable (String) async throws -> LoadedVideoAsset
+    typealias VideoInspectionLoader = @Sendable (String) async throws -> LoadedVideoInspection
+    typealias VideoFileMaterializer = @Sendable (String, String) async throws -> URL
 
-    struct LoadedVideoAsset: Equatable, Sendable {
-        let url: URL
+    struct LoadedVideoInspection: Equatable, Sendable {
         let sourceFrameRate: Double?
         let sourceAudioChannelCount: Int?
     }
 
-    private actor VideoAssetCache {
-        private var loadedVideoAssets: [String: LoadedVideoAsset] = [:]
+    private actor VideoInspectionCache {
+        private var loadedVideoInspections: [String: LoadedVideoInspection] = [:]
 
-        func cachedAsset(for localIdentifier: String) -> LoadedVideoAsset? {
-            loadedVideoAssets[localIdentifier]
+        func cachedInspection(for localIdentifier: String) -> LoadedVideoInspection? {
+            loadedVideoInspections[localIdentifier]
         }
 
-        func store(_ asset: LoadedVideoAsset, for localIdentifier: String) {
-            loadedVideoAssets[localIdentifier] = asset
+        func store(_ inspection: LoadedVideoInspection, for localIdentifier: String) {
+            loadedVideoInspections[localIdentifier] = inspection
         }
+    }
+
+    private actor MaterializedVideoCache {
+        private var materializedVideoURLs: [String: URL] = [:]
+
+        func cachedURL(for localIdentifier: String) -> URL? {
+            materializedVideoURLs[localIdentifier]
+        }
+
+        func store(_ url: URL, for localIdentifier: String) {
+            materializedVideoURLs[localIdentifier] = url
+        }
+    }
+
+    private enum ActiveRequestID: Hashable {
+        case image(PHImageRequestID)
+        case resource(PHAssetResourceDataRequestID)
     }
 
     private final class ActiveRequestRegistry: @unchecked Sendable {
         private let lock = NSLock()
-        private var activeRequestIDs: Set<PHImageRequestID> = []
+        private var activeRequestIDs: Set<ActiveRequestID> = []
 
-        func add(_ requestID: PHImageRequestID) {
+        func addImage(_ requestID: PHImageRequestID) {
             lock.lock()
-            activeRequestIDs.insert(requestID)
+            activeRequestIDs.insert(.image(requestID))
             lock.unlock()
         }
 
-        func remove(_ requestID: PHImageRequestID) {
+        func removeImage(_ requestID: PHImageRequestID) {
             lock.lock()
-            activeRequestIDs.remove(requestID)
+            activeRequestIDs.remove(.image(requestID))
             lock.unlock()
         }
 
-        func takeAll() -> [PHImageRequestID] {
+        func addResource(_ requestID: PHAssetResourceDataRequestID) {
+            lock.lock()
+            activeRequestIDs.insert(.resource(requestID))
+            lock.unlock()
+        }
+
+        func removeResource(_ requestID: PHAssetResourceDataRequestID) {
+            lock.lock()
+            activeRequestIDs.remove(.resource(requestID))
+            lock.unlock()
+        }
+
+        func takeAll() -> [ActiveRequestID] {
             lock.lock()
             let requestIDs = Array(activeRequestIDs)
             activeRequestIDs.removeAll()
@@ -76,7 +108,7 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
         }
     }
 
-    private final class PhotoRequestState<Value>: @unchecked Sendable {
+    private final class PhotoRequestState<Value: Sendable>: @unchecked Sendable {
         private let lock = NSLock()
         private let activeRequests: ActiveRequestRegistry
         private var continuation: CheckedContinuation<Value, Error>?
@@ -112,22 +144,22 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
                 return
             }
 
-            activeRequests.add(requestID)
+            activeRequests.addImage(requestID)
         }
 
-        func resume(returning value: sending Value) {
-            finish(result: .success(value), shouldCancelRequest: false)
+        func resume(returning value: Value) {
+            finishSuccess(value, shouldCancelRequest: false)
         }
 
-        func resume(throwing error: sending Error) {
-            finish(result: .failure(error), shouldCancelRequest: false)
+        func resume(throwing error: Error) {
+            finishFailure(error, shouldCancelRequest: false)
         }
 
         func cancel() {
-            finish(result: .failure(CancellationError()), shouldCancelRequest: true)
+            finishFailure(CancellationError(), shouldCancelRequest: true)
         }
 
-        private func finish(result: sending Result<Value, Error>, shouldCancelRequest: Bool) {
+        private func finishSuccess(_ value: Value, shouldCancelRequest: Bool) {
             lock.lock()
             let continuation = self.continuation
             self.continuation = nil
@@ -140,46 +172,191 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
             }
 
             if requestID != PHInvalidImageRequestID {
-                activeRequests.remove(requestID)
+                activeRequests.removeImage(requestID)
                 if shouldCancelRequest {
                     PHImageManager.default().cancelImageRequest(requestID)
                 }
             }
 
-            continuation.resume(with: result)
+            continuation.resume(returning: value)
+        }
+
+        private func finishFailure(_ error: Error, shouldCancelRequest: Bool) {
+            lock.lock()
+            let continuation = self.continuation
+            self.continuation = nil
+            let requestID = self.requestID
+            self.requestID = PHInvalidImageRequestID
+            lock.unlock()
+
+            guard let continuation else {
+                return
+            }
+
+            if requestID != PHInvalidImageRequestID {
+                activeRequests.removeImage(requestID)
+                if shouldCancelRequest {
+                    PHImageManager.default().cancelImageRequest(requestID)
+                }
+            }
+
+            continuation.resume(throwing: error)
+        }
+    }
+
+    private final class PhotoAssetResourceRequestState<Value: Sendable>: @unchecked Sendable {
+        private let lock = NSLock()
+        private let activeRequests: ActiveRequestRegistry
+        private var continuation: CheckedContinuation<Value, Error>?
+        private var requestID: PHAssetResourceDataRequestID = PHInvalidAssetResourceDataRequestID
+
+        init(activeRequests: ActiveRequestRegistry) {
+            self.activeRequests = activeRequests
+        }
+
+        func install(_ continuation: CheckedContinuation<Value, Error>) {
+            lock.lock()
+            self.continuation = continuation
+            lock.unlock()
+        }
+
+        func setRequestID(_ requestID: PHAssetResourceDataRequestID) {
+            var shouldCancel = false
+
+            lock.lock()
+            if continuation == nil {
+                shouldCancel = true
+            } else {
+                self.requestID = requestID
+            }
+            lock.unlock()
+
+            guard requestID != PHInvalidAssetResourceDataRequestID else {
+                return
+            }
+
+            if shouldCancel {
+                PHAssetResourceManager.default().cancelDataRequest(requestID)
+                return
+            }
+
+            activeRequests.addResource(requestID)
+        }
+
+        func resume(returning value: Value) {
+            finishSuccess(value, shouldCancelRequest: false)
+        }
+
+        func resume(throwing error: Error, cancelRequest: Bool = false) {
+            finishFailure(error, shouldCancelRequest: cancelRequest)
+        }
+
+        func cancel() {
+            finishFailure(CancellationError(), shouldCancelRequest: true)
+        }
+
+        private func finishSuccess(_ value: Value, shouldCancelRequest: Bool) {
+            lock.lock()
+            let continuation = self.continuation
+            self.continuation = nil
+            let requestID = self.requestID
+            self.requestID = PHInvalidAssetResourceDataRequestID
+            lock.unlock()
+
+            guard let continuation else {
+                return
+            }
+
+            if requestID != PHInvalidAssetResourceDataRequestID {
+                activeRequests.removeResource(requestID)
+                if shouldCancelRequest {
+                    PHAssetResourceManager.default().cancelDataRequest(requestID)
+                }
+            }
+
+            continuation.resume(returning: value)
+        }
+
+        private func finishFailure(_ error: Error, shouldCancelRequest: Bool) {
+            lock.lock()
+            let continuation = self.continuation
+            self.continuation = nil
+            let requestID = self.requestID
+            self.requestID = PHInvalidAssetResourceDataRequestID
+            lock.unlock()
+
+            guard let continuation else {
+                return
+            }
+
+            if requestID != PHInvalidAssetResourceDataRequestID {
+                activeRequests.removeResource(requestID)
+                if shouldCancelRequest {
+                    PHAssetResourceManager.default().cancelDataRequest(requestID)
+                }
+            }
+
+            continuation.resume(throwing: error)
         }
     }
 
     private let fileManager = FileManager.default
-    private let videoAssetCache = VideoAssetCache()
+    private let videoInspectionCache = VideoInspectionCache()
+    private let materializedVideoCache = MaterializedVideoCache()
     private let activeRequestRegistry: ActiveRequestRegistry
-    private let videoAssetLoader: VideoAssetLoader
+    private let videoInspectionLoader: VideoInspectionLoader
+    private let videoFileMaterializer: VideoFileMaterializer
 
     public init() {
         let registry = ActiveRequestRegistry()
         self.activeRequestRegistry = registry
-        self.videoAssetLoader = { localIdentifier in
-            try await Self.loadPhotoVideoAsset(localIdentifier: localIdentifier, activeRequests: registry)
+        self.videoInspectionLoader = { localIdentifier in
+            try await Self.loadPhotoVideoInspection(localIdentifier: localIdentifier, activeRequests: registry)
+        }
+        self.videoFileMaterializer = { localIdentifier, preferredFilename in
+            try await Self.materializePhotoVideoFile(
+                localIdentifier: localIdentifier,
+                preferredFilename: preferredFilename,
+                activeRequests: registry
+            )
         }
     }
 
-    init(videoAssetLoader: @escaping VideoAssetLoader) {
+    init(
+        videoInspectionLoader: @escaping VideoInspectionLoader,
+        videoFileMaterializer: @escaping VideoFileMaterializer
+    ) {
         let registry = ActiveRequestRegistry()
         self.activeRequestRegistry = registry
-        self.videoAssetLoader = videoAssetLoader
+        self.videoInspectionLoader = videoInspectionLoader
+        self.videoFileMaterializer = videoFileMaterializer
     }
 
     public func cancelPendingRequests() {
         let requestIDs = activeRequestRegistry.takeAll()
         let imageManager = PHImageManager.default()
+        let resourceManager = PHAssetResourceManager.default()
         for requestID in requestIDs {
-            imageManager.cancelImageRequest(requestID)
+            switch requestID {
+            case let .image(imageRequestID):
+                imageManager.cancelImageRequest(imageRequestID)
+            case let .resource(resourceRequestID):
+                resourceManager.cancelDataRequest(resourceRequestID)
+            }
         }
     }
 
     public func materializePhotoAsset(localIdentifier: String, preferredFilename: String) async throws -> URL {
-        if let cachedVideoAsset = await videoAssetCache.cachedAsset(for: localIdentifier) {
-            return cachedVideoAsset.url
+        if let cachedVideoURL = await materializedVideoCache.cachedURL(for: localIdentifier),
+           fileManager.fileExists(atPath: cachedVideoURL.path) {
+            return cachedVideoURL
+        }
+
+        if await videoInspectionCache.cachedInspection(for: localIdentifier) != nil {
+            return try await materializeVideo(
+                localIdentifier: localIdentifier,
+                preferredFilename: preferredFilename
+            )
         }
 
         let fetchResult = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil)
@@ -191,8 +368,10 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
         case .image:
             return try await materializeImage(asset: asset, preferredFilename: preferredFilename)
         case .video:
-            _ = preferredFilename
-            return try await materializeVideo(localIdentifier: asset.localIdentifier)
+            return try await materializeVideo(
+                localIdentifier: asset.localIdentifier,
+                preferredFilename: preferredFilename
+            )
         default:
             throw PhotoMaterializerError.missingAsset(localIdentifier)
         }
@@ -238,10 +417,10 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
             ))
 
             do {
-                let loadedVideoAsset = try await loadVideoAsset(localIdentifier: inspectionTarget.2)
+                let loadedVideoInspection = try await loadVideoInspection(localIdentifier: inspectionTarget.2)
                 updatedItems[inspectionTarget.0] = inspectionTarget.1.withSourceInspection(
-                    sourceFrameRate: inspectFrameRate ? loadedVideoAsset.sourceFrameRate : inspectionTarget.1.sourceFrameRate,
-                    sourceAudioChannelCount: inspectAudioChannels ? loadedVideoAsset.sourceAudioChannelCount : inspectionTarget.1.sourceAudioChannelCount
+                    sourceFrameRate: inspectFrameRate ? loadedVideoInspection.sourceFrameRate : inspectionTarget.1.sourceFrameRate,
+                    sourceAudioChannelCount: inspectAudioChannels ? loadedVideoInspection.sourceAudioChannelCount : inspectionTarget.1.sourceAudioChannelCount
                 )
             } catch is CancellationError {
                 throw CancellationError()
@@ -282,24 +461,34 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
         let imageData = try await requestImageData(asset: asset)
 
         let ext = URL(fileURLWithPath: preferredFilename).pathExtension.isEmpty ? "jpg" : URL(fileURLWithPath: preferredFilename).pathExtension
-        let targetURL = temporaryAssetURL(localIdentifier: asset.localIdentifier, preferredExtension: ext)
+        let targetURL = Self.temporaryAssetURL(
+            localIdentifier: asset.localIdentifier,
+            preferredExtension: ext,
+            fileManager: fileManager
+        )
         try imageData.write(to: targetURL)
         return targetURL
     }
 
-    private func materializeVideo(localIdentifier: String) async throws -> URL {
-        let loadedVideoAsset = try await loadVideoAsset(localIdentifier: localIdentifier)
-        return loadedVideoAsset.url
-    }
-
-    private func loadVideoAsset(localIdentifier: String) async throws -> LoadedVideoAsset {
-        if let cachedVideoAsset = await videoAssetCache.cachedAsset(for: localIdentifier) {
-            return cachedVideoAsset
+    private func materializeVideo(localIdentifier: String, preferredFilename: String) async throws -> URL {
+        if let cachedVideoURL = await materializedVideoCache.cachedURL(for: localIdentifier),
+           fileManager.fileExists(atPath: cachedVideoURL.path) {
+            return cachedVideoURL
         }
 
-        let loadedVideoAsset = try await videoAssetLoader(localIdentifier)
-        await videoAssetCache.store(loadedVideoAsset, for: localIdentifier)
-        return loadedVideoAsset
+        let materializedURL = try await videoFileMaterializer(localIdentifier, preferredFilename)
+        await materializedVideoCache.store(materializedURL, for: localIdentifier)
+        return materializedURL
+    }
+
+    private func loadVideoInspection(localIdentifier: String) async throws -> LoadedVideoInspection {
+        if let cachedVideoInspection = await videoInspectionCache.cachedInspection(for: localIdentifier) {
+            return cachedVideoInspection
+        }
+
+        let loadedVideoInspection = try await videoInspectionLoader(localIdentifier)
+        await videoInspectionCache.store(loadedVideoInspection, for: localIdentifier)
+        return loadedVideoInspection
     }
 
     private func requestImageData(asset: PHAsset) async throws -> Data {
@@ -335,10 +524,10 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
         })
     }
 
-    private static func loadPhotoVideoAsset(
+    private static func loadPhotoVideoInspection(
         localIdentifier: String,
         activeRequests: ActiveRequestRegistry
-    ) async throws -> LoadedVideoAsset {
+    ) async throws -> LoadedVideoInspection {
         let fetchResult = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil)
         guard let asset = fetchResult.firstObject else {
             throw PhotoMaterializerError.missingAsset(localIdentifier)
@@ -362,8 +551,7 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
 
         let sourceAudioChannelCount = await primaryAudioChannelCount(for: urlAsset)
 
-        return LoadedVideoAsset(
-            url: urlAsset.url,
+        return LoadedVideoInspection(
             sourceFrameRate: resolvedFrameRate,
             sourceAudioChannelCount: sourceAudioChannelCount
         )
@@ -405,11 +593,112 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
         })
     }
 
-    private func temporaryAssetURL(localIdentifier: String, preferredExtension: String) -> URL {
+    private static func materializePhotoVideoFile(
+        localIdentifier: String,
+        preferredFilename: String,
+        activeRequests: ActiveRequestRegistry
+    ) async throws -> URL {
+        let fetchResult = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil)
+        guard let asset = fetchResult.firstObject else {
+            throw PhotoMaterializerError.missingAsset(localIdentifier)
+        }
+        guard let resource = preferredVideoResource(for: asset) else {
+            throw PhotoMaterializerError.noVideoResource(localIdentifier)
+        }
+
+        let targetURL = temporaryAssetURL(
+            localIdentifier: localIdentifier,
+            preferredExtension: preferredVideoExtension(
+                preferredFilename: preferredFilename,
+                resourceFilename: resource.originalFilename
+            ),
+            fileManager: FileManager.default
+        )
+        FileManager.default.createFile(atPath: targetURL.path, contents: nil)
+        let fileHandle = try FileHandle(forWritingTo: targetURL)
+        defer {
+            try? fileHandle.close()
+        }
+
+        let requestOptions = PHAssetResourceRequestOptions()
+        requestOptions.isNetworkAccessAllowed = true
+        let requestState = PhotoAssetResourceRequestState<URL>(activeRequests: activeRequests)
+
+        do {
+            return try await withTaskCancellationHandler(operation: {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
+                    requestState.install(continuation)
+                    let requestID = PHAssetResourceManager.default().requestData(
+                        for: resource,
+                        options: requestOptions,
+                        dataReceivedHandler: { data in
+                            do {
+                                try fileHandle.write(contentsOf: data)
+                            } catch {
+                                requestState.resume(throwing: error, cancelRequest: true)
+                            }
+                        },
+                        completionHandler: { error in
+                            if let error {
+                                requestState.resume(throwing: error)
+                            } else {
+                                requestState.resume(returning: targetURL)
+                            }
+                        }
+                    )
+                    requestState.setRequestID(requestID)
+                }
+            }, onCancel: {
+                requestState.cancel()
+            })
+        } catch {
+            try? FileManager.default.removeItem(at: targetURL)
+            throw error
+        }
+    }
+
+    private static func temporaryAssetURL(
+        localIdentifier: String,
+        preferredExtension: String,
+        fileManager: FileManager
+    ) -> URL {
         let sanitizedID = localIdentifier.replacingOccurrences(of: "/", with: "-")
         let directory = fileManager.temporaryDirectory.appendingPathComponent("MonthlyVideoGenerator/Photos", isDirectory: true)
         try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory.appendingPathComponent("\(sanitizedID)-\(UUID().uuidString)").appendingPathExtension(preferredExtension)
+    }
+
+    private static func preferredVideoResource(for asset: PHAsset) -> PHAssetResource? {
+        let resources = PHAssetResource.assetResources(for: asset)
+        let preferredTypes: [PHAssetResourceType] = [
+            .fullSizeVideo,
+            .video,
+            .adjustmentBaseVideo,
+            .fullSizePairedVideo,
+            .pairedVideo
+        ]
+
+        for preferredType in preferredTypes {
+            if let resource = resources.first(where: { $0.type == preferredType }) {
+                return resource
+            }
+        }
+
+        return nil
+    }
+
+    private static func preferredVideoExtension(preferredFilename: String, resourceFilename: String) -> String {
+        let resourceExtension = URL(fileURLWithPath: resourceFilename).pathExtension
+        if !resourceExtension.isEmpty {
+            return resourceExtension
+        }
+
+        let preferredExtension = URL(fileURLWithPath: preferredFilename).pathExtension
+        if !preferredExtension.isEmpty {
+            return preferredExtension
+        }
+
+        return "mov"
     }
 
     private func inspectionStatusMessage(
@@ -446,7 +735,7 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
         }
     }
 
-    private static func primaryAudioChannelCount(for asset: AVURLAsset) async -> Int? {
+    private static func primaryAudioChannelCount(for asset: AVAsset) async -> Int? {
         let audioTracks: [AVAssetTrack]
         do {
             audioTracks = try await asset.loadTracks(withMediaType: .audio)

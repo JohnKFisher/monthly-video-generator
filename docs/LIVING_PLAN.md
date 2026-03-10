@@ -122,6 +122,9 @@ Operational updates after first packaged run:
 - 2026-03-09: Removed the temporary batch-render matrix UI and support code so the app now exposes only the standard single-render export flow.
 - 2026-03-09: Switched the initial source selection to Apple Photos and replaced month picker numerals with `N - MonthName` labels in the month/year UI.
 - 2026-03-10: Added a hidden, session-only serial render queue in the Export panel so multiple render jobs can be snapshotted, queued, run in order, paused on failure, and completed with a single queue-finished alert without cluttering the default single-render UI.
+- 2026-03-10: Hotfix: Apple Photos videos now materialize through `PHAssetResourceManager` into app-owned temp files before FFmpeg runs, so Smart inspection no longer leaks internal `.photoslibrary/originals/...` paths into full renders.
+- 2026-03-10: Updated fresh/reset style defaults to `7.5s` opening title, `1.0s` crossfade, and `5.0s` still-image duration, and bumped the shipped app version to `0.9.0`.
+- Promoted the current release as the new known-good rollback checkpoint (`v0.9.0`): `checkpoint/20260310-known-good-v0-9-0`.
 
 ## Decisions Log
 
@@ -253,6 +256,8 @@ Operational updates after first packaged run:
 - 2026-03-07: Replaced solid black letterbox/pillarbox padding with media-derived soft-blur backgrounds on both still-image intermediates and FFmpeg video clips, using synchronized zoom/downsample/blur/dim treatment so portrait media keeps the existing aspect-fit framing without dead black space.
 - 2026-03-07: Added a chunked HDR FFmpeg execution path for complex HEVC/HDR renders, using bounded intermediate `.mov` chunks with a dedicated Main10 temp profile and preserving the user-selected final encoder for the delivered output.
 - 2026-03-07: Bumped the shipped app version to `0.5.0` and promoted the current state as known-good rollback tag `checkpoint/20260307-known-good-v0-5-0`.
+- 2026-03-10: Fixed Photos-video render safety by separating Smart inspection metadata from final video materialization and copying Photos videos into app temp storage before FFmpeg input resolution.
+- 2026-03-10: Updated fresh/reset style defaults to `7.5s` title cards, `1.0s` crossfades, and `5.0s` still-image clips, then bumped the shipped app version to `0.9.0`.
 - 2026-03-08: Reworked HDR export source classification to distinguish SDR/HLG/PQ inputs plus gain-map stills and Dolby Vision-backed HLG sources, then updated SDR-to-HLG normalization to use a fixed linear-light luminance uplift instead of a direct transfer remap that was darkening SDR material in HDR exports.
 - 2026-03-08: Retuned SDR-to-HLG uplift to use a highlight-preserving shoulder curve in linear light instead of a hard `2 x` clamp, keeping the brighter HDR SDR fallback while recovering blown highlight detail in SDR stills and videos.
 - 2026-03-09: Replaced the SDR HDR per-channel uplift with a luma-driven `lut3d` recovery path plus contrast compensation, preserving bright SDR color/detail much better than the earlier shoulder/vibrance tuning while avoiding the prohibitive runtime cost of a raw `geq` implementation.
@@ -277,20 +282,20 @@ Operational updates after first packaged run:
 
 ## Rollback Procedure
 
-To return to the current known-good rollback (`v0.7.0`):
+To return to the current known-good rollback (`v0.9.0`):
 
 1. `git fetch --tags`
 2. `git status`
 3. Optional safety stash if you have local edits: `git stash push -u -m "pre-rollback safety stash"`
-4. Create a recovery branch directly from the checkpoint tag: `git checkout -b codex/recover-known-good-v0-7-0 checkpoint/20260309-known-good-v0-7-0`
+4. Create a recovery branch directly from the checkpoint tag: `git checkout -b codex/recover-known-good-v0-9-0 checkpoint/20260310-known-good-v0-9-0`
 
 To inspect the exact tag without creating a branch:
 
-- `git checkout checkpoint/20260309-known-good-v0-7-0`
+- `git checkout checkpoint/20260310-known-good-v0-9-0`
 
 For the prior release checkpoint, use:
 
-- `git checkout -b codex/recover-known-good-v0-5-0 checkpoint/20260307-known-good-v0-5-0`
+- `git checkout -b codex/recover-known-good-v0-7-0 checkpoint/20260309-known-good-v0-7-0`
 
 For the pre-FFmpeg-pivot baseline, use:
 
@@ -300,4 +305,4 @@ Checkpoint tags are retained under the repo's 30-tag policy, so the current know
 
 ## Last Updated
 
-2026-03-09 14:11 America/New_York by Codex
+2026-03-10 20:52 America/New_York by Codex

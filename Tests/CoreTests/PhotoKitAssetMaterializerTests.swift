@@ -4,26 +4,34 @@ import Foundation
 import XCTest
 
 final class PhotoKitAssetMaterializerTests: XCTestCase {
-    func testPrepareItemsForSmartMediaCachesLoadedVideoAssetForMaterialization() async throws {
-        let expectedURL = FileManager.default.temporaryDirectory
+    func testPrepareItemsForSmartMediaCachesInspectionMetadataAndSeparatelyCachesMaterializedVideoFile() async throws {
+        let materializedURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("PhotoKitAssetMaterializerTests-\(UUID().uuidString)")
             .appendingPathExtension("mov")
-        try Data().write(to: expectedURL)
+        try Data().write(to: materializedURL)
         defer {
-            try? FileManager.default.removeItem(at: expectedURL)
+            try? FileManager.default.removeItem(at: materializedURL)
         }
 
-        let loadCounter = LockedCounter()
+        let inspectionLoadCounter = LockedCounter()
+        let materializationCounter = LockedCounter()
         let callbackRecorder = InspectionCallbackRecorder()
-        let materializer = PhotoKitAssetMaterializer(videoAssetLoader: { localIdentifier in
-            XCTAssertEqual(localIdentifier, "video-1")
-            loadCounter.increment()
-            return PhotoKitAssetMaterializer.LoadedVideoAsset(
-                url: expectedURL,
-                sourceFrameRate: 59.94,
-                sourceAudioChannelCount: 6
-            )
-        })
+        let materializer = PhotoKitAssetMaterializer(
+            videoInspectionLoader: { localIdentifier in
+                XCTAssertEqual(localIdentifier, "video-1")
+                inspectionLoadCounter.increment()
+                return PhotoKitAssetMaterializer.LoadedVideoInspection(
+                    sourceFrameRate: 59.94,
+                    sourceAudioChannelCount: 6
+                )
+            },
+            videoFileMaterializer: { localIdentifier, preferredFilename in
+                XCTAssertEqual(localIdentifier, "video-1")
+                XCTAssertEqual(preferredFilename, "video.mov")
+                materializationCounter.increment()
+                return materializedURL
+            }
+        )
 
         let result = try await materializer.prepareItemsForSmartMedia(
             [makePhotoVideoItem(localIdentifier: "video-1")],
@@ -45,26 +53,37 @@ final class PhotoKitAssetMaterializerTests: XCTestCase {
         XCTAssertEqual(callbacks.progress.last ?? -1, 1, accuracy: 0.001)
         XCTAssertEqual(callbacks.status, ["Inspecting video frame rates and audio 1 of 1..."])
 
-        let materializedURL = try await materializer.materializePhotoAsset(
+        let firstMaterializedURL = try await materializer.materializePhotoAsset(
+            localIdentifier: "video-1",
+            preferredFilename: "video.mov"
+        )
+        let secondMaterializedURL = try await materializer.materializePhotoAsset(
             localIdentifier: "video-1",
             preferredFilename: "video.mov"
         )
 
-        XCTAssertEqual(materializedURL, expectedURL)
-        XCTAssertEqual(loadCounter.value, 1)
+        XCTAssertEqual(firstMaterializedURL, materializedURL)
+        XCTAssertEqual(secondMaterializedURL, materializedURL)
+        XCTAssertEqual(inspectionLoadCounter.value, 1)
+        XCTAssertEqual(materializationCounter.value, 1)
     }
 
     func testPrepareItemsForSmartFrameRateRespectsTaskCancellation() async throws {
         let loaderStarted = expectation(description: "video asset loader started")
-        let materializer = PhotoKitAssetMaterializer(videoAssetLoader: { _ in
-            loaderStarted.fulfill()
-            try await Task.sleep(for: .seconds(30))
-            return PhotoKitAssetMaterializer.LoadedVideoAsset(
-                url: URL(fileURLWithPath: "/tmp/unused.mov"),
-                sourceFrameRate: 60,
-                sourceAudioChannelCount: 2
-            )
-        })
+        let materializer = PhotoKitAssetMaterializer(
+            videoInspectionLoader: { _ in
+                loaderStarted.fulfill()
+                try await Task.sleep(for: .seconds(30))
+                return PhotoKitAssetMaterializer.LoadedVideoInspection(
+                    sourceFrameRate: 60,
+                    sourceAudioChannelCount: 2
+                )
+            },
+            videoFileMaterializer: { _, _ in
+                XCTFail("Video materialization should not run during metadata inspection cancellation test")
+                return URL(fileURLWithPath: "/tmp/unused.mov")
+            }
+        )
         let item = makePhotoVideoItem(localIdentifier: "video-1")
 
         let task = Task<SmartMediaInspectionResult, Error> {
