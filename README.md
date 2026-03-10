@@ -158,11 +158,15 @@ Current temporary test-only app behavior:
 
 ## Known-Good Rollback
 
-Current known-good rollback checkpoint (`v0.9.0`):
+Current known-good rollback checkpoint (`v0.9.1`):
+
+- `checkpoint/20260310-known-good-v0-9-1`
+
+Previous known-good release checkpoint (`v0.9.0`):
 
 - `checkpoint/20260310-known-good-v0-9-0`
 
-Previous known-good release checkpoint (`v0.7.0`):
+Older known-good release checkpoint (`v0.7.0`):
 
 - `checkpoint/20260309-known-good-v0-7-0`
 
@@ -183,7 +187,7 @@ Rollback commands for current known-good:
 ```bash
 git fetch --tags
 git status
-git checkout -b codex/recover-known-good-v0-9-0 checkpoint/20260310-known-good-v0-9-0
+git checkout -b codex/recover-known-good-v0-9-1 checkpoint/20260310-known-good-v0-9-1
 ```
 
 If you already have local changes you want to keep before rolling back, stash them first:
@@ -195,7 +199,7 @@ git stash push -u -m "pre-rollback safety stash"
 To inspect the exact checkpoint without creating a branch:
 
 ```bash
-git checkout checkpoint/20260309-known-good-v0-7-0
+git checkout checkpoint/20260310-known-good-v0-9-1
 ```
 
 Checkpoint tags are kept under the repo's bounded-retention policy, so treat the current known-good tag and the previous release tag above as the supported rollback anchors.

@@ -128,6 +128,7 @@ Operational updates after first packaged run:
 - 2026-03-10: Hotfix: FFmpeg HDR watchdog CPU-activity sampling now passes the real `rusage_info_current` buffer into `proc_pid_rusage`, fixing a user-reported `stack buffer overflow` abort in `processCPUTimeSeconds(for:)` during long renders.
 - 2026-03-10: Updated fresh/reset style defaults to `7.5s` opening title, `1.0s` crossfade, and `5.0s` still-image duration, and bumped the shipped app version to `0.9.0`.
 - Promoted the current release as the new known-good rollback checkpoint (`v0.9.0`): `checkpoint/20260310-known-good-v0-9-0`.
+- 2026-03-10: Bumped the shipped app version to `0.9.1` and promoted the current diagnostics/stability state as the new known-good rollback checkpoint: `checkpoint/20260310-known-good-v0-9-1`.
 
 ## Decisions Log
 
@@ -288,20 +289,20 @@ Operational updates after first packaged run:
 
 ## Rollback Procedure
 
-To return to the current known-good rollback (`v0.9.0`):
+To return to the current known-good rollback (`v0.9.1`):
 
 1. `git fetch --tags`
 2. `git status`
 3. Optional safety stash if you have local edits: `git stash push -u -m "pre-rollback safety stash"`
-4. Create a recovery branch directly from the checkpoint tag: `git checkout -b codex/recover-known-good-v0-9-0 checkpoint/20260310-known-good-v0-9-0`
+4. Create a recovery branch directly from the checkpoint tag: `git checkout -b codex/recover-known-good-v0-9-1 checkpoint/20260310-known-good-v0-9-1`
 
 To inspect the exact tag without creating a branch:
 
-- `git checkout checkpoint/20260310-known-good-v0-9-0`
+- `git checkout checkpoint/20260310-known-good-v0-9-1`
 
 For the prior release checkpoint, use:
 
-- `git checkout -b codex/recover-known-good-v0-7-0 checkpoint/20260309-known-good-v0-7-0`
+- `git checkout -b codex/recover-known-good-v0-9-0 checkpoint/20260310-known-good-v0-9-0`
 
 For the pre-FFmpeg-pivot baseline, use:
 
