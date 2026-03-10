@@ -294,7 +294,7 @@ public final class AVFoundationRenderEngine {
             if let diagnosticURL {
                 throw RenderError.exportFailed("\(baseMessage)\nDiagnostics file: \(diagnosticURL.path)")
             }
-            throw RenderError.exportFailed(baseMessage)
+            throw RenderError.exportFailed("\(baseMessage)\nTip: Enable \"Write diagnostics log (.log)\" for a full render trace.")
         }
     }
 
@@ -1686,16 +1686,40 @@ public final class AVFoundationRenderEngine {
             reportLines.append("started_at=\(startedAt.ISO8601Format())")
             reportLines.append("ended_at=\(Date().ISO8601Format())")
             reportLines.append("outcome=\(outcome)")
+            reportLines.append("event_count=\(lines.count)")
             if let error {
-                reportLines.append("error=\(error)")
+                let nsError = error as NSError
+                reportLines.append("error=\(sanitizeHeaderValue(String(describing: error)))")
+                reportLines.append("error_domain=\(nsError.domain)")
+                reportLines.append("error_code=\(nsError.code)")
+                reportLines.append("error_description=\(sanitizeHeaderValue(nsError.localizedDescription))")
+                if let reason = nsError.localizedFailureReason, !reason.isEmpty {
+                    reportLines.append("error_reason=\(sanitizeHeaderValue(reason))")
+                }
+                if let suggestion = nsError.localizedRecoverySuggestion, !suggestion.isEmpty {
+                    reportLines.append("error_suggestion=\(sanitizeHeaderValue(suggestion))")
+                }
+                if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
+                    reportLines.append(
+                        "underlying_error=\(underlying.domain):\(underlying.code):\(sanitizeHeaderValue(underlying.localizedDescription))"
+                    )
+                }
             } else {
                 reportLines.append("error=none")
+                reportLines.append("error_domain=none")
+                reportLines.append("error_code=none")
             }
             reportLines.append("")
             reportLines.append(contentsOf: lines)
             reportLines.append("")
             reportLines.append("end_of_report")
             return reportLines.joined(separator: "\n")
+        }
+
+        private func sanitizeHeaderValue(_ value: String) -> String {
+            value
+                .replacingOccurrences(of: "\r", with: "\\r")
+                .replacingOccurrences(of: "\n", with: "\\n")
         }
 
         private func timestamp() -> String {

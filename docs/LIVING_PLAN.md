@@ -53,6 +53,7 @@ Operational updates after first packaged run:
 - Added repeatable `.app` bundling script so each build produces a Finder app bundle.
 - Updated `.app` bundling to produce a release universal bundle, package SwiftPM resources conventionally, embed Swift runtime libraries, and ad-hoc sign the finished app for off-machine testing.
 - Stabilized HDR final-delivery `libx265` commands by capping FFmpeg/x265 thread pressure to reduce OS-level `SIGKILL` risk on large renders.
+- Expanded FFmpeg diagnostics and surfaced error text with structured failure snapshots (encoder/binary/progress/output/stderr), richer report headers, and duplicate-line cleanup in the UI error formatter.
 - Added visible app version/build label in the main window.
 - Patched still-image rendering path to decode and rasterize source images once before frame emission to reduce provider-related crash risk.
 - Hotfix: title card generation now runs on the main actor with a fallback solid-card path to prevent immediate export failure when title card rasterization fails.
@@ -182,6 +183,7 @@ Operational updates after first packaged run:
 - 2026-03-09: Added a final pre-validation UI polish pass with branded color accents, a compact idle-status treatment, clearer Export labels, and a direct quick-open action for the configured output folder.
 - 2026-03-09: Reworked `scripts/build_app.sh` to produce a release universal `.app`, embed Swift runtimes, package SwiftPM resources conventionally, and ad-hoc sign/verify the final bundle; app resource lookup now resolves packaged assets without depending on a machine-local `.build` path.
 - 2026-03-10: Added HDR final-delivery `libx265` thread/pool caps so large FFmpeg HEVC renders are less likely to be killed by macOS under memory or CPU pressure; intermediate chunk behavior remains unchanged.
+- 2026-03-10: Enriched FFmpeg failure reporting so diagnostics logs and surfaced render errors now include structured encoder/binary/progress/output context, cleaner stderr filtering, richer report headers, and no duplicate localized-description lines in the UI alert text.
 - 2026-03-04: Added `VERSION` file and dynamic build number injection into app `Info.plist`.
 - 2026-03-04: Added version/build label to main UI.
 - 2026-03-04: Reworked still-image rendering to use pre-rasterized CGImage frames for stability.

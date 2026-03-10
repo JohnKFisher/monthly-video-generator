@@ -1,3 +1,4 @@
+import CoreGraphics
 import Darwin
 import Foundation
 
@@ -54,6 +55,29 @@ final class FFmpegHDRRenderer {
         let status: Int32
         let reason: Process.TerminationReason
         let stallContext: StallContext?
+    }
+
+    struct FailureSnapshot: Equatable {
+        let dynamicRange: DynamicRange
+        let terminationSummary: String
+        let selectedEncoder: FFmpegVideoEncoder
+        let binarySource: FFmpegBinarySource
+        let binaryPath: String
+        let renderIntent: FFmpegRenderIntent
+        let outputPath: String
+        let clipCount: Int
+        let chapterCount: Int
+        let renderSize: CGSize
+        let frameRate: Int
+        let elapsedSeconds: TimeInterval
+        let latestOutTimeMicroseconds: Int64
+        let latestOutputSizeBytes: UInt64
+        let latestSpeed: Double?
+        let fallbackReason: String?
+        let stalledForSeconds: TimeInterval?
+        let stalledOutTimeMicroseconds: Int64?
+        let stalledOutputSizeBytes: UInt64?
+        let stderrTail: [String]
     }
 
     private final class ActivityTracker: @unchecked Sendable {
@@ -220,6 +244,18 @@ final class FFmpegHDRRenderer {
         }
         callbacks.log("FFmpeg render intent: \(plan.renderIntent.rawValue)")
         callbacks.log("Capture-date overlays enabled: \(plan.requiresCaptureDateOverlay) (clips=\(plan.clips.filter { $0.captureDateOverlayURL != nil }.count))")
+        callbacks.log(
+            "FFmpeg plan summary: output=\(plan.outputURL.path), clips=\(plan.clips.count), chapters=\(plan.chapters.count), " +
+            "renderSize=\(Int(plan.renderSize.width.rounded()))x\(Int(plan.renderSize.height.rounded())), frameRate=\(plan.frameRate), " +
+            "container=\(plan.container.rawValue), codec=\(plan.videoCodec.rawValue), dynamicRange=\(plan.dynamicRange.rawValue), " +
+            "audioLayout=\(plan.audioLayout.rawValue), expectedDuration=\(String(format: "%.2fs", commandBuilder.expectedDurationSeconds(for: plan)))"
+        )
+        if let firstClip = plan.clips.first, let lastClip = plan.clips.last {
+            callbacks.log(
+                "FFmpeg clip endpoints: first=\(firstClip.sourceDescription) [\(String(format: "%.2fs", firstClip.durationSeconds))], " +
+                "last=\(lastClip.sourceDescription) [\(String(format: "%.2fs", lastClip.durationSeconds))]"
+            )
+        }
         callbacks.log("FFmpeg selected binary: \(resolution.selectedBinary.ffmpegURL.path) [\(resolution.selectedBinary.source.rawValue)]")
         callbacks.log("FFmpeg encoder profile: \(commandBuilder.profileSummary(for: plan, encoder: selectedEncoder))")
         if plan.renderIntent == .intermediateChunk,
@@ -296,19 +332,34 @@ final class FFmpegHDRRenderer {
         stderrHandle.closeFile()
 
         guard termination.status == 0 else {
-            let details = failureDetails(from: stderrTail)
             let terminationSummary = terminationDescription(status: termination.status, reason: termination.reason)
-            let detailSuffix = details.isEmpty ? "No additional stderr details." : details
-            if let stallContext = termination.stallContext {
-                throw RenderError.exportFailed(
-                    "FFmpeg \(plan.dynamicRange == .hdr ? "HDR" : "SDR") render stalled for \(Int(stallContext.stallDurationSeconds.rounded()))s " +
-                    "(last_out_time_us=\(stallContext.lastOutTimeMicroseconds), output=\(Self.formatByteCount(stallContext.lastOutputSizeBytes))). " +
-                    "Terminated with \(terminationSummary). \(detailSuffix)"
-                )
-            }
-            throw RenderError.exportFailed(
-                "FFmpeg \(plan.dynamicRange == .hdr ? "HDR" : "SDR") render failed (\(terminationSummary)). \(detailSuffix)"
+            let activitySnapshot = activityTracker.snapshot()
+            let failureSnapshot = FailureSnapshot(
+                dynamicRange: plan.dynamicRange,
+                terminationSummary: terminationSummary,
+                selectedEncoder: selectedEncoder,
+                binarySource: resolution.selectedBinary.source,
+                binaryPath: resolution.selectedBinary.ffmpegURL.path,
+                renderIntent: plan.renderIntent,
+                outputPath: plan.outputURL.path,
+                clipCount: plan.clips.count,
+                chapterCount: plan.chapters.count,
+                renderSize: plan.renderSize,
+                frameRate: plan.frameRate,
+                elapsedSeconds: Date().timeIntervalSince(renderStartedAt),
+                latestOutTimeMicroseconds: activitySnapshot.latestOutTimeMicroseconds,
+                latestOutputSizeBytes: activitySnapshot.latestOutputSizeBytes,
+                latestSpeed: activitySnapshot.latestSpeed,
+                fallbackReason: resolution.fallbackReason,
+                stalledForSeconds: termination.stallContext?.stallDurationSeconds,
+                stalledOutTimeMicroseconds: termination.stallContext?.lastOutTimeMicroseconds,
+                stalledOutputSizeBytes: termination.stallContext?.lastOutputSizeBytes,
+                stderrTail: stderrTail
             )
+            for line in Self.failureDiagnosticLines(from: failureSnapshot) {
+                callbacks.log(line)
+            }
+            throw RenderError.exportFailed(Self.failureMessage(from: failureSnapshot))
         }
 
         callbacks.report(1.0)
@@ -619,18 +670,87 @@ final class FFmpegHDRRenderer {
         )
     }
 
-    private func failureDetails(from stderrTail: [String]) -> String {
-        let highlighted = stderrTail.filter { Self.isNoteworthyStderrLine($0) }
+    static func failureMessage(from snapshot: FailureSnapshot) -> String {
+        var lines: [String] = []
+        let rangeLabel = snapshot.dynamicRange == .hdr ? "HDR" : "SDR"
+        if let stalledForSeconds = snapshot.stalledForSeconds,
+           let stalledOutTimeMicroseconds = snapshot.stalledOutTimeMicroseconds,
+           let stalledOutputSizeBytes = snapshot.stalledOutputSizeBytes {
+            lines.append("FFmpeg \(rangeLabel) render stalled for \(Int(stalledForSeconds.rounded()))s and terminated with \(snapshot.terminationSummary).")
+            lines.append(
+                "Stall point: last_out_time \(formatFFmpegOutTime(stalledOutTimeMicroseconds)) | output \(formatByteCount(stalledOutputSizeBytes))"
+            )
+        } else {
+            lines.append("FFmpeg \(rangeLabel) render failed (\(snapshot.terminationSummary)).")
+        }
+
+        lines.append("Encoder: \(snapshot.selectedEncoder.rawValue)")
+        lines.append("Binary: \(snapshot.binarySource.rawValue) (\(snapshot.binaryPath))")
+        lines.append(
+            "Plan: intent=\(snapshot.renderIntent.rawValue) | clips=\(snapshot.clipCount) | chapters=\(snapshot.chapterCount) | " +
+            "size=\(Int(snapshot.renderSize.width.rounded()))x\(Int(snapshot.renderSize.height.rounded())) | fps=\(snapshot.frameRate)"
+        )
+        lines.append(
+            "Progress: elapsed \(formatElapsed(snapshot.elapsedSeconds)) | last_out_time \(formatFFmpegOutTime(snapshot.latestOutTimeMicroseconds)) | " +
+            "output \(formatByteCount(snapshot.latestOutputSizeBytes)) | speed \(formatSpeed(snapshot.latestSpeed))"
+        )
+        lines.append("Output: \(snapshot.outputPath)")
+        if let fallbackReason = snapshot.fallbackReason, !fallbackReason.isEmpty {
+            lines.append("Fallback reason: \(fallbackReason)")
+        }
+
+        let stderrLines = filteredFailureStderrLines(from: snapshot.stderrTail)
+        if !stderrLines.isEmpty {
+            lines.append("Recent stderr:")
+            lines.append(contentsOf: stderrLines.map { "- \($0)" })
+        } else {
+            lines.append("Recent stderr: none captured")
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    static func failureDiagnosticLines(from snapshot: FailureSnapshot) -> [String] {
+        var lines: [String] = [
+            "FFmpeg failure summary: encoder=\(snapshot.selectedEncoder.rawValue), binary=\(snapshot.binarySource.rawValue), termination=\(snapshot.terminationSummary)",
+            "FFmpeg failure plan: intent=\(snapshot.renderIntent.rawValue), clips=\(snapshot.clipCount), chapters=\(snapshot.chapterCount), " +
+                "renderSize=\(Int(snapshot.renderSize.width.rounded()))x\(Int(snapshot.renderSize.height.rounded())), fps=\(snapshot.frameRate), output=\(snapshot.outputPath)",
+            "FFmpeg failure progress: elapsed=\(formatElapsed(snapshot.elapsedSeconds)), last_out_time=\(formatFFmpegOutTime(snapshot.latestOutTimeMicroseconds)), " +
+                "output=\(formatByteCount(snapshot.latestOutputSizeBytes)), speed=\(formatSpeed(snapshot.latestSpeed))"
+        ]
+        if let fallbackReason = snapshot.fallbackReason, !fallbackReason.isEmpty {
+            lines.append("FFmpeg failure fallback reason: \(fallbackReason)")
+        }
+        if let stalledForSeconds = snapshot.stalledForSeconds,
+           let stalledOutTimeMicroseconds = snapshot.stalledOutTimeMicroseconds,
+           let stalledOutputSizeBytes = snapshot.stalledOutputSizeBytes {
+            lines.append(
+                "FFmpeg failure stall context: stalled_for=\(Int(stalledForSeconds.rounded()))s, " +
+                "last_out_time=\(formatFFmpegOutTime(stalledOutTimeMicroseconds)), output=\(formatByteCount(stalledOutputSizeBytes))"
+            )
+        }
+
+        let stderrLines = filteredFailureStderrLines(from: snapshot.stderrTail)
+        if stderrLines.isEmpty {
+            lines.append("FFmpeg failure stderr: none captured")
+        } else {
+            lines.append(contentsOf: stderrLines.map { "FFmpeg failure stderr: \($0)" })
+        }
+        return lines
+    }
+
+    static func filteredFailureStderrLines(from stderrTail: [String]) -> [String] {
+        let highlighted = stderrTail.filter { isNoteworthyStderrLine($0) }
         if !highlighted.isEmpty {
-            return highlighted.suffix(8).joined(separator: " | ")
+            return Array(highlighted.suffix(8))
         }
 
-        let filteredTail = stderrTail.filter { !Self.isRoutineStderrLine($0) }
+        let filteredTail = stderrTail.filter { !isRoutineStderrLine($0) }
         if !filteredTail.isEmpty {
-            return filteredTail.suffix(8).joined(separator: " | ")
+            return Array(filteredTail.suffix(8))
         }
 
-        return stderrTail.suffix(8).joined(separator: " | ")
+        return Array(stderrTail.suffix(8))
     }
 
     private static func isNoteworthyStderrLine(_ line: String) -> Bool {
@@ -662,6 +782,7 @@ final class FFmpegHDRRenderer {
 
     private static func isRoutineStderrLine(_ line: String) -> Bool {
         let lowered = line.lowercased()
+        let trimmed = lowered.trimmingCharacters(in: .whitespaces)
         if lowered == "stream mapping:" || lowered.hasPrefix("stream mapping:") {
             return true
         }
@@ -675,6 +796,15 @@ final class FFmpegHDRRenderer {
             return true
         }
         if lowered.contains("the \"all_channel_counts\" option is deprecated") {
+            return true
+        }
+        if trimmed.hasPrefix("chapter #") {
+            return true
+        }
+        if trimmed == "metadata:" {
+            return true
+        }
+        if trimmed.hasPrefix("title           :") {
             return true
         }
         return false
@@ -734,6 +864,20 @@ final class FFmpegHDRRenderer {
         let minutes = clampedSeconds / 60
         let seconds = clampedSeconds % 60
         return String(format: "%02d:%02d", minutes, seconds)
+    }
+
+    static func formatFFmpegOutTime(_ outTimeMicroseconds: Int64) -> String {
+        guard outTimeMicroseconds > 0 else {
+            return "--"
+        }
+
+        let totalMilliseconds = max(outTimeMicroseconds / 1_000, 0)
+        let totalSeconds = totalMilliseconds / 1_000
+        let hours = totalSeconds / 3_600
+        let minutes = (totalSeconds % 3_600) / 60
+        let seconds = totalSeconds % 60
+        let milliseconds = totalMilliseconds % 1_000
+        return String(format: "%02lld:%02lld:%02lld.%03lld", hours, minutes, seconds, milliseconds)
     }
 
     private static func formatByteCount(_ bytes: UInt64) -> String {

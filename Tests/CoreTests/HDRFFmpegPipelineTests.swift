@@ -1093,6 +1093,66 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(hdrLine.hasPrefix("HDR encode: 97%"))
     }
 
+    func testFilteredFailureStderrLinesPreferRealErrorsOverChapterMetadataNoise() {
+        let lines = [
+            "Chapter #84:27: start 3560.495000, end 3564.495000",
+            "Metadata:",
+            "title           : July 28 (1 photo)",
+            "Stream mapping:",
+            "  Stream #0:0 -> #0:0 (libx265)",
+            "x265 [error]: malloc failed",
+            "[libx265 @ 0x123] Cannot allocate memory"
+        ]
+
+        let filtered = FFmpegHDRRenderer.filteredFailureStderrLines(from: lines)
+
+        XCTAssertEqual(filtered, [
+            "x265 [error]: malloc failed",
+            "[libx265 @ 0x123] Cannot allocate memory"
+        ])
+    }
+
+    func testFailureMessageIncludesStructuredProgressSnapshot() {
+        let snapshot = FFmpegHDRRenderer.FailureSnapshot(
+            dynamicRange: .hdr,
+            terminationSummary: "signal 9 (SIGKILL)",
+            selectedEncoder: .libx265,
+            binarySource: .bundled,
+            binaryPath: "/tmp/ffmpeg",
+            renderIntent: .finalDelivery,
+            outputPath: "/tmp/out.mp4",
+            clipCount: 85,
+            chapterCount: 29,
+            renderSize: CGSize(width: 3840, height: 2160),
+            frameRate: 60,
+            elapsedSeconds: 3723,
+            latestOutTimeMicroseconds: 3_560_495_000,
+            latestOutputSizeBytes: 2_345_678_901,
+            latestSpeed: 0.71,
+            fallbackReason: "Bundled FFmpeg missing required features: none.",
+            stalledForSeconds: nil,
+            stalledOutTimeMicroseconds: nil,
+            stalledOutputSizeBytes: nil,
+            stderrTail: [
+                "Chapter #84:27: start 3560.495000, end 3564.495000",
+                "Metadata:",
+                "title           : July 28 (1 photo)",
+                "x265 [error]: malloc failed"
+            ]
+        )
+
+        let message = FFmpegHDRRenderer.failureMessage(from: snapshot)
+
+        XCTAssertTrue(message.contains("FFmpeg HDR render failed (signal 9 (SIGKILL))."))
+        XCTAssertTrue(message.contains("Encoder: libx265"))
+        XCTAssertTrue(message.contains("Binary: bundled (/tmp/ffmpeg)"))
+        XCTAssertTrue(message.contains("Plan: intent=finalDelivery | clips=85 | chapters=29 | size=3840x2160 | fps=60"))
+        XCTAssertTrue(message.contains("Progress: elapsed 62:03 | last_out_time 00:59:20.495"))
+        XCTAssertTrue(message.contains("Recent stderr:"))
+        XCTAssertTrue(message.contains("- x265 [error]: malloc failed"))
+        XCTAssertFalse(message.contains("July 28 (1 photo)"))
+    }
+
     func testProcessCPUTimeSecondsReadsCurrentProcessUsage() {
         let cpuTimeSeconds = FFmpegHDRRenderer.processCPUTimeSeconds(for: getpid())
 

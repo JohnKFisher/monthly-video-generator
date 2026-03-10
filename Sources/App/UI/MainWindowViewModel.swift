@@ -1974,37 +1974,46 @@ final class MainWindowViewModel: ObservableObject {
         continuation.resume(returning: approved)
     }
 
-    private func formatErrorForDisplay(_ error: Error) -> String {
+    func formatErrorForDisplay(_ error: Error) -> String {
         if isCancellingRender || error is CancellationError {
             return "Render cancelled"
         }
 
         let nsError = error as NSError
         var parts: [String] = []
+        var seenParts: Set<String> = []
 
-        if let renderError = error as? RenderError, let description = renderError.errorDescription {
-            parts.append(description)
-        } else {
-            parts.append("The operation could not be completed.")
+        func appendUnique(_ value: String?) {
+            guard let value else { return }
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            guard seenParts.insert(trimmed).inserted else { return }
+            parts.append(trimmed)
         }
 
-        parts.append("Domain: \(nsError.domain) Code: \(nsError.code)")
+        if let renderError = error as? RenderError, let description = renderError.errorDescription {
+            appendUnique(description)
+        } else {
+            appendUnique("The operation could not be completed.")
+        }
+
+        appendUnique("Domain: \(nsError.domain) Code: \(nsError.code)")
 
         if !nsError.localizedDescription.isEmpty,
            nsError.localizedDescription != "The operation could not be completed." {
-            parts.append(nsError.localizedDescription)
+            appendUnique(nsError.localizedDescription)
         }
 
         if let reason = nsError.localizedFailureReason, !reason.isEmpty {
-            parts.append("Reason: \(reason)")
+            appendUnique("Reason: \(reason)")
         }
 
         if let suggestion = nsError.localizedRecoverySuggestion, !suggestion.isEmpty {
-            parts.append("Suggestion: \(suggestion)")
+            appendUnique("Suggestion: \(suggestion)")
         }
 
         if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
-            parts.append("Underlying: \(underlying.domain) (\(underlying.code)) \(underlying.localizedDescription)")
+            appendUnique("Underlying: \(underlying.domain) (\(underlying.code)) \(underlying.localizedDescription)")
         }
 
         return parts.joined(separator: "\n")

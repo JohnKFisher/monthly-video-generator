@@ -116,6 +116,24 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertTrue(restoredViewModel.writeDiagnosticsLog)
     }
 
+    func testFormatErrorForDisplayAvoidsDuplicatingLocalizedDescription() {
+        let viewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            preferencesStore: makePreferencesStore()
+        )
+        let error = RenderError.exportFailed(
+            """
+            FFmpeg HDR render failed (signal 9 (SIGKILL)).
+            Encoder: libx265
+            """
+        )
+
+        let formatted = viewModel.formatErrorForDisplay(error)
+
+        XCTAssertEqual(formatted.components(separatedBy: "Export failed:").count - 1, 1)
+        XCTAssertTrue(formatted.contains("Domain: Core.RenderError Code: 2"))
+    }
+
     func testOpeningTitleCaptionDefaultsToFisherFamilyVideos() {
         let viewModel = makeViewModel(
             coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
