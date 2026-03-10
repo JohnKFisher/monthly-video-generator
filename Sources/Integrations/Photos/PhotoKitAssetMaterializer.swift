@@ -35,6 +35,7 @@ public enum PhotoMaterializerError: LocalizedError {
 
 public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecked Sendable {
     typealias VideoInspectionLoader = @Sendable (String) async throws -> LoadedVideoInspection
+    typealias VideoDirectURLLoader = @Sendable (String) async throws -> URL
     typealias VideoFileMaterializer = @Sendable (String, String) async throws -> URL
 
     struct LoadedVideoInspection: Equatable, Sendable {
@@ -305,6 +306,7 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
     private let materializedVideoCache = MaterializedVideoCache()
     private let activeRequestRegistry: ActiveRequestRegistry
     private let videoInspectionLoader: VideoInspectionLoader
+    private let videoDirectURLLoader: VideoDirectURLLoader
     private let videoFileMaterializer: VideoFileMaterializer
 
     public init() {
@@ -312,6 +314,9 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
         self.activeRequestRegistry = registry
         self.videoInspectionLoader = { localIdentifier in
             try await Self.loadPhotoVideoInspection(localIdentifier: localIdentifier, activeRequests: registry)
+        }
+        self.videoDirectURLLoader = { localIdentifier in
+            try await Self.loadPhotoVideoDirectURL(localIdentifier: localIdentifier, activeRequests: registry)
         }
         self.videoFileMaterializer = { localIdentifier, preferredFilename in
             try await Self.materializePhotoVideoFile(
@@ -324,11 +329,13 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
 
     init(
         videoInspectionLoader: @escaping VideoInspectionLoader,
+        videoDirectURLLoader: @escaping VideoDirectURLLoader,
         videoFileMaterializer: @escaping VideoFileMaterializer
     ) {
         let registry = ActiveRequestRegistry()
         self.activeRequestRegistry = registry
         self.videoInspectionLoader = videoInspectionLoader
+        self.videoDirectURLLoader = videoDirectURLLoader
         self.videoFileMaterializer = videoFileMaterializer
     }
 
@@ -476,6 +483,17 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
             return cachedVideoURL
         }
 
+        do {
+            let directVideoURL = try await videoDirectURLLoader(localIdentifier)
+            if Self.isUsableDirectVideoURL(directVideoURL, fileManager: fileManager) {
+                return directVideoURL
+            }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            // Fall back to temp-file materialization for URLs that are transient or unavailable.
+        }
+
         let materializedURL = try await videoFileMaterializer(localIdentifier, preferredFilename)
         await materializedVideoCache.store(materializedURL, for: localIdentifier)
         return materializedURL
@@ -555,6 +573,19 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
             sourceFrameRate: resolvedFrameRate,
             sourceAudioChannelCount: sourceAudioChannelCount
         )
+    }
+
+    private static func loadPhotoVideoDirectURL(
+        localIdentifier: String,
+        activeRequests: ActiveRequestRegistry
+    ) async throws -> URL {
+        let fetchResult = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil)
+        guard let asset = fetchResult.firstObject else {
+            throw PhotoMaterializerError.missingAsset(localIdentifier)
+        }
+
+        let urlAsset = try await requestVideoURLAsset(asset: asset, activeRequests: activeRequests)
+        return urlAsset.url
     }
 
     private static func requestVideoURLAsset(
@@ -685,6 +716,24 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
         }
 
         return nil
+    }
+
+    private static func isUsableDirectVideoURL(_ url: URL, fileManager: FileManager) -> Bool {
+        guard url.isFileURL else {
+            return false
+        }
+
+        let path = url.path
+        guard !path.isEmpty else {
+            return false
+        }
+
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: path, isDirectory: &isDirectory), !isDirectory.boolValue else {
+            return false
+        }
+
+        return fileManager.isReadableFile(atPath: path)
     }
 
     private static func preferredVideoExtension(preferredFilename: String, resourceFilename: String) -> String {
