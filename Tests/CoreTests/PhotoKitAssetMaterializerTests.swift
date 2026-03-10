@@ -4,17 +4,16 @@ import Foundation
 import XCTest
 
 final class PhotoKitAssetMaterializerTests: XCTestCase {
-    func testPrepareItemsForSmartMediaCachesInspectionMetadataAndRetainsDirectVideoReference() async throws {
-        let directVideoURL = FileManager.default.temporaryDirectory
+    func testPrepareItemsForSmartMediaCachesInspectionMetadataWithoutMaterializingVideo() async throws {
+        let materializedVideoURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("PhotoKitAssetMaterializerTests-\(UUID().uuidString)")
             .appendingPathExtension("mov")
-        try Data().write(to: directVideoURL)
+        try Data().write(to: materializedVideoURL)
         defer {
-            try? FileManager.default.removeItem(at: directVideoURL)
+            try? FileManager.default.removeItem(at: materializedVideoURL)
         }
 
         let inspectionLoadCounter = LockedCounter()
-        let directURLLoadCounter = LockedCounter()
         let materializationCounter = LockedCounter()
         let callbackRecorder = InspectionCallbackRecorder()
         let materializer = PhotoKitAssetMaterializer(
@@ -26,16 +25,11 @@ final class PhotoKitAssetMaterializerTests: XCTestCase {
                     sourceAudioChannelCount: 6
                 )
             },
-            videoDirectURLLoader: { localIdentifier in
-                XCTAssertEqual(localIdentifier, "video-1")
-                directURLLoadCounter.increment()
-                return PhotoKitAssetMaterializer.DirectVideoReference(url: directVideoURL)
-            },
             videoFileMaterializer: { localIdentifier, preferredFilename in
                 XCTAssertEqual(localIdentifier, "video-1")
                 XCTAssertEqual(preferredFilename, "video.mov")
                 materializationCounter.increment()
-                return URL(fileURLWithPath: "/tmp/should-not-be-used.mov")
+                return materializedVideoURL
             }
         )
 
@@ -58,34 +52,19 @@ final class PhotoKitAssetMaterializerTests: XCTestCase {
         XCTAssertEqual(callbacks.progress.first ?? -1, 0, accuracy: 0.001)
         XCTAssertEqual(callbacks.progress.last ?? -1, 1, accuracy: 0.001)
         XCTAssertEqual(callbacks.status, ["Inspecting video frame rates and audio 1 of 1..."])
-
-        let firstMaterializedURL = try await materializer.materializePhotoAsset(
-            localIdentifier: "video-1",
-            preferredFilename: "video.mov"
-        )
-        let secondMaterializedURL = try await materializer.materializePhotoAsset(
-            localIdentifier: "video-1",
-            preferredFilename: "video.mov"
-        )
-
-        XCTAssertEqual(firstMaterializedURL, directVideoURL)
-        XCTAssertEqual(secondMaterializedURL, directVideoURL)
         XCTAssertEqual(inspectionLoadCounter.value, 1)
-        XCTAssertEqual(directURLLoadCounter.value, 1)
         XCTAssertEqual(materializationCounter.value, 0)
     }
 
-    func testMaterializePhotoAssetFallsBackToTempCopyWhenDirectURLIsUnavailable() async throws {
-        let missingDirectURL = URL(fileURLWithPath: "/tmp/PhotoKitAssetMaterializerTests-missing-\(UUID().uuidString).mov")
-        let fallbackURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("PhotoKitAssetMaterializerTests-fallback-\(UUID().uuidString)")
+    func testMaterializePhotoAssetCachesTempCopyAcrossRepeatedCalls() async throws {
+        let materializedVideoURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PhotoKitAssetMaterializerTests-cached-\(UUID().uuidString)")
             .appendingPathExtension("mov")
-        try Data().write(to: fallbackURL)
+        try Data().write(to: materializedVideoURL)
         defer {
-            try? FileManager.default.removeItem(at: fallbackURL)
+            try? FileManager.default.removeItem(at: materializedVideoURL)
         }
 
-        let directURLLoadCounter = LockedCounter()
         let materializationCounter = LockedCounter()
         let materializer = PhotoKitAssetMaterializer(
             videoInspectionLoader: { localIdentifier in
@@ -95,15 +74,11 @@ final class PhotoKitAssetMaterializerTests: XCTestCase {
                     sourceAudioChannelCount: 2
                 )
             },
-            videoDirectURLLoader: { _ in
-                directURLLoadCounter.increment()
-                return PhotoKitAssetMaterializer.DirectVideoReference(url: missingDirectURL)
-            },
             videoFileMaterializer: { localIdentifier, preferredFilename in
                 XCTAssertEqual(localIdentifier, "video-1")
                 XCTAssertEqual(preferredFilename, "video.mov")
                 materializationCounter.increment()
-                return fallbackURL
+                return materializedVideoURL
             }
         )
 
@@ -122,9 +97,8 @@ final class PhotoKitAssetMaterializerTests: XCTestCase {
             preferredFilename: "video.mov"
         )
 
-        XCTAssertEqual(firstMaterializedURL, fallbackURL)
-        XCTAssertEqual(secondMaterializedURL, fallbackURL)
-        XCTAssertEqual(directURLLoadCounter.value, 1)
+        XCTAssertEqual(firstMaterializedURL, materializedVideoURL)
+        XCTAssertEqual(secondMaterializedURL, materializedVideoURL)
         XCTAssertEqual(materializationCounter.value, 1)
     }
 
@@ -137,12 +111,6 @@ final class PhotoKitAssetMaterializerTests: XCTestCase {
                 return PhotoKitAssetMaterializer.LoadedVideoInspection(
                     sourceFrameRate: 60,
                     sourceAudioChannelCount: 2
-                )
-            },
-            videoDirectURLLoader: { _ in
-                XCTFail("Direct video URL loading should not run during metadata inspection cancellation test")
-                return PhotoKitAssetMaterializer.DirectVideoReference(
-                    url: URL(fileURLWithPath: "/tmp/unused.mov")
                 )
             },
             videoFileMaterializer: { _, _ in
