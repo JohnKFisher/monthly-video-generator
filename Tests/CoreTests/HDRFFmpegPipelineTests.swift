@@ -1055,6 +1055,13 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(hdrLine.hasPrefix("HDR encode: 97%"))
     }
 
+    func testProcessCPUTimeSecondsReadsCurrentProcessUsage() {
+        let cpuTimeSeconds = FFmpegHDRRenderer.processCPUTimeSeconds(for: getpid())
+
+        XCTAssertNotNil(cpuTimeSeconds)
+        XCTAssertGreaterThanOrEqual(cpuTimeSeconds ?? -1, 0)
+    }
+
     func testBinaryResolverAutoFallsBackToBundledWhenSystemIsMissingTonemapForSDRHDRSources() throws {
         let systemBinary = FFmpegBinary(
             ffmpegURL: URL(fileURLWithPath: "/tmp/system/ffmpeg"),

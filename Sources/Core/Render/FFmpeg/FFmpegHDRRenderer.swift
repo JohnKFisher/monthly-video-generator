@@ -697,12 +697,17 @@ final class FFmpegHDRRenderer {
     }
 
     private func processCPUTimeSeconds(for pid: Int32) -> Double? {
+        Self.processCPUTimeSeconds(for: pid)
+    }
+
+    static func processCPUTimeSeconds(for pid: Int32) -> Double? {
         var usage = rusage_info_current()
-        var usagePointer: rusage_info_t? = withUnsafeMutablePointer(to: &usage) { pointer in
-            UnsafeMutableRawPointer(pointer)
-        }
-        let result = withUnsafeMutablePointer(to: &usagePointer) { pointer in
-            proc_pid_rusage(pid, Int32(RUSAGE_INFO_CURRENT), pointer)
+        let result = withUnsafeMutablePointer(to: &usage) { usagePointer in
+            // `proc_pid_rusage` is imported as taking a pointer to `rusage_info_t`
+            // (`void *` in C), so pass the struct buffer itself via a temporary rebound.
+            usagePointer.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { reboundPointer in
+                proc_pid_rusage(pid, Int32(RUSAGE_INFO_CURRENT), reboundPointer)
+            }
         }
         guard result == 0 else {
             return nil
