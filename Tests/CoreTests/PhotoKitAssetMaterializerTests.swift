@@ -4,7 +4,7 @@ import Foundation
 import XCTest
 
 final class PhotoKitAssetMaterializerTests: XCTestCase {
-    func testPrepareItemsForSmartMediaCachesInspectionMetadataAndPrefersFreshDirectVideoURL() async throws {
+    func testPrepareItemsForSmartMediaCachesInspectionMetadataAndRetainsDirectVideoReference() async throws {
         let directVideoURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("PhotoKitAssetMaterializerTests-\(UUID().uuidString)")
             .appendingPathExtension("mov")
@@ -29,7 +29,7 @@ final class PhotoKitAssetMaterializerTests: XCTestCase {
             videoDirectURLLoader: { localIdentifier in
                 XCTAssertEqual(localIdentifier, "video-1")
                 directURLLoadCounter.increment()
-                return directVideoURL
+                return PhotoKitAssetMaterializer.DirectVideoReference(url: directVideoURL)
             },
             videoFileMaterializer: { localIdentifier, preferredFilename in
                 XCTAssertEqual(localIdentifier, "video-1")
@@ -71,7 +71,7 @@ final class PhotoKitAssetMaterializerTests: XCTestCase {
         XCTAssertEqual(firstMaterializedURL, directVideoURL)
         XCTAssertEqual(secondMaterializedURL, directVideoURL)
         XCTAssertEqual(inspectionLoadCounter.value, 1)
-        XCTAssertEqual(directURLLoadCounter.value, 2)
+        XCTAssertEqual(directURLLoadCounter.value, 1)
         XCTAssertEqual(materializationCounter.value, 0)
     }
 
@@ -97,7 +97,7 @@ final class PhotoKitAssetMaterializerTests: XCTestCase {
             },
             videoDirectURLLoader: { _ in
                 directURLLoadCounter.increment()
-                return missingDirectURL
+                return PhotoKitAssetMaterializer.DirectVideoReference(url: missingDirectURL)
             },
             videoFileMaterializer: { localIdentifier, preferredFilename in
                 XCTAssertEqual(localIdentifier, "video-1")
@@ -141,7 +141,9 @@ final class PhotoKitAssetMaterializerTests: XCTestCase {
             },
             videoDirectURLLoader: { _ in
                 XCTFail("Direct video URL loading should not run during metadata inspection cancellation test")
-                return URL(fileURLWithPath: "/tmp/unused.mov")
+                return PhotoKitAssetMaterializer.DirectVideoReference(
+                    url: URL(fileURLWithPath: "/tmp/unused.mov")
+                )
             },
             videoFileMaterializer: { _, _ in
                 XCTFail("Video materialization should not run during metadata inspection cancellation test")

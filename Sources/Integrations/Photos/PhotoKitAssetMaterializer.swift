@@ -34,8 +34,18 @@ public enum PhotoMaterializerError: LocalizedError {
 }
 
 public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecked Sendable {
+    final class DirectVideoReference: @unchecked Sendable {
+        let url: URL
+        let retainedURLAsset: AVURLAsset?
+
+        init(url: URL, retainedURLAsset: AVURLAsset? = nil) {
+            self.url = url
+            self.retainedURLAsset = retainedURLAsset
+        }
+    }
+
     typealias VideoInspectionLoader = @Sendable (String) async throws -> LoadedVideoInspection
-    typealias VideoDirectURLLoader = @Sendable (String) async throws -> URL
+    typealias VideoDirectURLLoader = @Sendable (String) async throws -> DirectVideoReference
     typealias VideoFileMaterializer = @Sendable (String, String) async throws -> URL
 
     struct LoadedVideoInspection: Equatable, Sendable {
@@ -56,14 +66,14 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
     }
 
     private actor MaterializedVideoCache {
-        private var materializedVideoURLs: [String: URL] = [:]
+        private var materializedVideoReferences: [String: DirectVideoReference] = [:]
 
-        func cachedURL(for localIdentifier: String) -> URL? {
-            materializedVideoURLs[localIdentifier]
+        func cachedReference(for localIdentifier: String) -> DirectVideoReference? {
+            materializedVideoReferences[localIdentifier]
         }
 
-        func store(_ url: URL, for localIdentifier: String) {
-            materializedVideoURLs[localIdentifier] = url
+        func store(_ reference: DirectVideoReference, for localIdentifier: String) {
+            materializedVideoReferences[localIdentifier] = reference
         }
     }
 
@@ -316,7 +326,7 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
             try await Self.loadPhotoVideoInspection(localIdentifier: localIdentifier, activeRequests: registry)
         }
         self.videoDirectURLLoader = { localIdentifier in
-            try await Self.loadPhotoVideoDirectURL(localIdentifier: localIdentifier, activeRequests: registry)
+            try await Self.loadPhotoVideoDirectReference(localIdentifier: localIdentifier, activeRequests: registry)
         }
         self.videoFileMaterializer = { localIdentifier, preferredFilename in
             try await Self.materializePhotoVideoFile(
@@ -354,9 +364,9 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
     }
 
     public func materializePhotoAsset(localIdentifier: String, preferredFilename: String) async throws -> URL {
-        if let cachedVideoURL = await materializedVideoCache.cachedURL(for: localIdentifier),
-           fileManager.fileExists(atPath: cachedVideoURL.path) {
-            return cachedVideoURL
+        if let cachedVideoReference = await materializedVideoCache.cachedReference(for: localIdentifier),
+           fileManager.fileExists(atPath: cachedVideoReference.url.path) {
+            return cachedVideoReference.url
         }
 
         if await videoInspectionCache.cachedInspection(for: localIdentifier) != nil {
@@ -478,15 +488,18 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
     }
 
     private func materializeVideo(localIdentifier: String, preferredFilename: String) async throws -> URL {
-        if let cachedVideoURL = await materializedVideoCache.cachedURL(for: localIdentifier),
-           fileManager.fileExists(atPath: cachedVideoURL.path) {
-            return cachedVideoURL
+        if let cachedVideoReference = await materializedVideoCache.cachedReference(for: localIdentifier),
+           fileManager.fileExists(atPath: cachedVideoReference.url.path) {
+            return cachedVideoReference.url
         }
 
         do {
-            let directVideoURL = try await videoDirectURLLoader(localIdentifier)
-            if Self.isUsableDirectVideoURL(directVideoURL, fileManager: fileManager) {
-                return directVideoURL
+            let directVideoReference = try await videoDirectURLLoader(localIdentifier)
+            if Self.isUsableDirectVideoURL(directVideoReference.url, fileManager: fileManager) {
+                // Retain the AVURLAsset that yielded this file URL so PhotoKit-backed
+                // direct video paths stay valid until FFmpeg has a chance to open them.
+                await materializedVideoCache.store(directVideoReference, for: localIdentifier)
+                return directVideoReference.url
             }
         } catch is CancellationError {
             throw CancellationError()
@@ -495,7 +508,7 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
         }
 
         let materializedURL = try await videoFileMaterializer(localIdentifier, preferredFilename)
-        await materializedVideoCache.store(materializedURL, for: localIdentifier)
+        await materializedVideoCache.store(DirectVideoReference(url: materializedURL), for: localIdentifier)
         return materializedURL
     }
 
@@ -575,17 +588,17 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
         )
     }
 
-    private static func loadPhotoVideoDirectURL(
+    private static func loadPhotoVideoDirectReference(
         localIdentifier: String,
         activeRequests: ActiveRequestRegistry
-    ) async throws -> URL {
+    ) async throws -> DirectVideoReference {
         let fetchResult = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil)
         guard let asset = fetchResult.firstObject else {
             throw PhotoMaterializerError.missingAsset(localIdentifier)
         }
 
         let urlAsset = try await requestVideoURLAsset(asset: asset, activeRequests: activeRequests)
-        return urlAsset.url
+        return DirectVideoReference(url: urlAsset.url, retainedURLAsset: urlAsset)
     }
 
     private static func requestVideoURLAsset(
