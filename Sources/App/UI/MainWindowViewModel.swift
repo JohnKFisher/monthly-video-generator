@@ -34,7 +34,7 @@ extension RenderCoordinator: RenderCoordinating {}
 
 @MainActor
 final class MainWindowViewModel: ObservableObject {
-    enum SourceMode: String, CaseIterable, Identifiable {
+    enum SourceMode: String, CaseIterable, Identifiable, Sendable {
         case folder
         case photos
 
@@ -48,7 +48,7 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
 
-    enum PhotosFilterMode: String, CaseIterable, Identifiable, Codable {
+    enum PhotosFilterMode: String, CaseIterable, Identifiable, Codable, Sendable {
         case monthYear
         case album
 
@@ -141,6 +141,95 @@ final class MainWindowViewModel: ObservableObject {
 
     private struct SingleRenderSummarySnapshot: Sendable {
         let requestedProfile: ExportProfile
+    }
+
+    private struct QueueRunContext {
+        let currentJobNumber: Int
+        let totalJobCount: Int
+    }
+
+    private struct QueueCompletionSummary: Equatable {
+        let completedJobCount: Int
+        let totalJobCount: Int
+        let lastOutputPath: String
+
+        var alertMessage: String {
+            let noun = totalJobCount == 1 ? "job" : "jobs"
+            var lines = ["Completed \(completedJobCount) of \(totalJobCount) queued \(noun)."]
+            if !lastOutputPath.isEmpty {
+                lines.append("")
+                lines.append(lastOutputPath)
+            }
+            return lines.joined(separator: "\n")
+        }
+    }
+
+    struct QueuedRenderSnapshot: Equatable, Sendable {
+        let sourceMode: SourceMode
+        let selectedFolderURL: URL?
+        let recursiveScan: Bool
+        let selectedMonth: Int
+        let selectedYear: Int
+        let selectedPhotosFilterMode: PhotosFilterMode
+        let selectedPhotoAlbumID: String
+        let selectedPhotoAlbumTitle: String?
+        let outputDirectoryURL: URL
+        let plexShowTitle: String
+        let outputFilename: String
+        let isOutputNameAutoManaged: Bool
+        let plexDescriptionText: String
+        let isPlexDescriptionAutoManaged: Bool
+        let showsManualMonthYearOverride: Bool
+        let manualMonthYearOverrideMonth: Int
+        let manualMonthYearOverrideYear: Int
+        let includeOpeningTitle: Bool
+        let openingTitleText: String
+        let isOpeningTitleAutoManaged: Bool
+        let titleDurationSeconds: Double
+        let openingTitleCaptionMode: OpeningTitleCaptionMode
+        let openingTitleCaptionText: String
+        let crossfadeDurationSeconds: Double
+        let stillImageDurationSeconds: Double
+        let showCaptureDateOverlay: Bool
+        let selectedContainer: ContainerFormat
+        let selectedVideoCodec: VideoCodec
+        let selectedFrameRatePolicy: FrameRatePolicy
+        let selectedResolutionPolicy: ResolutionPolicy
+        let selectedDynamicRange: DynamicRange
+        let selectedHDRBinaryMode: HDRFFmpegBinaryMode
+        let selectedHDRHEVCEncoderMode: HDRHEVCEncoderMode
+        let selectedAudioLayout: AudioLayout
+        let selectedBitrateMode: BitrateMode
+        let writeDiagnosticsLog: Bool
+    }
+
+    enum QueuedRenderJobState: String, Equatable, Sendable {
+        case queued
+        case running
+        case completed
+        case failed
+
+        var displayLabel: String {
+            switch self {
+            case .queued:
+                return "Queued"
+            case .running:
+                return "Running"
+            case .completed:
+                return "Completed"
+            case .failed:
+                return "Failed"
+            }
+        }
+    }
+
+    struct QueuedRenderJob: Identifiable, Equatable, Sendable {
+        let id: UUID
+        let snapshot: QueuedRenderSnapshot
+        let sourceSummary: String
+        let outputNamePreview: String
+        var state: QueuedRenderJobState
+        var lastResultMessage: String
     }
 
     @Published var sourceMode: SourceMode = .photos {
@@ -284,6 +373,9 @@ final class MainWindowViewModel: ObservableObject {
     @Published var lastDiagnosticsPath: String = ""
     @Published var lastBackendSummary: String = ""
     @Published private(set) var lastSingleRenderCompletionSummary: RenderCompletionSummary?
+    @Published private(set) var queuedRenderJobs: [QueuedRenderJob] = []
+    @Published private(set) var isQueueRunning: Bool = false
+    @Published private(set) var renderCompleteAlertTitle: String = "Render Complete"
     @Published var showRenderCompleteAlert: Bool = false
     @Published var pendingSystemFFmpegFallbackConfirmation: SystemFFmpegFallbackConfirmation?
 
@@ -303,6 +395,7 @@ final class MainWindowViewModel: ObservableObject {
     private let nowProvider: () -> Date
     private var renderTask: Task<Void, Never>?
     private var renderStatusDetail: String?
+    private var queueRunContext: QueueRunContext?
     private var systemFFmpegFallbackContinuation: CheckedContinuation<Bool, Never>?
     private var hasApprovedSystemFFmpegFallbackForCurrentRun = false
     private var isApplyingExportConstraints = false
@@ -311,6 +404,8 @@ final class MainWindowViewModel: ObservableObject {
     private var isApplyingOpeningTitleProgrammatically = false
     private var isApplyingOutputFilenameProgrammatically = false
     private var isApplyingPlexDescriptionProgrammatically = false
+    private var isCancellingRender = false
+    private var lastQueueCompletionSummary: QueueCompletionSummary?
 
     private static let defaultExportProfile = ExportProfileManager().defaultProfile()
     private static let defaultPlexShowTitle = "Family Videos"
@@ -493,7 +588,36 @@ final class MainWindowViewModel: ObservableObject {
         return "In Apple Photos mode, Smart audio may inspect/download selected videos before rendering to choose Mono, Stereo, or 5.1."
     }
 
+    var canStartQueue: Bool {
+        !isRendering && nextQueuedRenderStartIndex() != nil
+    }
+
+    var canClearQueue: Bool {
+        !isRendering && !queuedRenderJobs.isEmpty
+    }
+
+    var queueStatusDescription: String {
+        if queuedRenderJobs.isEmpty {
+            return "Snapshot the current form into queued jobs, then start the queue when you're ready."
+        }
+
+        let completedCount = queuedRenderJobs.filter { $0.state == .completed }.count
+        let failedCount = queuedRenderJobs.filter { $0.state == .failed }.count
+        let queuedCount = queuedRenderJobs.filter { $0.state == .queued }.count
+
+        if isQueueRunning {
+            return "Queue running. Completed \(completedCount) of \(queuedRenderJobs.count) job(s)."
+        }
+        if failedCount > 0 {
+            return "Queue paused for review. Failed \(failedCount) job(s), queued \(queuedCount) job(s)."
+        }
+        return "Queued \(queuedCount) job(s). Completed \(completedCount) job(s)."
+    }
+
     var renderCompleteAlertMessage: String {
+        if let lastQueueCompletionSummary {
+            return lastQueueCompletionSummary.alertMessage
+        }
         if let lastSingleRenderCompletionSummary {
             return lastSingleRenderCompletionSummary.alertMessage
         }
@@ -613,16 +737,71 @@ final class MainWindowViewModel: ObservableObject {
     func startRender() {
         guard !isRendering, renderTask == nil else { return }
 
-        let completionSummarySnapshot = makeSingleRenderSummarySnapshot()
+        let snapshot = makeCurrentRenderSnapshot()
+        let completionSummarySnapshot = makeSingleRenderSummarySnapshot(snapshot: snapshot)
         renderTask = Task {
-            await performSingleRender(completionSummarySnapshot: completionSummarySnapshot)
+            await performSingleRender(
+                snapshot: snapshot,
+                completionSummarySnapshot: completionSummarySnapshot
+            )
             await MainActor.run {
                 self.renderTask = nil
             }
         }
     }
 
+    func addCurrentSettingsToQueue() {
+        let snapshot = makeCurrentRenderSnapshot()
+
+        do {
+            try validateSnapshotForQueue(snapshot)
+        } catch {
+            statusMessage = formatErrorForDisplay(error)
+            return
+        }
+
+        queuedRenderJobs.append(
+            QueuedRenderJob(
+                id: UUID(),
+                snapshot: snapshot,
+                sourceSummary: queueSourceSummary(for: snapshot),
+                outputNamePreview: queueOutputNamePreview(for: snapshot),
+                state: .queued,
+                lastResultMessage: ""
+            )
+        )
+    }
+
+    func startQueue() {
+        guard !isRendering, renderTask == nil, nextQueuedRenderStartIndex() != nil else { return }
+
+        renderTask = Task {
+            await performQueuedRenders()
+            await MainActor.run {
+                self.renderTask = nil
+            }
+        }
+    }
+
+    func removeQueuedRenderJob(id: QueuedRenderJob.ID) {
+        guard let index = queuedRenderJobs.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+        guard queuedRenderJobs[index].state != .running else {
+            return
+        }
+        queuedRenderJobs.remove(at: index)
+    }
+
+    func clearQueuedRenderJobs() {
+        guard !isRendering else {
+            return
+        }
+        queuedRenderJobs.removeAll()
+    }
+
     func cancelRender() {
+        isCancellingRender = true
         renderTask?.cancel()
         resolveSystemFFmpegFallbackConfirmation(approved: false)
         photoMaterializer.cancelPendingRequests()
@@ -657,85 +836,261 @@ final class MainWindowViewModel: ObservableObject {
         resolveSystemFFmpegFallbackConfirmation(approved: false)
     }
 
-    private func performSingleRender(completionSummarySnapshot: SingleRenderSummarySnapshot) async {
-        beginRenderRun(status: "Preparing media...")
+    private func performSingleRender(
+        snapshot: QueuedRenderSnapshot,
+        completionSummarySnapshot: SingleRenderSummarySnapshot
+    ) async {
+        beginRenderRun(status: "Preparing media...", initialProgress: 0.01)
 
         do {
-            let monthYear = MonthYear(month: selectedMonth, year: selectedYear)
-            let style = buildStyle(for: monthYear)
-            let preparedSession = try await prepareRenderSession(
-                style: style,
-                monthYear: monthYear,
-                requiresSmartFrameRateInspection: selectedFrameRatePolicy == .smart,
-                requiresSmartAudioInspection: selectedAudioLayout == .smart
+            try await executeRenderSnapshot(
+                snapshot,
+                completionSummarySnapshot: completionSummarySnapshot,
+                progressMapper: { $0 },
+                syncLiveState: true
             )
-            let exportResolution = resolveExportProfile(
-                resolution: selectedResolutionPolicy.normalized,
-                frameRate: selectedFrameRatePolicy,
-                dynamicRange: selectedDynamicRange,
-                audioLayout: selectedAudioLayout,
-                hdrHEVCEncoderMode: selectedHDRHEVCEncoderMode,
-                items: preparedSession.preparation.items
-            )
-
-            warnings = preparedSession.preparation.warnings + exportResolution.warnings.map(\.message)
-            progress = max(progress, 0.08)
-            renderStatusDetail = nil
-            updateRenderingStatusMessage()
-
-            let plexRenderDetails = try resolvePlexRenderDetails(
-                preparedSession: preparedSession,
-                fallbackMonthYear: monthYear,
-                exportProfile: exportResolution.effectiveProfile,
-                outputBaseFilenameOverride: nil
-            )
-
-            let request = makeRenderRequest(
-                preparedSession: preparedSession,
-                exportProfile: exportResolution.effectiveProfile,
-                outputBaseFilename: plexRenderDetails.outputBaseFilename,
-                plexTVMetadata: plexRenderDetails.metadata
-            )
-            let renderResult = try await renderSingleRequest(
-                preparedSession: preparedSession,
-                request: request,
-                progressMapper: { $0 }
-            )
-
-            recordSuccessfulRender(
-                renderResult,
-                request: request,
-                preparation: preparedSession.preparation,
-                completionSummarySnapshot: completionSummarySnapshot
-            )
-            finishSuccessfulRun(status: "Render complete")
+            finishSuccessfulSingleRun(status: "Render complete")
         } catch {
             finishFailedRun(error)
         }
     }
 
-    private func buildStyle(for monthYear: MonthYear) -> StyleProfile {
-        let openingTitle = includeOpeningTitle ? resolvedOpeningTitle(for: monthYear) : nil
-        return StyleProfile(
-            openingTitle: openingTitle,
-            titleDurationSeconds: includeOpeningTitle ? titleDurationSeconds : 0,
+    private func performQueuedRenders() async {
+        let totalJobCount = queuedRenderJobs.count
+        let completedCount = queuedRenderJobs.filter { $0.state == .completed }.count
+        let initialProgress = totalJobCount == 0 ? 0.01 : max(0.01, Double(completedCount) / Double(totalJobCount))
+
+        beginRenderRun(status: "Preparing queued render...", initialProgress: initialProgress)
+        isQueueRunning = true
+
+        while let index = nextQueuedRenderStartIndex() {
+            let job = queuedRenderJobs[index]
+            let completedBeforeJob = queuedRenderJobs.filter { $0.state == .completed }.count
+            let totalCount = max(queuedRenderJobs.count, 1)
+
+            queueRunContext = QueueRunContext(
+                currentJobNumber: completedBeforeJob + 1,
+                totalJobCount: totalCount
+            )
+            queuedRenderJobs[index].state = .running
+            queuedRenderJobs[index].lastResultMessage = ""
+            renderStatusDetail = "Preparing media..."
+            updateRenderingStatusMessage()
+
+            do {
+                let renderResult = try await executeRenderSnapshot(
+                    job.snapshot,
+                    completionSummarySnapshot: nil,
+                    progressMapper: { reportedProgress in
+                        (Double(completedBeforeJob) + min(max(reportedProgress, 0), 1)) / Double(totalCount)
+                    },
+                    syncLiveState: false
+                )
+                queuedRenderJobs[index].state = .completed
+                queuedRenderJobs[index].lastResultMessage = renderResult.outputURL.lastPathComponent
+            } catch {
+                if isCancellingRender || Task.isCancelled || error is CancellationError {
+                    queuedRenderJobs[index].state = .queued
+                    queuedRenderJobs[index].lastResultMessage = ""
+                    finishCancelledQueueRun()
+                    return
+                }
+
+                let message = formatErrorForDisplay(error)
+                queuedRenderJobs[index].state = .failed
+                queuedRenderJobs[index].lastResultMessage = compactQueueMessage(from: message)
+                finishPausedQueueRun(failedJob: queuedRenderJobs[index], errorMessage: message)
+                return
+            }
+        }
+
+        finishSuccessfulQueueRun()
+    }
+
+    @discardableResult
+    private func executeRenderSnapshot(
+        _ snapshot: QueuedRenderSnapshot,
+        completionSummarySnapshot: SingleRenderSummarySnapshot?,
+        progressMapper: @escaping @Sendable (Double) -> Double,
+        syncLiveState: Bool
+    ) async throws -> RenderResult {
+        let monthYear = MonthYear(month: snapshot.selectedMonth, year: snapshot.selectedYear)
+        let style = buildStyle(for: monthYear, snapshot: snapshot)
+        let preparedSession = try await prepareRenderSession(
+            snapshot: snapshot,
+            style: style,
+            monthYear: monthYear,
+            requiresSmartFrameRateInspection: snapshot.selectedFrameRatePolicy == .smart,
+            requiresSmartAudioInspection: snapshot.selectedAudioLayout == .smart,
+            progressMapper: progressMapper,
+            syncLiveState: syncLiveState
+        )
+        let exportResolution = resolveExportProfile(
+            snapshot: snapshot,
+            resolution: snapshot.selectedResolutionPolicy.normalized,
+            frameRate: snapshot.selectedFrameRatePolicy,
+            dynamicRange: snapshot.selectedDynamicRange,
+            audioLayout: snapshot.selectedAudioLayout,
+            hdrHEVCEncoderMode: snapshot.selectedHDRHEVCEncoderMode,
+            items: preparedSession.preparation.items
+        )
+
+        warnings = preparedSession.preparation.warnings + exportResolution.warnings.map(\.message)
+        applyReportedRenderProgress(progressMapper(0.08))
+        renderStatusDetail = nil
+        updateRenderingStatusMessage()
+
+        let plexRenderDetails = try resolvePlexRenderDetails(
+            preparedSession: preparedSession,
+            fallbackMonthYear: monthYear,
+            exportProfile: exportResolution.effectiveProfile,
+            outputBaseFilenameOverride: nil,
+            snapshot: snapshot,
+            syncLiveState: syncLiveState
+        )
+
+        let request = makeRenderRequest(
+            preparedSession: preparedSession,
+            exportProfile: exportResolution.effectiveProfile,
+            outputBaseFilename: plexRenderDetails.outputBaseFilename,
+            outputDirectory: snapshot.outputDirectoryURL,
+            plexTVMetadata: plexRenderDetails.metadata
+        )
+        let renderResult = try await renderSingleRequest(
+            preparedSession: preparedSession,
+            request: request,
+            writeDiagnosticsLog: snapshot.writeDiagnosticsLog,
+            progressMapper: progressMapper
+        )
+
+        recordSuccessfulRender(
+            renderResult,
+            request: request,
+            preparation: preparedSession.preparation,
+            completionSummarySnapshot: completionSummarySnapshot
+        )
+        return renderResult
+    }
+
+    private func makeCurrentRenderSnapshot() -> QueuedRenderSnapshot {
+        QueuedRenderSnapshot(
+            sourceMode: sourceMode,
+            selectedFolderURL: selectedFolderURL,
+            recursiveScan: recursiveScan,
+            selectedMonth: selectedMonth,
+            selectedYear: selectedYear,
+            selectedPhotosFilterMode: selectedPhotosFilterMode,
+            selectedPhotoAlbumID: selectedPhotoAlbumID,
+            selectedPhotoAlbumTitle: photoAlbums.first(where: { $0.localIdentifier == selectedPhotoAlbumID })?.title,
+            outputDirectoryURL: outputDirectoryURL,
+            plexShowTitle: plexShowTitle,
+            outputFilename: outputFilename,
+            isOutputNameAutoManaged: isOutputNameAutoManaged,
+            plexDescriptionText: plexDescriptionText,
+            isPlexDescriptionAutoManaged: isPlexDescriptionAutoManaged,
+            showsManualMonthYearOverride: showsManualMonthYearOverride,
+            manualMonthYearOverrideMonth: manualMonthYearOverrideMonth,
+            manualMonthYearOverrideYear: manualMonthYearOverrideYear,
+            includeOpeningTitle: includeOpeningTitle,
+            openingTitleText: openingTitleText,
+            isOpeningTitleAutoManaged: isOpeningTitleAutoManaged,
+            titleDurationSeconds: titleDurationSeconds,
+            openingTitleCaptionMode: openingTitleCaptionMode,
+            openingTitleCaptionText: openingTitleCaptionText,
             crossfadeDurationSeconds: crossfadeDurationSeconds,
             stillImageDurationSeconds: stillImageDurationSeconds,
             showCaptureDateOverlay: showCaptureDateOverlay,
-            openingTitleCaptionMode: openingTitleCaptionMode,
-            openingTitleCaptionText: openingTitleCaptionText
+            selectedContainer: selectedContainer,
+            selectedVideoCodec: selectedVideoCodec,
+            selectedFrameRatePolicy: selectedFrameRatePolicy,
+            selectedResolutionPolicy: selectedResolutionPolicy.normalized,
+            selectedDynamicRange: selectedDynamicRange,
+            selectedHDRBinaryMode: selectedHDRBinaryMode,
+            selectedHDRHEVCEncoderMode: selectedHDRHEVCEncoderMode,
+            selectedAudioLayout: selectedAudioLayout,
+            selectedBitrateMode: selectedBitrateMode,
+            writeDiagnosticsLog: writeDiagnosticsLog
+        )
+    }
+
+    private func validateSnapshotForQueue(_ snapshot: QueuedRenderSnapshot) throws {
+        switch snapshot.sourceMode {
+        case .folder:
+            guard snapshot.selectedFolderURL != nil else {
+                throw ViewModelError.missingFolder
+            }
+        case .photos:
+            guard snapshot.selectedPhotosFilterMode == .monthYear ||
+                    !snapshot.selectedPhotoAlbumID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw ViewModelError.missingAlbumSelection
+            }
+        }
+    }
+
+    private func queueSourceSummary(for snapshot: QueuedRenderSnapshot) -> String {
+        switch snapshot.sourceMode {
+        case .folder:
+            let folderLabel = snapshot.selectedFolderURL?.lastPathComponent ?? "No folder selected"
+            return snapshot.recursiveScan ? "Folder: \(folderLabel) (recursive)" : "Folder: \(folderLabel)"
+        case .photos:
+            switch snapshot.selectedPhotosFilterMode {
+            case .monthYear:
+                return "Photos: \(previewMonthYear(for: snapshot).displayLabel)"
+            case .album:
+                let albumTitle = snapshot.selectedPhotoAlbumTitle ?? "Selected album"
+                return "Photos album: \(albumTitle)"
+            }
+        }
+    }
+
+    private func queueOutputNamePreview(for snapshot: QueuedRenderSnapshot) -> String {
+        let trimmed = snapshot.outputFilename.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            return trimmed
+        }
+        return generatedOutputName(for: snapshot)
+    }
+
+    private func nextQueuedRenderStartIndex() -> Int? {
+        if let failedIndex = queuedRenderJobs.firstIndex(where: { $0.state == .failed }) {
+            return failedIndex
+        }
+        return queuedRenderJobs.firstIndex(where: { $0.state == .queued })
+    }
+
+    private func buildStyle(for monthYear: MonthYear, snapshot: QueuedRenderSnapshot) -> StyleProfile {
+        let openingTitle = snapshot.includeOpeningTitle ? resolvedOpeningTitle(for: monthYear, snapshot: snapshot) : nil
+        return StyleProfile(
+            openingTitle: openingTitle,
+            titleDurationSeconds: snapshot.includeOpeningTitle ? snapshot.titleDurationSeconds : 0,
+            crossfadeDurationSeconds: snapshot.crossfadeDurationSeconds,
+            stillImageDurationSeconds: snapshot.stillImageDurationSeconds,
+            showCaptureDateOverlay: snapshot.showCaptureDateOverlay,
+            openingTitleCaptionMode: snapshot.openingTitleCaptionMode,
+            openingTitleCaptionText: snapshot.openingTitleCaptionText
         )
     }
 
     private func previewMonthYear() -> MonthYear {
-        if showsManualMonthYearOverride {
-            return MonthYear(month: manualMonthYearOverrideMonth, year: manualMonthYearOverrideYear)
+        previewMonthYear(for: makeCurrentRenderSnapshot())
+    }
+
+    private func previewMonthYear(for snapshot: QueuedRenderSnapshot) -> MonthYear {
+        if snapshot.showsManualMonthYearOverride {
+            return MonthYear(
+                month: snapshot.manualMonthYearOverrideMonth,
+                year: snapshot.manualMonthYearOverrideYear
+            )
         }
-        return MonthYear(month: selectedMonth, year: selectedYear)
+        return MonthYear(month: snapshot.selectedMonth, year: snapshot.selectedYear)
     }
 
     private func resolvedPlexShowTitle() -> String {
-        let trimmed = plexShowTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        resolvedPlexShowTitle(for: makeCurrentRenderSnapshot())
+    }
+
+    private func resolvedPlexShowTitle(for snapshot: QueuedRenderSnapshot) -> String {
+        let trimmed = snapshot.plexShowTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? Self.defaultPlexShowTitle : trimmed
     }
 
@@ -743,14 +1098,18 @@ final class MainWindowViewModel: ObservableObject {
         preparedSession: PreparedRenderSession,
         fallbackMonthYear: MonthYear,
         exportProfile: ExportProfile,
-        outputBaseFilenameOverride: String?
+        outputBaseFilenameOverride: String?,
+        snapshot: QueuedRenderSnapshot,
+        syncLiveState: Bool
     ) throws -> ResolvedPlexRenderDetails {
         let monthYearContext = try resolvePlexMonthYearContext(
             preparedSession: preparedSession,
-            fallbackMonthYear: fallbackMonthYear
+            fallbackMonthYear: fallbackMonthYear,
+            snapshot: snapshot,
+            syncLiveState: syncLiveState
         )
         let autoDescription = PlexTVMetadataResolver.defaultDescription(for: monthYearContext.monthYear)
-        if isPlexDescriptionAutoManaged {
+        if syncLiveState, snapshot.isPlexDescriptionAutoManaged {
             applyPlexDescription(autoDescription, autoManaged: true)
         }
 
@@ -760,35 +1119,41 @@ final class MainWindowViewModel: ObservableObject {
             appIdentity: exportProvenanceIdentity
         )
         let metadata = PlexTVMetadataResolver.resolveMetadata(
-            showTitle: resolvedPlexShowTitle(),
+            showTitle: resolvedPlexShowTitle(for: snapshot),
             monthYear: monthYearContext.monthYear,
-            descriptionText: isPlexDescriptionAutoManaged ? autoDescription : plexDescriptionText,
+            descriptionText: snapshot.isPlexDescriptionAutoManaged ? autoDescription : snapshot.plexDescriptionText,
             creationTime: monthYearContext.latestCaptureDate,
             provenance: provenance
         )
         let autoOutputBaseFilename = metadata.identity.filenameBase
-        if isOutputNameAutoManaged {
+        if syncLiveState, snapshot.isOutputNameAutoManaged {
             applyOutputFilename(autoOutputBaseFilename, autoManaged: true)
         }
 
         return ResolvedPlexRenderDetails(
             monthYearContext: monthYearContext,
             metadata: metadata,
-            outputBaseFilename: outputBaseFilenameOverride ?? (isOutputNameAutoManaged ? autoOutputBaseFilename : outputFilename)
+            outputBaseFilename: outputBaseFilenameOverride ??
+                (snapshot.isOutputNameAutoManaged ? autoOutputBaseFilename : snapshot.outputFilename)
         )
     }
 
     private func resolvePlexMonthYearContext(
         preparedSession: PreparedRenderSession,
-        fallbackMonthYear: MonthYear
+        fallbackMonthYear: MonthYear,
+        snapshot: QueuedRenderSnapshot,
+        syncLiveState: Bool
     ) throws -> ResolvedMonthYearContext {
         let latestCaptureDate = latestCaptureDate(from: preparedSession.preparation.items)
-        if sourceMode == .photos, selectedPhotosFilterMode == .monthYear {
+        if snapshot.sourceMode == .photos, snapshot.selectedPhotosFilterMode == .monthYear {
             return ResolvedMonthYearContext(monthYear: fallbackMonthYear, latestCaptureDate: latestCaptureDate)
         }
-        if showsManualMonthYearOverride {
+        if snapshot.showsManualMonthYearOverride {
             return ResolvedMonthYearContext(
-                monthYear: MonthYear(month: manualMonthYearOverrideMonth, year: manualMonthYearOverrideYear),
+                monthYear: MonthYear(
+                    month: snapshot.manualMonthYearOverrideMonth,
+                    year: snapshot.manualMonthYearOverrideYear
+                ),
                 latestCaptureDate: latestCaptureDate
             )
         }
@@ -796,12 +1161,15 @@ final class MainWindowViewModel: ObservableObject {
         do {
             return try PlexTVMetadataResolver.resolveMonthYear(from: preparedSession.preparation.items)
         } catch {
-            revealManualMonthYearOverride(
-                using: preparedSession.preparation.items,
-                fallbackMonthYear: fallbackMonthYear,
-                error: error
-            )
-            let message = (error as? LocalizedError)?.errorDescription ?? "Unable to derive a single month/year for Plex TV naming."
+            if syncLiveState {
+                revealManualMonthYearOverride(
+                    using: preparedSession.preparation.items,
+                    fallbackMonthYear: fallbackMonthYear,
+                    error: error
+                )
+            }
+            let message = (error as? LocalizedError)?.errorDescription ??
+                "Unable to derive a single month/year for Plex TV naming."
             throw RenderError.exportFailed("\(message)\nReview the manual month/year override in Export and render again.")
         }
     }
@@ -825,7 +1193,8 @@ final class MainWindowViewModel: ObservableObject {
         manualMonthYearOverrideMonth = suggestedMonthYear.month
         manualMonthYearOverrideYear = suggestedMonthYear.year
         showsManualMonthYearOverride = true
-        manualMonthYearOverrideMessage = (error as? LocalizedError)?.errorDescription ?? "Unable to derive a single month/year automatically."
+        manualMonthYearOverrideMessage = (error as? LocalizedError)?.errorDescription ??
+            "Unable to derive a single month/year automatically."
         synchronizePlexAutoManagedFieldsIfNeeded()
     }
 
@@ -833,31 +1202,44 @@ final class MainWindowViewModel: ObservableObject {
         items.compactMap(\.captureDate).max()
     }
 
-    private func makeSingleRenderSummarySnapshot() -> SingleRenderSummarySnapshot {
+    private func makeSingleRenderSummarySnapshot(snapshot: QueuedRenderSnapshot) -> SingleRenderSummarySnapshot {
         SingleRenderSummarySnapshot(
             requestedProfile: buildSelectedExportProfile(
-                resolution: selectedResolutionPolicy.normalized,
-                frameRate: selectedFrameRatePolicy,
-                dynamicRange: selectedDynamicRange,
-                audioLayout: selectedAudioLayout,
-                hdrHEVCEncoderMode: selectedHDRHEVCEncoderMode
+                snapshot: snapshot,
+                resolution: snapshot.selectedResolutionPolicy.normalized,
+                frameRate: snapshot.selectedFrameRatePolicy,
+                dynamicRange: snapshot.selectedDynamicRange,
+                audioLayout: snapshot.selectedAudioLayout,
+                hdrHEVCEncoderMode: snapshot.selectedHDRHEVCEncoderMode
             )
         )
     }
 
     private func generatedOutputName() -> String {
+        generatedOutputName(for: makeCurrentRenderSnapshot())
+    }
+
+    private func generatedOutputName(for snapshot: QueuedRenderSnapshot) -> String {
         filenameGenerator.makeOutputName(
-            showTitle: resolvedPlexShowTitle(),
-            monthYear: previewMonthYear()
+            showTitle: resolvedPlexShowTitle(for: snapshot),
+            monthYear: previewMonthYear(for: snapshot)
         )
     }
 
     private func defaultOpeningTitleText() -> String {
-        previewMonthYear().displayLabel
+        defaultOpeningTitleText(for: makeCurrentRenderSnapshot())
+    }
+
+    private func defaultOpeningTitleText(for snapshot: QueuedRenderSnapshot) -> String {
+        previewMonthYear(for: snapshot).displayLabel
     }
 
     private func defaultPlexDescription() -> String {
-        PlexTVMetadataResolver.defaultDescription(for: previewMonthYear())
+        defaultPlexDescription(for: makeCurrentRenderSnapshot())
+    }
+
+    private func defaultPlexDescription(for snapshot: QueuedRenderSnapshot) -> String {
+        PlexTVMetadataResolver.defaultDescription(for: previewMonthYear(for: snapshot))
     }
 
     private func applyOpeningTitleText(_ value: String, autoManaged: Bool) {
@@ -948,26 +1330,80 @@ final class MainWindowViewModel: ObservableObject {
         manualMonthYearOverrideYear = selectedYear
     }
 
-    private func beginRenderRun(status: String) {
+    private func beginRenderRun(status: String, initialProgress: Double) {
         isRendering = true
-        progress = 0.01
+        isCancellingRender = false
+        isQueueRunning = false
+        queueRunContext = nil
+        progress = initialProgress
         warnings = []
-        renderStatusDetail = nil
-        statusMessage = status
+        renderStatusDetail = status
+        updateRenderingStatusMessage()
         lastOutputPath = ""
         lastDiagnosticsPath = ""
         lastBackendSummary = ""
         lastSingleRenderCompletionSummary = nil
+        lastQueueCompletionSummary = nil
+        renderCompleteAlertTitle = "Render Complete"
         showRenderCompleteAlert = false
         pendingSystemFFmpegFallbackConfirmation = nil
         systemFFmpegFallbackContinuation = nil
         hasApprovedSystemFFmpegFallbackForCurrentRun = false
     }
 
-    private func finishSuccessfulRun(status: String) {
+    private func finishSuccessfulSingleRun(status: String) {
         renderStatusDetail = nil
+        queueRunContext = nil
         progress = 1.0
         statusMessage = status
+        if !lastDiagnosticsPath.isEmpty {
+            statusMessage += "\nDiagnostics: \(lastDiagnosticsPath)"
+        }
+        if !lastBackendSummary.isEmpty {
+            statusMessage += "\nBackend: \(lastBackendSummary)"
+        }
+        renderCompleteAlertTitle = "Render Complete"
+        showRenderCompleteAlert = true
+        pendingSystemFFmpegFallbackConfirmation = nil
+        systemFFmpegFallbackContinuation = nil
+        hasApprovedSystemFFmpegFallbackForCurrentRun = false
+        isQueueRunning = false
+        isCancellingRender = false
+        isRendering = false
+    }
+
+    private func finishFailedRun(_ error: Error) {
+        renderStatusDetail = nil
+        queueRunContext = nil
+        progress = 0
+        statusMessage = formatErrorForDisplay(error)
+        lastSingleRenderCompletionSummary = nil
+        lastQueueCompletionSummary = nil
+        renderCompleteAlertTitle = "Render Complete"
+        showRenderCompleteAlert = false
+        pendingSystemFFmpegFallbackConfirmation = nil
+        systemFFmpegFallbackContinuation = nil
+        hasApprovedSystemFFmpegFallbackForCurrentRun = false
+        isQueueRunning = false
+        isCancellingRender = false
+        isRendering = false
+    }
+
+    private func finishSuccessfulQueueRun() {
+        renderStatusDetail = nil
+        queueRunContext = nil
+        progress = 1.0
+        let completedCount = queuedRenderJobs.filter { $0.state == .completed }.count
+        let totalCount = queuedRenderJobs.count
+        let summary = QueueCompletionSummary(
+            completedJobCount: completedCount,
+            totalJobCount: totalCount,
+            lastOutputPath: lastOutputPath
+        )
+        lastQueueCompletionSummary = summary
+        lastSingleRenderCompletionSummary = nil
+        renderCompleteAlertTitle = "Queue Complete"
+        statusMessage = "Queue complete"
         if !lastDiagnosticsPath.isEmpty {
             statusMessage += "\nDiagnostics: \(lastDiagnosticsPath)"
         }
@@ -978,22 +1414,47 @@ final class MainWindowViewModel: ObservableObject {
         pendingSystemFFmpegFallbackConfirmation = nil
         systemFFmpegFallbackContinuation = nil
         hasApprovedSystemFFmpegFallbackForCurrentRun = false
+        isQueueRunning = false
+        isCancellingRender = false
         isRendering = false
     }
 
-    private func finishFailedRun(_ error: Error) {
+    private func finishPausedQueueRun(failedJob: QueuedRenderJob, errorMessage: String) {
         renderStatusDetail = nil
+        queueRunContext = nil
         progress = 0
-        statusMessage = formatErrorForDisplay(error)
+        statusMessage = "Queue paused after failure\n\(failedJob.sourceSummary)\n\(errorMessage)"
         lastSingleRenderCompletionSummary = nil
+        lastQueueCompletionSummary = nil
+        renderCompleteAlertTitle = "Queue Complete"
         showRenderCompleteAlert = false
         pendingSystemFFmpegFallbackConfirmation = nil
         systemFFmpegFallbackContinuation = nil
         hasApprovedSystemFFmpegFallbackForCurrentRun = false
+        isQueueRunning = false
+        isCancellingRender = false
+        isRendering = false
+    }
+
+    private func finishCancelledQueueRun() {
+        renderStatusDetail = nil
+        queueRunContext = nil
+        progress = 0
+        statusMessage = "Render cancelled"
+        lastSingleRenderCompletionSummary = nil
+        lastQueueCompletionSummary = nil
+        renderCompleteAlertTitle = "Queue Complete"
+        showRenderCompleteAlert = false
+        pendingSystemFFmpegFallbackConfirmation = nil
+        systemFFmpegFallbackContinuation = nil
+        hasApprovedSystemFFmpegFallbackForCurrentRun = false
+        isQueueRunning = false
+        isCancellingRender = false
         isRendering = false
     }
 
     private func resolveExportProfile(
+        snapshot: QueuedRenderSnapshot,
         resolution: ResolutionPolicy,
         frameRate: FrameRatePolicy,
         dynamicRange: DynamicRange,
@@ -1003,6 +1464,7 @@ final class MainWindowViewModel: ObservableObject {
     ) -> ExportProfileResolution {
         exportProfileManager.resolveProfile(
             for: buildSelectedExportProfile(
+                snapshot: snapshot,
                 resolution: resolution.normalized,
                 frameRate: frameRate,
                 dynamicRange: dynamicRange,
@@ -1014,6 +1476,7 @@ final class MainWindowViewModel: ObservableObject {
     }
 
     private func buildSelectedExportProfile(
+        snapshot: QueuedRenderSnapshot,
         resolution: ResolutionPolicy,
         frameRate: FrameRatePolicy,
         dynamicRange: DynamicRange,
@@ -1021,38 +1484,41 @@ final class MainWindowViewModel: ObservableObject {
         hdrHEVCEncoderMode: HDRHEVCEncoderMode
     ) -> ExportProfile {
         ExportProfile(
-            container: selectedContainer,
-            videoCodec: selectedVideoCodec,
+            container: snapshot.selectedContainer,
+            videoCodec: snapshot.selectedVideoCodec,
             audioCodec: .aac,
             frameRate: frameRate,
             resolution: resolution.normalized,
             dynamicRange: dynamicRange,
-            hdrFFmpegBinaryMode: selectedHDRBinaryMode,
+            hdrFFmpegBinaryMode: snapshot.selectedHDRBinaryMode,
             hdrHEVCEncoderMode: hdrHEVCEncoderMode,
             audioLayout: audioLayout,
-            bitrateMode: selectedBitrateMode
+            bitrateMode: snapshot.selectedBitrateMode
         )
     }
 
     private func prepareRenderSession(
+        snapshot: QueuedRenderSnapshot,
         style: StyleProfile,
         monthYear: MonthYear,
         requiresSmartFrameRateInspection: Bool,
-        requiresSmartAudioInspection: Bool
+        requiresSmartAudioInspection: Bool,
+        progressMapper: @escaping @Sendable (Double) -> Double,
+        syncLiveState: Bool
     ) async throws -> PreparedRenderSession {
-        switch sourceMode {
+        switch snapshot.sourceMode {
         case .folder:
-            guard let selectedFolderURL else {
+            guard let selectedFolderURL = snapshot.selectedFolderURL else {
                 throw ViewModelError.missingFolder
             }
 
             let request = RenderRequest(
-                source: .folder(path: selectedFolderURL, recursive: recursiveScan),
+                source: .folder(path: selectedFolderURL, recursive: snapshot.recursiveScan),
                 monthYear: nil,
                 ordering: .captureDateAscendingStable,
                 style: style,
                 export: Self.defaultExportProfile,
-                output: OutputTarget(directory: outputDirectoryURL, baseFilename: outputFilename)
+                output: OutputTarget(directory: snapshot.outputDirectoryURL, baseFilename: snapshot.outputFilename)
             )
             let preparation = try await coordinator.prepareFolderRender(request: request)
             try Task.checkCancellation()
@@ -1073,7 +1539,7 @@ final class MainWindowViewModel: ObservableObject {
                 }
             }
 
-            switch selectedPhotosFilterMode {
+            switch snapshot.selectedPhotosFilterMode {
             case .monthYear:
                 let source: MediaSource = .photosLibrary(scope: .entireLibrary(monthYear: monthYear))
                 let discovered = try await photoDiscovery.discover(monthYear: monthYear)
@@ -1081,7 +1547,8 @@ final class MainWindowViewModel: ObservableObject {
                 let inspection = try await inspectPhotoVideosForSmartPoliciesIfNeeded(
                     discovered,
                     requiresSmartFrameRateInspection: requiresSmartFrameRateInspection,
-                    requiresSmartAudioInspection: requiresSmartAudioInspection
+                    requiresSmartAudioInspection: requiresSmartAudioInspection,
+                    progressMapper: progressMapper
                 )
                 let seedRequest = RenderRequest(
                     source: source,
@@ -1089,7 +1556,7 @@ final class MainWindowViewModel: ObservableObject {
                     ordering: .captureDateAscendingStable,
                     style: style,
                     export: Self.defaultExportProfile,
-                    output: OutputTarget(directory: outputDirectoryURL, baseFilename: outputFilename)
+                    output: OutputTarget(directory: snapshot.outputDirectoryURL, baseFilename: snapshot.outputFilename)
                 )
                 let preparation = coordinator.prepareFromItems(
                     inspection.items,
@@ -1105,14 +1572,16 @@ final class MainWindowViewModel: ObservableObject {
                 )
 
             case .album:
-                var selectedAlbumID = selectedPhotoAlbumID.trimmingCharacters(in: .whitespacesAndNewlines)
+                var selectedAlbumID = snapshot.selectedPhotoAlbumID.trimmingCharacters(in: .whitespacesAndNewlines)
                 if selectedAlbumID.isEmpty {
-                    let discoveredAlbums = try await photoDiscovery.discoverAlbums()
-                    photoAlbums = discoveredAlbums
-                    if let firstAlbum = discoveredAlbums.first {
-                        selectedPhotoAlbumID = firstAlbum.localIdentifier
-                        selectedAlbumID = firstAlbum.localIdentifier
-                        photoAlbumsStatusMessage = ""
+                    if syncLiveState {
+                        let discoveredAlbums = try await photoDiscovery.discoverAlbums()
+                        photoAlbums = discoveredAlbums
+                        if let firstAlbum = discoveredAlbums.first {
+                            selectedPhotoAlbumID = firstAlbum.localIdentifier
+                            selectedAlbumID = firstAlbum.localIdentifier
+                            photoAlbumsStatusMessage = ""
+                        }
                     }
                 }
 
@@ -1120,7 +1589,8 @@ final class MainWindowViewModel: ObservableObject {
                     throw ViewModelError.missingAlbumSelection
                 }
 
-                let selectedAlbumTitle = photoAlbums.first(where: { $0.localIdentifier == selectedAlbumID })?.title
+                let selectedAlbumTitle = snapshot.selectedPhotoAlbumTitle ??
+                    photoAlbums.first(where: { $0.localIdentifier == selectedAlbumID })?.title
                 let source: MediaSource = .photosLibrary(
                     scope: .album(localIdentifier: selectedAlbumID, title: selectedAlbumTitle))
                 let discovered = try await photoDiscovery.discover(albumLocalIdentifier: selectedAlbumID)
@@ -1128,7 +1598,8 @@ final class MainWindowViewModel: ObservableObject {
                 let inspection = try await inspectPhotoVideosForSmartPoliciesIfNeeded(
                     discovered,
                     requiresSmartFrameRateInspection: requiresSmartFrameRateInspection,
-                    requiresSmartAudioInspection: requiresSmartAudioInspection
+                    requiresSmartAudioInspection: requiresSmartAudioInspection,
+                    progressMapper: progressMapper
                 )
                 let seedRequest = RenderRequest(
                     source: source,
@@ -1136,7 +1607,7 @@ final class MainWindowViewModel: ObservableObject {
                     ordering: .captureDateAscendingStable,
                     style: style,
                     export: Self.defaultExportProfile,
-                    output: OutputTarget(directory: outputDirectoryURL, baseFilename: outputFilename)
+                    output: OutputTarget(directory: snapshot.outputDirectoryURL, baseFilename: snapshot.outputFilename)
                 )
                 let preparation = coordinator.prepareFromItems(
                     inspection.items,
@@ -1158,6 +1629,7 @@ final class MainWindowViewModel: ObservableObject {
         preparedSession: PreparedRenderSession,
         exportProfile: ExportProfile,
         outputBaseFilename: String,
+        outputDirectory: URL,
         plexTVMetadata: PlexTVMetadata
     ) -> RenderRequest {
         let chapters = exportProfile.container == .mp4
@@ -1172,7 +1644,7 @@ final class MainWindowViewModel: ObservableObject {
             ordering: .captureDateAscendingStable,
             style: preparedSession.style,
             export: exportProfile,
-            output: OutputTarget(directory: outputDirectoryURL, baseFilename: outputBaseFilename),
+            output: OutputTarget(directory: outputDirectory, baseFilename: outputBaseFilename),
             plexTVMetadata: plexTVMetadata,
             chapters: chapters
         )
@@ -1181,6 +1653,7 @@ final class MainWindowViewModel: ObservableObject {
     private func renderSingleRequest(
         preparedSession: PreparedRenderSession,
         request: RenderRequest,
+        writeDiagnosticsLog: Bool,
         progressMapper: @escaping @Sendable (Double) -> Double
     ) async throws -> RenderResult {
         renderStatusDetail = nil
@@ -1496,7 +1969,7 @@ final class MainWindowViewModel: ObservableObject {
     }
 
     private func formatErrorForDisplay(_ error: Error) -> String {
-        if error is CancellationError {
+        if isCancellingRender || error is CancellationError {
             return "Render cancelled"
         }
 
@@ -1534,7 +2007,8 @@ final class MainWindowViewModel: ObservableObject {
     private func inspectPhotoVideosForSmartPoliciesIfNeeded(
         _ items: [MediaItem],
         requiresSmartFrameRateInspection: Bool,
-        requiresSmartAudioInspection: Bool
+        requiresSmartAudioInspection: Bool,
+        progressMapper: @escaping @Sendable (Double) -> Double
     ) async throws -> SmartMediaInspectionResult {
         guard requiresSmartFrameRateInspection || requiresSmartAudioInspection else {
             return SmartMediaInspectionResult(items: items, warnings: [])
@@ -1547,19 +2021,25 @@ final class MainWindowViewModel: ObservableObject {
             progressHandler: { [weak self] fraction in
                 Task { @MainActor in
                     guard let self else { return }
-                    self.progress = max(self.progress, 0.03 + min(max(fraction, 0), 1) * 0.05)
+                    self.applyReportedRenderProgress(
+                        progressMapper(0.03 + min(max(fraction, 0), 1) * 0.05)
+                    )
                 }
             },
             statusHandler: { [weak self] status in
                 Task { @MainActor in
-                    self?.statusMessage = status
+                    self?.renderStatusDetail = status
+                    self?.updateRenderingStatusMessage()
                 }
             }
         )
     }
 
-    private func resolvedOpeningTitle(for monthYear: MonthYear) -> String {
-        let trimmed = openingTitleText.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func resolvedOpeningTitle(
+        for monthYear: MonthYear,
+        snapshot: QueuedRenderSnapshot
+    ) -> String {
+        let trimmed = snapshot.openingTitleText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
             return trimmed
         }
@@ -1583,12 +2063,26 @@ final class MainWindowViewModel: ObservableObject {
 
     private func updateRenderingStatusMessage() {
         let percent = Int((progress * 100).rounded())
+        let renderMessage: String
         if let renderStatusDetail, !renderStatusDetail.isEmpty {
-            statusMessage = "\(renderStatusDetail)\nOverall progress: \(percent)%"
+            renderMessage = "\(renderStatusDetail)\nOverall progress: \(percent)%"
+        } else {
+            renderMessage = "Rendering... \(percent)%"
+        }
+
+        if let queueRunContext {
+            statusMessage = "Queue job \(queueRunContext.currentJobNumber) of \(queueRunContext.totalJobCount)\n\(renderMessage)"
             return
         }
 
-        statusMessage = "Rendering... \(percent)%"
+        statusMessage = renderMessage
+    }
+
+    private func compactQueueMessage(from message: String) -> String {
+        message
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .first
+            .map(String.init) ?? message
     }
 
     private func handleRenderSettingChange(enforceHDRConstraints: Bool = false) {

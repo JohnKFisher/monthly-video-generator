@@ -121,6 +121,7 @@ Operational updates after first packaged run:
 - 2026-03-07: Added an automatic final-delivery FFmpeg fade-to-black on the last `2 x` crossfade seconds of video output, while leaving audio unchanged and skipping the fade on intermediate HDR chunk renders.
 - 2026-03-09: Removed the temporary batch-render matrix UI and support code so the app now exposes only the standard single-render export flow.
 - 2026-03-09: Switched the initial source selection to Apple Photos and replaced month picker numerals with `N - MonthName` labels in the month/year UI.
+- 2026-03-10: Added a hidden, session-only serial render queue in the Export panel so multiple render jobs can be snapshotted, queued, run in order, paused on failure, and completed with a single queue-finished alert without cluttering the default single-render UI.
 
 ## Decisions Log
 

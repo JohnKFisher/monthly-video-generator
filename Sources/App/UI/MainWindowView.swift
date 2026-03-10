@@ -7,6 +7,7 @@ import AppKit
 struct MainWindowView: View {
     @StateObject private var viewModel = MainWindowViewModel()
     @State private var isAdvancedExportSettingsExpanded = false
+    @State private var isRenderQueueExpanded = false
     @State private var isNotesExpanded = false
     @State private var isHeaderEasterEggPresented = false
     private let sectionSpacing: CGFloat = 12
@@ -46,7 +47,7 @@ struct MainWindowView: View {
         }
         .frame(minWidth: 920, minHeight: 700)
         .tint(themeTeal)
-        .alert("Render Complete", isPresented: $viewModel.showRenderCompleteAlert) {
+        .alert(viewModel.renderCompleteAlertTitle, isPresented: $viewModel.showRenderCompleteAlert) {
             Button("Open Folder") {
                 viewModel.openRenderedOutputFolder()
             }
@@ -465,6 +466,63 @@ struct MainWindowView: View {
                         }
                     }
                 }
+
+                DisclosureGroup("Render Queue", isExpanded: $isRenderQueueExpanded) {
+                    VStack(alignment: .leading, spacing: rowSpacing) {
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 10) {
+                                Button("Add Current Settings") {
+                                    viewModel.addCurrentSettingsToQueue()
+                                }
+                                .disabled(viewModel.isRendering)
+
+                                Spacer(minLength: 0)
+
+                                Button("Start Queue") {
+                                    viewModel.startQueue()
+                                }
+                                .disabled(!viewModel.canStartQueue)
+
+                                Button("Clear Queue") {
+                                    viewModel.clearQueuedRenderJobs()
+                                }
+                                .disabled(!viewModel.canClearQueue)
+                            }
+
+                            VStack(alignment: .leading, spacing: rowSpacing) {
+                                Button("Add Current Settings") {
+                                    viewModel.addCurrentSettingsToQueue()
+                                }
+                                .disabled(viewModel.isRendering)
+
+                                HStack(spacing: 10) {
+                                    Button("Start Queue") {
+                                        viewModel.startQueue()
+                                    }
+                                    .disabled(!viewModel.canStartQueue)
+
+                                    Button("Clear Queue") {
+                                        viewModel.clearQueuedRenderJobs()
+                                    }
+                                    .disabled(!viewModel.canClearQueue)
+                                }
+                            }
+                        }
+
+                        caption(viewModel.queueStatusDescription)
+
+                        if viewModel.queuedRenderJobs.isEmpty {
+                            caption("No queued renders yet.")
+                        } else {
+                            VStack(alignment: .leading, spacing: rowSpacing) {
+                                ForEach(viewModel.queuedRenderJobs) { job in
+                                    queueJobRow(job)
+                                }
+                            }
+                        }
+                    }
+                    .padding(.top, 4)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } label: {
@@ -598,6 +656,48 @@ struct MainWindowView: View {
             .foregroundStyle(.secondary)
     }
 
+    private func queueJobRow(_ job: MainWindowViewModel.QueuedRenderJob) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 10) {
+                Text(job.state.displayLabel)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(queueStateColor(job.state), in: Capsule())
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(job.sourceSummary)
+                        .font(.subheadline)
+                    caption("Output: \(job.outputNamePreview)")
+                }
+
+                Spacer(minLength: 8)
+
+                if job.state != .running {
+                    Button("Remove") {
+                        viewModel.removeQueuedRenderJob(id: job.id)
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+
+            if !job.lastResultMessage.isEmpty {
+                caption(job.lastResultMessage)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(windowBackgroundColor.opacity(0.6))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(queueStateColor(job.state).opacity(0.2), lineWidth: 1)
+        )
+    }
+
     private var showsCompactIdleStatus: Bool {
         !viewModel.isRendering &&
         viewModel.statusMessage == "Idle" &&
@@ -657,6 +757,19 @@ struct MainWindowView: View {
 
     private var themeAmber: Color {
         Color(red: 0.74, green: 0.58, blue: 0.29)
+    }
+
+    private func queueStateColor(_ state: MainWindowViewModel.QueuedRenderJobState) -> Color {
+        switch state {
+        case .queued:
+            return themeNavy
+        case .running:
+            return themeTeal
+        case .completed:
+            return Color.green.opacity(0.8)
+        case .failed:
+            return Color.red.opacity(0.8)
+        }
     }
 
     private func sectionLabel(_ title: String, accent: Color) -> some View {

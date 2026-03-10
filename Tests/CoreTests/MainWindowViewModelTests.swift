@@ -870,6 +870,335 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.openingTitleCaptionText, "Cape Cod at dusk")
     }
 
+    func testQueuedRenderUsesSnapshottedSettingsAfterLiveEdits() async throws {
+        let captureDate = makeDate(year: 2024, month: 7, day: 12)
+        let coordinator = RenderCoordinatorSpy(
+            preparation: makePreparation(
+                items: [makeImageItem(id: "image-1", captureDate: captureDate)]
+            ),
+            suspendRenderUntilResumed: true
+        )
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            preferencesStore: makePreferencesStore()
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.sourceMode = .folder
+        viewModel.selectedFolderURL = directory
+        viewModel.outputDirectoryURL = directory
+        viewModel.plexShowTitle = "Family Videos"
+        viewModel.addCurrentSettingsToQueue()
+
+        viewModel.plexShowTitle = "Changed After Queueing"
+        viewModel.outputFilename = "Changed After Queueing"
+        viewModel.selectedMonth = 8
+        viewModel.selectedYear = 2026
+
+        viewModel.startQueue()
+        await waitUntil(
+            message: "Timed out waiting for queued render request to start."
+        ) {
+            coordinator.renderRequests.count == 1
+        }
+
+        let request = try XCTUnwrap(coordinator.renderRequests.first)
+        XCTAssertEqual(request.output.baseFilename, "Family Videos - S2024E0799 - July 2024")
+        XCTAssertEqual(request.plexTVMetadata?.identity.showTitle, "Family Videos")
+
+        coordinator.resumeRender()
+        await waitUntil(
+            message: "Timed out waiting for queued render to finish."
+        ) {
+            !viewModel.isRendering
+        }
+    }
+
+    func testQueuedRendersRunInAddOrder() async throws {
+        let coordinator = RenderCoordinatorSpy(preparation: makePreparation())
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            preferencesStore: makePreferencesStore()
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.sourceMode = .folder
+        viewModel.selectedFolderURL = directory
+        viewModel.outputDirectoryURL = directory
+
+        viewModel.outputFilename = "First Queue Job"
+        viewModel.addCurrentSettingsToQueue()
+        viewModel.outputFilename = "Second Queue Job"
+        viewModel.addCurrentSettingsToQueue()
+
+        viewModel.startQueue()
+        await waitUntil(
+            message: "Timed out waiting for queued renders to finish."
+        ) {
+            coordinator.renderRequests.count == 2 && !viewModel.isRendering
+        }
+
+        XCTAssertEqual(
+            coordinator.renderRequests.map(\.output.baseFilename),
+            ["First Queue Job", "Second Queue Job"]
+        )
+        XCTAssertEqual(viewModel.queuedRenderJobs.map(\.state), [.completed, .completed])
+    }
+
+    func testQueueProgressReflectsOverallCompletion() async throws {
+        let coordinator = RenderCoordinatorSpy(
+            preparation: makePreparation(),
+            suspendRenderUntilResumed: true
+        )
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            preferencesStore: makePreferencesStore()
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.sourceMode = .folder
+        viewModel.selectedFolderURL = directory
+        viewModel.outputDirectoryURL = directory
+        viewModel.outputFilename = "Queue A"
+        viewModel.addCurrentSettingsToQueue()
+        viewModel.outputFilename = "Queue B"
+        viewModel.addCurrentSettingsToQueue()
+
+        viewModel.startQueue()
+        await waitUntil(
+            message: "Timed out waiting for first queued render progress."
+        ) {
+            coordinator.renderRequests.count == 1 && viewModel.progress >= 0.5
+        }
+
+        XCTAssertEqual(viewModel.progress, 0.5, accuracy: 0.001)
+
+        coordinator.resumeRender()
+        await waitUntil(
+            message: "Timed out waiting for second queued render to start."
+        ) {
+            coordinator.renderRequests.count == 2
+        }
+        coordinator.resumeRender()
+        await waitUntil(
+            message: "Timed out waiting for queued progress test to finish."
+        ) {
+            !viewModel.isRendering
+        }
+    }
+
+    func testQueueShowsCompletionAlertOnlyAfterFinalJob() async throws {
+        let coordinator = RenderCoordinatorSpy(
+            preparation: makePreparation(),
+            suspendRenderUntilResumed: true
+        )
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            preferencesStore: makePreferencesStore()
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.sourceMode = .folder
+        viewModel.selectedFolderURL = directory
+        viewModel.outputDirectoryURL = directory
+        viewModel.outputFilename = "Queue One"
+        viewModel.addCurrentSettingsToQueue()
+        viewModel.outputFilename = "Queue Two"
+        viewModel.addCurrentSettingsToQueue()
+
+        viewModel.startQueue()
+        await waitUntil(
+            message: "Timed out waiting for first queued render."
+        ) {
+            coordinator.renderRequests.count == 1
+        }
+        XCTAssertFalse(viewModel.showRenderCompleteAlert)
+
+        coordinator.resumeRender()
+        await waitUntil(
+            message: "Timed out waiting for second queued render."
+        ) {
+            coordinator.renderRequests.count == 2
+        }
+        XCTAssertFalse(viewModel.showRenderCompleteAlert)
+
+        coordinator.resumeRender()
+        await waitUntil(
+            message: "Timed out waiting for queue completion alert."
+        ) {
+            !viewModel.isRendering && viewModel.showRenderCompleteAlert
+        }
+
+        XCTAssertEqual(viewModel.renderCompleteAlertTitle, "Queue Complete")
+        XCTAssertTrue(viewModel.renderCompleteAlertMessage.contains("Completed 2 of 2 queued jobs."))
+    }
+
+    func testFailedQueuedJobPausesAndCanRetry() async throws {
+        let coordinator = RenderCoordinatorSpy(
+            preparation: makePreparation(),
+            failedRenderIndices: [0]
+        )
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            preferencesStore: makePreferencesStore()
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.sourceMode = .folder
+        viewModel.selectedFolderURL = directory
+        viewModel.outputDirectoryURL = directory
+        viewModel.outputFilename = "Retry Me"
+        viewModel.addCurrentSettingsToQueue()
+        viewModel.outputFilename = "Second Pass"
+        viewModel.addCurrentSettingsToQueue()
+
+        viewModel.startQueue()
+        await waitUntil(
+            message: "Timed out waiting for queued failure."
+        ) {
+            !viewModel.isRendering && viewModel.queuedRenderJobs.first?.state == .failed
+        }
+
+        XCTAssertEqual(viewModel.queuedRenderJobs.map(\.state), [.failed, .queued])
+
+        coordinator.failedRenderIndices = []
+        viewModel.startQueue()
+        await waitUntil(
+            message: "Timed out waiting for queued retry to finish."
+        ) {
+            !viewModel.isRendering && viewModel.queuedRenderJobs.allSatisfy { $0.state == .completed }
+        }
+
+        XCTAssertEqual(coordinator.renderRequests.count, 3)
+        XCTAssertEqual(viewModel.queuedRenderJobs.map(\.state), [.completed, .completed])
+    }
+
+    func testRemovingFailedQueuedJobAllowsRemainingJobsToContinue() async throws {
+        let coordinator = RenderCoordinatorSpy(
+            preparation: makePreparation(),
+            failedRenderIndices: [0]
+        )
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            preferencesStore: makePreferencesStore()
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.sourceMode = .folder
+        viewModel.selectedFolderURL = directory
+        viewModel.outputDirectoryURL = directory
+        viewModel.outputFilename = "Will Fail"
+        viewModel.addCurrentSettingsToQueue()
+        viewModel.outputFilename = "Will Finish"
+        viewModel.addCurrentSettingsToQueue()
+
+        viewModel.startQueue()
+        await waitUntil(
+            message: "Timed out waiting for queued failure before removal."
+        ) {
+            !viewModel.isRendering && viewModel.queuedRenderJobs.first?.state == .failed
+        }
+
+        let failedJobID = try XCTUnwrap(viewModel.queuedRenderJobs.first?.id)
+        viewModel.removeQueuedRenderJob(id: failedJobID)
+        viewModel.startQueue()
+        await waitUntil(
+            message: "Timed out waiting for remaining queued job to finish."
+        ) {
+            !viewModel.isRendering &&
+                viewModel.queuedRenderJobs.count == 1 &&
+                viewModel.queuedRenderJobs[0].state == .completed
+        }
+
+        XCTAssertEqual(coordinator.renderRequests.count, 2)
+        XCTAssertEqual(viewModel.queuedRenderJobs.count, 1)
+        XCTAssertEqual(viewModel.queuedRenderJobs[0].state, .completed)
+        XCTAssertEqual(viewModel.queuedRenderJobs[0].outputNamePreview, "Will Finish")
+    }
+
+    func testCancellingQueueLeavesUnfinishedJobsQueued() async throws {
+        let coordinator = RenderCoordinatorSpy(
+            preparation: makePreparation(),
+            renderDelay: .milliseconds(300)
+        )
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            preferencesStore: makePreferencesStore()
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.sourceMode = .folder
+        viewModel.selectedFolderURL = directory
+        viewModel.outputDirectoryURL = directory
+        viewModel.outputFilename = "Cancel One"
+        viewModel.addCurrentSettingsToQueue()
+        viewModel.outputFilename = "Cancel Two"
+        viewModel.addCurrentSettingsToQueue()
+
+        viewModel.startQueue()
+        await waitUntil(
+            message: "Timed out waiting for queue to begin before cancellation."
+        ) {
+            coordinator.renderRequests.count == 1 && viewModel.isRendering
+        }
+
+        viewModel.cancelRender()
+        await waitUntil(
+            timeout: 5.0,
+            message: "Timed out waiting for queue cancellation."
+        ) {
+            !viewModel.isRendering
+        }
+
+        XCTAssertEqual(viewModel.queuedRenderJobs.map(\.state), [.queued, .queued])
+        XCTAssertEqual(coordinator.cancelCurrentRenderCallCount, 1)
+        XCTAssertEqual(viewModel.statusMessage, "Render cancelled")
+    }
+
+    func testSystemFFmpegFallbackApprovalLetsQueueContinue() async throws {
+        let coordinator = RenderCoordinatorSpy(
+            preparation: makePreparation(),
+            systemFallbackReason: "Bundled FFmpeg not found."
+        )
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            preferencesStore: makePreferencesStore()
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.sourceMode = .folder
+        viewModel.selectedFolderURL = directory
+        viewModel.outputDirectoryURL = directory
+        viewModel.selectedDynamicRange = .hdr
+        viewModel.outputFilename = "Fallback One"
+        viewModel.addCurrentSettingsToQueue()
+        viewModel.outputFilename = "Fallback Two"
+        viewModel.addCurrentSettingsToQueue()
+
+        viewModel.startQueue()
+        await waitUntilSystemFFmpegFallbackPrompt(viewModel)
+        XCTAssertEqual(coordinator.renderRequests.count, 1)
+
+        viewModel.approveSystemFFmpegFallback()
+        await waitUntil(
+            message: "Timed out waiting for fallback queue to finish."
+        ) {
+            !viewModel.isRendering && viewModel.queuedRenderJobs.allSatisfy { $0.state == .completed }
+        }
+
+        XCTAssertEqual(coordinator.renderRequests.count, 2)
+        XCTAssertTrue(viewModel.showRenderCompleteAlert)
+        XCTAssertEqual(viewModel.renderCompleteAlertTitle, "Queue Complete")
+    }
+
     private func makeViewModel(
         coordinator: RenderCoordinating,
         preferencesStore: UserDefaults,
@@ -1013,8 +1342,9 @@ final class MainWindowViewModelTests: XCTestCase {
 @MainActor
 private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendable {
     let preparation: RenderPreparation
-    let failedRenderIndices: Set<Int>
+    var failedRenderIndices: Set<Int>
     let suspendRenderUntilResumed: Bool
+    let renderDelay: Duration?
     let renderResultBuilder: ((RenderPreparation, RenderRequest, Int) -> RenderResult)?
     let systemFallbackReason: String?
     private(set) var prepareFolderRequests: [RenderRequest] = []
@@ -1026,12 +1356,14 @@ private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendabl
         preparation: RenderPreparation,
         failedRenderIndices: Set<Int> = [],
         suspendRenderUntilResumed: Bool = false,
+        renderDelay: Duration? = nil,
         systemFallbackReason: String? = nil,
         renderResultBuilder: ((RenderPreparation, RenderRequest, Int) -> RenderResult)? = nil
     ) {
         self.preparation = preparation
         self.failedRenderIndices = failedRenderIndices
         self.suspendRenderUntilResumed = suspendRenderUntilResumed
+        self.renderDelay = renderDelay
         self.systemFallbackReason = systemFallbackReason
         self.renderResultBuilder = renderResultBuilder
     }
@@ -1080,6 +1412,10 @@ private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendabl
             await withCheckedContinuation { continuation in
                 suspendedRenderContinuation = continuation
             }
+        }
+
+        if let renderDelay {
+            try await Task.sleep(for: renderDelay)
         }
 
         if failedRenderIndices.contains(index) {
