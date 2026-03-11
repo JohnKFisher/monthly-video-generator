@@ -191,6 +191,7 @@ Operational updates after first packaged run:
 - 2026-03-10: Enriched FFmpeg failure reporting so diagnostics logs and surfaced render errors now include structured encoder/binary/progress/output context, cleaner stderr filtering, richer report headers, and no duplicate localized-description lines in the UI alert text.
 - 2026-03-10: Added a progressive HDR execution planner/builder for large HEVC/HDR renders, including per-source presentation intermediates, bounded assembly slices/final batches, concat-copy packaging, eager temp cleanup, and regression tests that block any post-normalization color/background/overlay filters from reappearing in batch assembly commands.
 - 2026-03-10: Added resumable progressive HDR execution state with persisted session manifests, safe-checkpoint pause requests, queue-aware paused-job handling, eager preservation of unfinished progressive artifacts on pause, and tests that lock in resume-state persistence plus paused-job retry ordering.
+- 2026-03-11: Tightened the FFmpeg watchdog for slow `libx265` progressive batches so advancing encoded frame counts and smaller-but-real CPU deltas count as activity, reducing false stall kills without lengthening the nominal stall timeouts.
 - 2026-03-04: Added `VERSION` file and dynamic build number injection into app `Info.plist`.
 - 2026-03-04: Added version/build label to main UI.
 - 2026-03-04: Reworked still-image rendering to use pre-rasterized CGImage frames for stability.

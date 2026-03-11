@@ -150,6 +150,12 @@ final class FFmpegHDRRenderer {
             lock.unlock()
         }
 
+        func recordHeartbeat() {
+            lock.lock()
+            lastActivityAt = Date()
+            lock.unlock()
+        }
+
         func snapshot() -> ActivitySnapshot {
             lock.lock()
             let snapshot = ActivitySnapshot(
@@ -172,6 +178,7 @@ final class FFmpegHDRRenderer {
     private let outputSizePollIntervalSeconds: TimeInterval = 1
     private let interruptToTerminateDelaySeconds: TimeInterval = 20
     private let terminateToKillDelaySeconds: TimeInterval = 20
+    private static let minimumCPUActivityDeltaSeconds: Double = 0.01
 
     private let processLock = NSLock()
     private var currentProcess: Process?
@@ -643,10 +650,17 @@ final class FFmpegHDRRenderer {
             return false
         }
 
+        let previousFrameCount = parser.latestFrameCount
         let previousOutTime = parser.latestOutTimeMS
         let previousTotalSizeBytes = parser.latestTotalSizeBytes
         let update = parser.ingest(line: line)
 
+        if Self.didFrameProgressAdvance(
+            previousFrameCount: previousFrameCount,
+            currentFrameCount: parser.latestFrameCount
+        ) {
+            activityTracker.recordHeartbeat()
+        }
         if parser.latestOutTimeMS > previousOutTime {
             activityTracker.recordOutTime(parser.latestOutTimeMS)
         }
@@ -670,6 +684,9 @@ final class FFmpegHDRRenderer {
         callbacks.report(combinedProgress)
 
         if let update {
+            if update.isTerminal {
+                activityTracker.recordHeartbeat()
+            }
             let outputSizeBytes = UInt64(update.totalSizeBytes ?? 0)
             let preferredOutputSize = max(outputSizeBytes, snapshot.latestOutputSizeBytes)
             callbacks.updateStatus(
@@ -718,8 +735,10 @@ final class FFmpegHDRRenderer {
                     activityTracker.recordOutputSize(outputSizeBytes)
                 }
                 if let cpuTimeSeconds = processCPUTimeSeconds(for: process.processIdentifier) {
-                    if let previousCPUTimeSeconds = lastCPUTimeSeconds,
-                       cpuTimeSeconds > previousCPUTimeSeconds + 0.10 {
+                    if Self.didCPUTimeAdvance(
+                        previousCPUTimeSeconds: lastCPUTimeSeconds,
+                        currentCPUTimeSeconds: cpuTimeSeconds
+                    ) {
                         activityTracker.recordCPUActivity()
                     }
                     lastCPUTimeSeconds = cpuTimeSeconds
@@ -809,6 +828,31 @@ final class FFmpegHDRRenderer {
             reason: process.terminationReason,
             stallContext: stallContext
         )
+    }
+
+    static func didFrameProgressAdvance(
+        previousFrameCount: Int64?,
+        currentFrameCount: Int64?
+    ) -> Bool {
+        guard let currentFrameCount else {
+            return false
+        }
+        guard let previousFrameCount else {
+            return currentFrameCount > 0
+        }
+        return currentFrameCount > previousFrameCount
+    }
+
+    static func didCPUTimeAdvance(
+        previousCPUTimeSeconds: Double?,
+        currentCPUTimeSeconds: Double?
+    ) -> Bool {
+        guard let previousCPUTimeSeconds,
+              let currentCPUTimeSeconds,
+              currentCPUTimeSeconds.isFinite else {
+            return false
+        }
+        return currentCPUTimeSeconds > previousCPUTimeSeconds + minimumCPUActivityDeltaSeconds
     }
 
     static func failureMessage(from snapshot: FailureSnapshot) -> String {

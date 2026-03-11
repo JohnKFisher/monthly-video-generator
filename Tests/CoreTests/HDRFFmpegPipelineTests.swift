@@ -1612,12 +1612,14 @@ final class HDRFFmpegPipelineTests: XCTestCase {
 
     func testProgressParserEmitsStructuredUpdateAtProgressBoundary() {
         var parser = FFmpegProgressParser()
+        parser.ingest(line: "frame=132")
         parser.ingest(line: "out_time_us=2200000")
         parser.ingest(line: "total_size=99887766")
         parser.ingest(line: "speed=0.82x")
         let update = parser.ingest(line: "progress=continue")
 
         XCTAssertNotNil(update)
+        XCTAssertEqual(update?.frameCount, 132)
         XCTAssertEqual(update?.outTimeMicroseconds, 2_200_000)
         XCTAssertEqual(update?.totalSizeBytes, 99_887_766)
         XCTAssertEqual(update?.speed ?? 0, 0.82, accuracy: 0.0001)
@@ -1631,6 +1633,54 @@ final class HDRFFmpegPipelineTests: XCTestCase {
 
         XCTAssertEqual(update?.state, "end")
         XCTAssertEqual(update?.isTerminal, true)
+    }
+
+    func testRendererTreatsAdvancingFrameCountsAsWatchdogActivity() {
+        XCTAssertFalse(
+            FFmpegHDRRenderer.didFrameProgressAdvance(
+                previousFrameCount: nil,
+                currentFrameCount: 0
+            )
+        )
+        XCTAssertTrue(
+            FFmpegHDRRenderer.didFrameProgressAdvance(
+                previousFrameCount: nil,
+                currentFrameCount: 1
+            )
+        )
+        XCTAssertTrue(
+            FFmpegHDRRenderer.didFrameProgressAdvance(
+                previousFrameCount: 120,
+                currentFrameCount: 121
+            )
+        )
+        XCTAssertFalse(
+            FFmpegHDRRenderer.didFrameProgressAdvance(
+                previousFrameCount: 121,
+                currentFrameCount: 121
+            )
+        )
+    }
+
+    func testRendererTreatsSmallPositiveCPUTimeDeltaAsActivity() {
+        XCTAssertTrue(
+            FFmpegHDRRenderer.didCPUTimeAdvance(
+                previousCPUTimeSeconds: 10.00,
+                currentCPUTimeSeconds: 10.02
+            )
+        )
+        XCTAssertFalse(
+            FFmpegHDRRenderer.didCPUTimeAdvance(
+                previousCPUTimeSeconds: 10.00,
+                currentCPUTimeSeconds: 10.005
+            )
+        )
+        XCTAssertFalse(
+            FFmpegHDRRenderer.didCPUTimeAdvance(
+                previousCPUTimeSeconds: nil,
+                currentCPUTimeSeconds: 10.02
+            )
+        )
     }
 
     func testExportProfileCodablePreservesHDRBinaryMode() throws {

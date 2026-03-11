@@ -1,6 +1,7 @@
 import Foundation
 
 struct FFmpegProgressUpdate: Equatable, Sendable {
+    let frameCount: Int64?
     let outTimeMicroseconds: Int64
     let totalSizeBytes: Int64?
     let speed: Double?
@@ -12,6 +13,7 @@ struct FFmpegProgressUpdate: Equatable, Sendable {
 }
 
 struct FFmpegProgressParser {
+    private(set) var latestFrameCount: Int64?
     private(set) var latestOutTimeMS: Int64 = 0
     private(set) var latestTotalSizeBytes: Int64?
     private(set) var latestSpeed: Double?
@@ -30,6 +32,10 @@ struct FFmpegProgressParser {
 
         let key = components[0]
         let value = components[1]
+        if key == "frame", let parsed = Int64(value) {
+            latestFrameCount = max(parsed, 0)
+            return nil
+        }
         if (key == "out_time_ms" || key == "out_time_us"), let parsed = Int64(value) {
             latestOutTimeMS = max(parsed, 0)
             return nil
@@ -44,6 +50,7 @@ struct FFmpegProgressParser {
         }
         if key == "progress" {
             return FFmpegProgressUpdate(
+                frameCount: latestFrameCount,
                 outTimeMicroseconds: latestOutTimeMS,
                 totalSizeBytes: latestTotalSizeBytes,
                 speed: latestSpeed,
