@@ -177,7 +177,7 @@ public final class AVFoundationRenderEngine {
                     outputTarget: outputTarget
                 )
                 var resumeSession: FFmpegProgressiveResumeSession
-                if let pausedSession = ffmpegProgressiveResumeStore.findPausedSession(
+                if let pausedSession = ffmpegProgressiveResumeStore.findResumableSession(
                     planSignature: planSignature,
                     outputTarget: outputTarget
                 ) {
@@ -192,11 +192,22 @@ public final class AVFoundationRenderEngine {
                 progressiveResumeSession = resumeSession
                 renderedOutputURL = resumeSession.finalOutputURL
                 diagnostics.add("Resolved output URL: \(resumeSession.finalOutputURL.path)")
-                if resumeSession.state == .paused {
+                switch resumeSession.state {
+                case .paused:
                     diagnostics.add(
                         "Resuming paused HDR progressive session: sessionID=\(resumeSession.sessionID.uuidString), workDirectory=\(resumeSession.workDirectoryURL.path)"
                     )
                     reportStatus("Resuming paused HDR encode...", handler: statusHandler)
+                case .recoverableFailure:
+                    diagnostics.add(
+                        "Resuming failed HDR progressive session: sessionID=\(resumeSession.sessionID.uuidString), workDirectory=\(resumeSession.workDirectoryURL.path)"
+                    )
+                    reportStatus("Resuming failed HDR encode...", handler: statusHandler)
+                case .active:
+                    diagnostics.add(
+                        "Recovering interrupted HDR progressive session: sessionID=\(resumeSession.sessionID.uuidString), workDirectory=\(resumeSession.workDirectoryURL.path)"
+                    )
+                    reportStatus("Recovering interrupted HDR encode...", handler: statusHandler)
                 }
 
                 let chapterMetadataURL = try makeChapterMetadataFileIfNeeded(
@@ -331,14 +342,35 @@ public final class AVFoundationRenderEngine {
                 )
             )
         } catch {
+            let preservedResumableFailure: Bool
             if let progressiveResumeSession,
                case RenderError.paused = error {
                 diagnostics.add(
                     "Render paused with resumable HDR session preserved: sessionID=\(progressiveResumeSession.sessionID.uuidString), " +
                         "workDirectory=\(progressiveResumeSession.workDirectoryURL.path)"
                 )
+                preservedResumableFailure = false
+            } else if var progressiveResumeSession,
+                      shouldPreserveRecoverableProgressiveFailure(session: progressiveResumeSession, error: error) {
+                do {
+                    try ffmpegProgressiveResumeStore.markRecoverableFailure(&progressiveResumeSession)
+                    diagnostics.add(
+                        "Render failed with resumable HDR session preserved: sessionID=\(progressiveResumeSession.sessionID.uuidString), " +
+                            "workDirectory=\(progressiveResumeSession.workDirectoryURL.path)"
+                    )
+                    preservedResumableFailure = true
+                } catch {
+                    ffmpegProgressiveResumeStore.removeSession(progressiveResumeSession)
+                    diagnostics.add(
+                        "Failed to preserve resumable HDR session after error; session removed: \(describe(error))"
+                    )
+                    preservedResumableFailure = false
+                }
             } else if let progressiveResumeSession {
                 ffmpegProgressiveResumeStore.removeSession(progressiveResumeSession)
+                preservedResumableFailure = false
+            } else {
+                preservedResumableFailure = false
             }
             diagnostics.add("Render failed with error: \(describe(error))")
             cleanupTemporaryFiles(&temporaryURLs, diagnostics: diagnostics)
@@ -359,6 +391,12 @@ public final class AVFoundationRenderEngine {
                 diagnosticURL = nil
             }
             let baseMessage = userFacingMessage(from: error)
+            let recoveryTip: String
+            if preservedResumableFailure {
+                recoveryTip = "\nTip: Re-run the same export to resume from the last completed HDR checkpoint."
+            } else {
+                recoveryTip = ""
+            }
             if isPausedError {
                 if let diagnosticURL {
                     throw RenderError.paused("\(baseMessage)\nDiagnostics file: \(diagnosticURL.path)")
@@ -366,10 +404,24 @@ public final class AVFoundationRenderEngine {
                 throw RenderError.paused(baseMessage)
             }
             if let diagnosticURL {
-                throw RenderError.exportFailed("\(baseMessage)\nDiagnostics file: \(diagnosticURL.path)")
+                throw RenderError.exportFailed("\(baseMessage)\(recoveryTip)\nDiagnostics file: \(diagnosticURL.path)")
             }
-            throw RenderError.exportFailed("\(baseMessage)\nTip: Enable \"Write diagnostics log (.log)\" for a full render trace.")
+            let diagnosticsTip = "\nTip: Enable \"Write diagnostics log (.log)\" for a full render trace."
+            throw RenderError.exportFailed("\(baseMessage)\(recoveryTip)\(diagnosticsTip)")
         }
+    }
+
+    private func shouldPreserveRecoverableProgressiveFailure(
+        session: FFmpegProgressiveResumeSession,
+        error: Error
+    ) -> Bool {
+        if error is CancellationError {
+            return false
+        }
+        if case RenderError.paused = error {
+            return false
+        }
+        return session.hasRecoverableCheckpointProgress
     }
 
     private func makeFFmpegRenderPlan(

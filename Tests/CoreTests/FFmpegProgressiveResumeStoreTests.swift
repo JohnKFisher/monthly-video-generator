@@ -36,7 +36,7 @@ final class FFmpegProgressiveResumeStoreTests: XCTestCase {
             now: { currentDate }
         )
         let reloaded = try XCTUnwrap(
-            reloadedStore.findPausedSession(
+            reloadedStore.findResumableSession(
                 planSignature: "signature-1",
                 outputTarget: outputTarget
             )
@@ -74,7 +74,91 @@ final class FFmpegProgressiveResumeStoreTests: XCTestCase {
         store.pruneStaleSessions(maximumSessionCount: 5, maximumAgeDays: 7)
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: session.workDirectoryURL.path))
-        XCTAssertNil(store.findPausedSession(planSignature: "signature-1", outputTarget: outputTarget))
+        XCTAssertNil(store.findResumableSession(planSignature: "signature-1", outputTarget: outputTarget))
+    }
+
+    func testRecoverableFailureSessionIsResumable() throws {
+        let baseDirectoryURL = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: baseDirectoryURL) }
+
+        let store = FFmpegProgressiveResumeStore(baseDirectoryURL: baseDirectoryURL)
+        let outputTarget = OutputTarget(
+            directory: URL(fileURLWithPath: "/tmp/export-output"),
+            baseFilename: "July 2025"
+        )
+        var session = try store.createSession(
+            planSignature: "signature-1",
+            outputTarget: outputTarget,
+            finalOutputURL: outputTarget.directory.appendingPathComponent("July 2025.mp4")
+        )
+        try store.markPresentationCompleted(0, session: &session)
+        try store.markRecoverableFailure(&session)
+
+        let reloaded = try XCTUnwrap(
+            store.findResumableSession(
+                planSignature: "signature-1",
+                outputTarget: outputTarget
+            )
+        )
+
+        XCTAssertEqual(reloaded.state, .recoverableFailure)
+        XCTAssertEqual(reloaded.completedPresentationIndices, [0])
+    }
+
+    func testPruneStaleSessionsDropsOldestSessionsUntilTotalSizeFitsCap() throws {
+        let baseDirectoryURL = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: baseDirectoryURL) }
+
+        var currentDate = Date(timeIntervalSince1970: 1_700_000_000)
+        let store = FFmpegProgressiveResumeStore(
+            baseDirectoryURL: baseDirectoryURL,
+            now: { currentDate }
+        )
+        let outputTarget = OutputTarget(
+            directory: URL(fileURLWithPath: "/tmp/export-output"),
+            baseFilename: "July 2025"
+        )
+
+        var oldest = try store.createSession(
+            planSignature: "signature-oldest",
+            outputTarget: outputTarget,
+            finalOutputURL: outputTarget.directory.appendingPathComponent("oldest.mp4")
+        )
+        try store.markPresentationCompleted(0, session: &oldest)
+        try store.markRecoverableFailure(&oldest)
+        try makePayload(in: oldest.workDirectoryURL, named: "payload.bin", sizeBytes: 2_048)
+
+        currentDate.addTimeInterval(60)
+        var middle = try store.createSession(
+            planSignature: "signature-middle",
+            outputTarget: outputTarget,
+            finalOutputURL: outputTarget.directory.appendingPathComponent("middle.mp4")
+        )
+        try store.markPresentationCompleted(0, session: &middle)
+        try store.markRecoverableFailure(&middle)
+        try makePayload(in: middle.workDirectoryURL, named: "payload.bin", sizeBytes: 2_048)
+
+        currentDate.addTimeInterval(60)
+        var newest = try store.createSession(
+            planSignature: "signature-newest",
+            outputTarget: outputTarget,
+            finalOutputURL: outputTarget.directory.appendingPathComponent("newest.mp4")
+        )
+        try store.markPresentationCompleted(0, session: &newest)
+        try store.markRecoverableFailure(&newest)
+        try makePayload(in: newest.workDirectoryURL, named: "payload.bin", sizeBytes: 2_048)
+
+        let retainedCap = directorySize(of: middle.workDirectoryURL) + directorySize(of: newest.workDirectoryURL) + 256
+
+        store.pruneStaleSessions(
+            maximumSessionCount: 5,
+            maximumAgeDays: 7,
+            maximumTotalSizeBytes: retainedCap
+        )
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: oldest.workDirectoryURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: middle.workDirectoryURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: newest.workDirectoryURL.path))
     }
 
     func testPlanSignatureChangesWhenRenderPlanChanges() {
@@ -99,6 +183,37 @@ final class FFmpegProgressiveResumeStoreTests: XCTestCase {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
+    }
+
+    private func makePayload(in directoryURL: URL, named filename: String, sizeBytes: Int) throws {
+        let payloadURL = directoryURL.appendingPathComponent(filename)
+        try Data(repeating: 0xAB, count: sizeBytes).write(to: payloadURL)
+    }
+
+    private func directorySize(of directoryURL: URL) -> UInt64 {
+        guard let enumerator = FileManager.default.enumerator(
+            at: directoryURL,
+            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey, .totalFileAllocatedSizeKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return 0
+        }
+
+        var totalSizeBytes: UInt64 = 0
+        for case let fileURL as URL in enumerator {
+            guard let resourceValues = try? fileURL.resourceValues(
+                forKeys: [.isRegularFileKey, .fileSizeKey, .totalFileAllocatedSizeKey]
+            ),
+            resourceValues.isRegularFile == true else {
+                continue
+            }
+            if let allocatedSize = resourceValues.totalFileAllocatedSize {
+                totalSizeBytes += UInt64(max(allocatedSize, 0))
+            } else if let fileSize = resourceValues.fileSize {
+                totalSizeBytes += UInt64(max(fileSize, 0))
+            }
+        }
+        return totalSizeBytes
     }
 
     private func makeHDRPlan(

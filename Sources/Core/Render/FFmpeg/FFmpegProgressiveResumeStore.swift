@@ -4,6 +4,7 @@ struct FFmpegProgressiveResumeSession: Codable, Equatable, Sendable {
     enum State: String, Codable, Sendable {
         case active
         case paused
+        case recoverableFailure
     }
 
     static let schemaVersion = 1
@@ -74,9 +75,24 @@ struct FFmpegProgressiveResumeSession: Codable, Equatable, Sendable {
     func batchOutputURL(for index: Int) -> URL {
         workDirectoryURL.appendingPathComponent(String(format: "batch-%04d.mov", index))
     }
+
+    var hasRecoverableCheckpointProgress: Bool {
+        !completedPresentationIndices.isEmpty || !completedBatchIndices.isEmpty || concatCompleted
+    }
+
+    var isResumable: Bool {
+        switch state {
+        case .active, .paused, .recoverableFailure:
+            return true
+        }
+    }
 }
 
 final class FFmpegProgressiveResumeStore {
+    static let defaultMaximumSessionCount = 3
+    static let defaultMaximumAgeDays = 7.0
+    static let defaultMaximumTotalSizeBytes: UInt64 = 250 * 1024 * 1024 * 1024
+
     private let fileManager: FileManager
     private let baseDirectoryURL: URL
     private let now: () -> Date
@@ -92,34 +108,54 @@ final class FFmpegProgressiveResumeStore {
         self.baseDirectoryURL = baseDirectoryURL ?? Self.defaultBaseDirectoryURL(fileManager: fileManager)
         self.now = now
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        pruneStaleSessions()
     }
 
     func pruneStaleSessions(
-        maximumSessionCount: Int = 5,
-        maximumAgeDays: Double = 7
+        maximumSessionCount: Int = FFmpegProgressiveResumeStore.defaultMaximumSessionCount,
+        maximumAgeDays: Double = FFmpegProgressiveResumeStore.defaultMaximumAgeDays,
+        maximumTotalSizeBytes: UInt64 = FFmpegProgressiveResumeStore.defaultMaximumTotalSizeBytes
     ) {
         let sessions = loadAllSessions().sorted { $0.updatedAt > $1.updatedAt }
         let now = now()
         let maxAge = maximumAgeDays * 24 * 60 * 60
+        let retainedCount = max(maximumSessionCount, 1)
+        var removalIDs = Set<UUID>()
 
-        for session in sessions.dropFirst(maximumSessionCount) {
-            removeSession(session)
+        for session in sessions.dropFirst(retainedCount) {
+            removalIDs.insert(session.sessionID)
         }
 
         for session in sessions where now.timeIntervalSince(session.updatedAt) > maxAge {
+            removalIDs.insert(session.sessionID)
+        }
+
+        var retainedSessions = sessions.filter { !removalIDs.contains($0.sessionID) }
+        let sessionSizes = Dictionary(uniqueKeysWithValues: retainedSessions.map { ($0.sessionID, sessionStorageBytes(for: $0)) })
+        var retainedTotalSizeBytes = retainedSessions.reduce(into: UInt64(0)) { result, session in
+            result += sessionSizes[session.sessionID] ?? 0
+        }
+
+        while retainedSessions.count > 1 && retainedTotalSizeBytes > maximumTotalSizeBytes {
+            let sessionToRemove = retainedSessions.removeLast()
+            removalIDs.insert(sessionToRemove.sessionID)
+            retainedTotalSizeBytes = retainedTotalSizeBytes &- (sessionSizes[sessionToRemove.sessionID] ?? 0)
+        }
+
+        for session in sessions where removalIDs.contains(session.sessionID) {
             removeSession(session)
         }
     }
 
-    func findPausedSession(
+    func findResumableSession(
         planSignature: String,
         outputTarget: OutputTarget
     ) -> FFmpegProgressiveResumeSession? {
-        loadAllSessions().first {
+        loadAllSessions().sorted { $0.updatedAt > $1.updatedAt }.first {
             $0.planSignature == planSignature &&
                 $0.outputDirectoryURL == outputTarget.directory &&
                 $0.outputBaseFilename == outputTarget.baseFilename &&
-                $0.state == .paused
+                $0.isResumable
         }
     }
 
@@ -163,6 +199,12 @@ final class FFmpegProgressiveResumeStore {
 
     func markPaused(_ session: inout FFmpegProgressiveResumeSession) throws {
         session.state = .paused
+        session.updatedAt = now()
+        try save(session)
+    }
+
+    func markRecoverableFailure(_ session: inout FFmpegProgressiveResumeSession) throws {
+        session.state = .recoverableFailure
         session.updatedAt = now()
         try save(session)
     }
@@ -282,6 +324,34 @@ final class FFmpegProgressiveResumeStore {
 
     private func createBaseDirectoryIfNeeded() throws {
         try fileManager.createDirectory(at: baseDirectoryURL, withIntermediateDirectories: true)
+    }
+
+    private func sessionStorageBytes(for session: FFmpegProgressiveResumeSession) -> UInt64 {
+        guard fileManager.fileExists(atPath: session.workDirectoryURL.path),
+              let enumerator = fileManager.enumerator(
+                at: session.workDirectoryURL,
+                includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey, .totalFileAllocatedSizeKey],
+                options: [.skipsHiddenFiles]
+              ) else {
+            return 0
+        }
+
+        var totalSizeBytes: UInt64 = 0
+        for case let fileURL as URL in enumerator {
+            guard let resourceValues = try? fileURL.resourceValues(
+                forKeys: [.isRegularFileKey, .fileSizeKey, .totalFileAllocatedSizeKey]
+            ),
+            resourceValues.isRegularFile == true else {
+                continue
+            }
+
+            if let allocatedSize = resourceValues.totalFileAllocatedSize {
+                totalSizeBytes += UInt64(max(allocatedSize, 0))
+            } else if let fileSize = resourceValues.fileSize {
+                totalSizeBytes += UInt64(max(fileSize, 0))
+            }
+        }
+        return totalSizeBytes
     }
 
     private static func defaultBaseDirectoryURL(fileManager: FileManager) -> URL {
