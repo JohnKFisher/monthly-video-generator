@@ -3,7 +3,17 @@ import CoreImage
 import Foundation
 import VideoToolbox
 
-public final class AVFoundationRenderEngine {
+public final class AVFoundationRenderEngine: @unchecked Sendable {
+    static let shortJobBoostMaximumDurationSeconds = 20 * 60.0
+    private static let maxConcurrentClipMaterializations = 2
+    private static let maxConcurrentTitlePreviewResolutions = 3
+
+    private struct MaterializedSegmentResult {
+        let index: Int
+        let clip: InputClip?
+        let temporaryURLs: [URL]
+    }
+
     private let stillImageClipFactory: StillImageClipFactory
     private let captureDateOverlayFactory: CaptureDateOverlayFactory
     private let ffmpegHDRRenderer: FFmpegHDRRenderer
@@ -448,19 +458,29 @@ public final class AVFoundationRenderEngine {
         chapters: [RenderChapter],
         chapterMetadataURL: URL?
     ) -> FFmpegRenderPlan {
-        FFmpegRenderPlan(
-            clips: clips.map {
-                FFmpegRenderClip(
-                    url: $0.assetURL,
-                    durationSeconds: max($0.duration.seconds, 0.01),
-                    includeAudio: $0.includeAudio,
-                    hasAudioTrack: $0.audioTrack != nil,
-                    colorInfo: $0.colorInfo,
-                    sourceDescription: $0.sourceDescription,
-                    captureDateOverlayURL: $0.captureDateOverlayURL
-                )
-            },
-            transitionDurationSeconds: max(transitionDuration.seconds, 0),
+        let ffmpegClips = clips.map {
+            FFmpegRenderClip(
+                url: $0.assetURL,
+                durationSeconds: max($0.duration.seconds, 0.01),
+                includeAudio: $0.includeAudio,
+                hasAudioTrack: $0.audioTrack != nil,
+                colorInfo: $0.colorInfo,
+                sourceDescription: $0.sourceDescription,
+                captureDateOverlayURL: $0.captureDateOverlayURL
+            )
+        }
+        let transitionDurationSeconds = max(transitionDuration.seconds, 0)
+        let totalDurationSeconds = ffmpegClips.reduce(0) { partialResult, clip in
+            partialResult + max(clip.durationSeconds, 0.01)
+        }
+        let expectedFinalDurationSeconds = max(
+            totalDurationSeconds - transitionDurationSeconds * Double(max(ffmpegClips.count - 1, 0)),
+            0.01
+        )
+
+        return FFmpegRenderPlan(
+            clips: ffmpegClips,
+            transitionDurationSeconds: transitionDurationSeconds,
             endFadeToBlackDurationSeconds: endFadeToBlackDurationSeconds,
             outputURL: outputURL,
             renderSize: renderSize,
@@ -471,11 +491,30 @@ public final class AVFoundationRenderEngine {
             videoCodec: exportProfile.videoCodec,
             dynamicRange: exportProfile.dynamicRange,
             hdrHEVCEncoderMode: exportProfile.hdrHEVCEncoderMode,
+            x265ThreadProfile: x265ThreadProfile(
+                forExpectedFinalDurationSeconds: expectedFinalDurationSeconds,
+                dynamicRange: exportProfile.dynamicRange,
+                videoCodec: exportProfile.videoCodec
+            ),
             embeddedMetadata: embeddedMetadata,
             chapters: chapters,
             chapterMetadataURL: chapterMetadataURL,
             renderIntent: .finalDelivery
         )
+    }
+
+    func x265ThreadProfile(
+        forExpectedFinalDurationSeconds expectedFinalDurationSeconds: Double,
+        dynamicRange: DynamicRange,
+        videoCodec: VideoCodec
+    ) -> FFmpegX265ThreadProfile {
+        guard dynamicRange == .hdr,
+              videoCodec == .hevc,
+              expectedFinalDurationSeconds <= Self.shortJobBoostMaximumDurationSeconds else {
+            return .conservative
+        }
+
+        return .shortJobBoost
     }
 
     private func resolveOutputChapters(
@@ -1061,184 +1100,289 @@ public final class AVFoundationRenderEngine {
         progressHandler: (@MainActor @Sendable (Double) -> Void)?,
         statusHandler: (@MainActor @Sendable (String) -> Void)?
     ) async throws -> [InputClip] {
-        var clips: [InputClip] = []
-        let totalSegments = max(segments.count, 1)
+        guard !segments.isEmpty else {
+            return []
+        }
 
-        for (index, segment) in segments.enumerated() {
-            reportStatus("Preparing clip \(index + 1) of \(segments.count)...", handler: statusHandler)
-            let segmentProgress = 0.05 + (Double(index) / Double(totalSegments)) * 0.18
-            reportProgress(segmentProgress, handler: progressHandler)
-            switch segment.asset {
-            case let .titleCard(descriptor):
-                let previewAssets = try await resolveTitleCardPreviewAssets(
-                    from: descriptor.previewItems,
+        let totalSegments = max(segments.count, 1)
+        var materializedResults = Array<MaterializedSegmentResult?>(repeating: nil, count: segments.count)
+        var completedCount = 0
+        var nextIndex = 0
+
+        reportStatus("Preparing clips: 0 of \(segments.count)...", handler: statusHandler)
+        reportProgress(0.05, handler: progressHandler)
+
+        while nextIndex < segments.count {
+            let remaining = segments.count - nextIndex
+
+            if remaining >= Self.maxConcurrentClipMaterializations {
+                let firstIndex = nextIndex
+                let secondIndex = nextIndex + 1
+                let firstSegment = segments[firstIndex]
+                let secondSegment = segments[secondIndex]
+
+                async let firstResult = materializeSegment(
+                    at: firstIndex,
+                    segment: firstSegment,
+                    style: style,
+                    renderSize: renderSize,
+                    frameRate: frameRate,
+                    exportDynamicRange: exportDynamicRange,
+                    exportBinaryMode: exportBinaryMode,
                     photoMaterializer: photoMaterializer,
                     diagnostics: diagnostics
                 )
-                let titleURL = try await diagnostics.measurePreparationOperation(
-                    .titleCardGeneration,
-                    detail: "title card '\(descriptor.resolvedTitle)'"
+                async let secondResult = materializeSegment(
+                    at: secondIndex,
+                    segment: secondSegment,
+                    style: style,
+                    renderSize: renderSize,
+                    frameRate: frameRate,
+                    exportDynamicRange: exportDynamicRange,
+                    exportBinaryMode: exportBinaryMode,
+                    photoMaterializer: photoMaterializer,
+                    diagnostics: diagnostics
+                )
+
+                let (resolvedFirstResult, resolvedSecondResult) = try await (firstResult, secondResult)
+                materializedResults[resolvedFirstResult.index] = resolvedFirstResult
+                completedCount += 1
+                updateClipPreparationProgress(
+                    completedCount: completedCount,
+                    totalSegments: totalSegments,
+                    progressHandler: progressHandler,
+                    statusHandler: statusHandler
+                )
+
+                materializedResults[resolvedSecondResult.index] = resolvedSecondResult
+                completedCount += 1
+                updateClipPreparationProgress(
+                    completedCount: completedCount,
+                    totalSegments: totalSegments,
+                    progressHandler: progressHandler,
+                    statusHandler: statusHandler
+                )
+
+                nextIndex += Self.maxConcurrentClipMaterializations
+                continue
+            }
+
+            let result = try await materializeSegment(
+                at: nextIndex,
+                segment: segments[nextIndex],
+                style: style,
+                renderSize: renderSize,
+                frameRate: frameRate,
+                exportDynamicRange: exportDynamicRange,
+                exportBinaryMode: exportBinaryMode,
+                photoMaterializer: photoMaterializer,
+                diagnostics: diagnostics
+            )
+            materializedResults[result.index] = result
+            completedCount += 1
+            updateClipPreparationProgress(
+                completedCount: completedCount,
+                totalSegments: totalSegments,
+                progressHandler: progressHandler,
+                statusHandler: statusHandler
+            )
+            nextIndex += 1
+        }
+
+        var clips: [InputClip] = []
+        for result in materializedResults.compactMap({ $0 }) {
+            temporaryURLs.append(contentsOf: result.temporaryURLs)
+            if let clip = result.clip {
+                clips.append(clip)
+            }
+        }
+
+        return clips
+    }
+
+    private func updateClipPreparationProgress(
+        completedCount: Int,
+        totalSegments: Int,
+        progressHandler: (@MainActor @Sendable (Double) -> Void)?,
+        statusHandler: (@MainActor @Sendable (String) -> Void)?
+    ) {
+        let completedProgress = 0.05 + (Double(completedCount) / Double(max(totalSegments, 1))) * 0.18
+        reportStatus("Preparing clips: \(completedCount) of \(totalSegments)...", handler: statusHandler)
+        reportProgress(completedProgress, handler: progressHandler)
+    }
+
+    private func materializeSegment(
+        at index: Int,
+        segment: TimelineSegment,
+        style: StyleProfile,
+        renderSize: CGSize,
+        frameRate: Int,
+        exportDynamicRange: DynamicRange,
+        exportBinaryMode: HDRFFmpegBinaryMode,
+        photoMaterializer: PhotoAssetMaterializing?,
+        diagnostics: RenderDiagnostics
+    ) async throws -> MaterializedSegmentResult {
+        var temporaryURLs: [URL] = []
+        let clip: InputClip?
+
+        switch segment.asset {
+        case let .titleCard(descriptor):
+            let previewAssets = try await resolveTitleCardPreviewAssets(
+                from: descriptor.previewItems,
+                photoMaterializer: photoMaterializer,
+                diagnostics: diagnostics
+            )
+            let titleURL = try await diagnostics.measurePreparationOperation(
+                .titleCardGeneration,
+                detail: "title card '\(descriptor.resolvedTitle)'"
+            ) {
+                try await stillImageClipFactory.makeTitleCardClip(
+                    descriptor: descriptor,
+                    previewAssets: previewAssets,
+                    duration: segment.duration,
+                    renderSize: renderSize,
+                    frameRate: frameRate,
+                    dynamicRange: exportDynamicRange
+                )
+            }
+            temporaryURLs.append(titleURL)
+            diagnostics.add(
+                "Materialized title card clip at \(titleURL.path) for title '\(descriptor.resolvedTitle)' " +
+                "(previews=\(previewAssets.count), seed=\(descriptor.variationSeed))"
+            )
+            clip = try await diagnostics.measurePreparationOperation(
+                .clipProbe,
+                detail: "title card '\(descriptor.resolvedTitle)'"
+            ) {
+                try await makeClip(
+                    assetURL: titleURL,
+                    fallbackDuration: segment.duration,
+                    includeAudio: false,
+                    sourceDescription: "title card '\(descriptor.resolvedTitle)'",
+                    sourceColorInfo: .unknown,
+                    captureDateOverlayText: nil,
+                    captureDateOverlayURL: nil,
+                    diagnostics: diagnostics,
+                    isTemporary: true,
+                    exportDynamicRange: exportDynamicRange,
+                    exportBinaryMode: exportBinaryMode
+                )
+            }
+
+        case let .media(item):
+            switch item.type {
+            case .image:
+                let sourceURL = try await diagnostics.measurePreparationOperation(
+                    .stillImageSourceResolution,
+                    detail: item.filename
                 ) {
-                    try await stillImageClipFactory.makeTitleCardClip(
-                        descriptor: descriptor,
-                        previewAssets: previewAssets,
+                    try await resolveURL(for: item, photoMaterializer: photoMaterializer)
+                }
+                let sourceColorInfo = try stillImageClipFactory.sourceColorInfo(
+                    forImageURL: sourceURL,
+                    dynamicRange: exportDynamicRange
+                )
+                let captureDateOverlayText = formattedCaptureDateOverlayText(for: item, style: style)
+                let captureDateOverlayURL: URL?
+                if let captureDateOverlayText {
+                    captureDateOverlayURL = diagnostics.measurePreparationOperation(
+                        .captureDateOverlayGeneration,
+                        detail: item.filename
+                    ) {
+                        makeCaptureDateOverlayIfNeeded(
+                            overlayText: captureDateOverlayText,
+                            renderSize: renderSize,
+                            diagnostics: diagnostics
+                        )
+                    }
+                } else {
+                    captureDateOverlayURL = nil
+                }
+                if let captureDateOverlayURL {
+                    temporaryURLs.append(captureDateOverlayURL)
+                }
+                let imageClipURL = try await diagnostics.measurePreparationOperation(
+                    .stillClipGeneration,
+                    detail: item.filename
+                ) {
+                    try await stillImageClipFactory.makeVideoClip(
+                        fromImageURL: sourceURL,
                         duration: segment.duration,
                         renderSize: renderSize,
                         frameRate: frameRate,
                         dynamicRange: exportDynamicRange
                     )
                 }
-                temporaryURLs.append(titleURL)
-                diagnostics.add(
-                    "Materialized title card clip at \(titleURL.path) for title '\(descriptor.resolvedTitle)' " +
-                    "(previews=\(previewAssets.count), seed=\(descriptor.variationSeed))"
-                )
-                let titleClip = try await diagnostics.measurePreparationOperation(
+                temporaryURLs.append(imageClipURL)
+                diagnostics.add("Materialized still image clip for \(item.filename) at \(imageClipURL.path)")
+                clip = try await diagnostics.measurePreparationOperation(
                     .clipProbe,
-                    detail: "title card '\(descriptor.resolvedTitle)'"
+                    detail: "image \(item.filename)"
                 ) {
                     try await makeClip(
-                        assetURL: titleURL,
+                        assetURL: imageClipURL,
                         fallbackDuration: segment.duration,
                         includeAudio: false,
-                        sourceDescription: "title card '\(descriptor.resolvedTitle)'",
-                        sourceColorInfo: .unknown,
-                        captureDateOverlayText: nil,
-                        captureDateOverlayURL: nil,
+                        sourceDescription: "image \(item.filename)",
+                        sourceColorInfo: sourceColorInfo,
+                        captureDateOverlayText: captureDateOverlayText,
+                        captureDateOverlayURL: captureDateOverlayURL,
                         diagnostics: diagnostics,
                         isTemporary: true,
                         exportDynamicRange: exportDynamicRange,
                         exportBinaryMode: exportBinaryMode
                     )
                 }
-                if let titleClip {
-                    clips.append(titleClip)
+
+            case .video:
+                let sourceURL = try await diagnostics.measurePreparationOperation(
+                    .videoSourceResolution,
+                    detail: item.filename
+                ) {
+                    try await resolveURL(for: item, photoMaterializer: photoMaterializer)
                 }
-
-            case let .media(item):
-                switch item.type {
-                case .image:
-                    let sourceURL = try await diagnostics.measurePreparationOperation(
-                        .stillImageSourceResolution,
+                let captureDateOverlayText = formattedCaptureDateOverlayText(for: item, style: style)
+                let captureDateOverlayURL: URL?
+                if let captureDateOverlayText {
+                    captureDateOverlayURL = diagnostics.measurePreparationOperation(
+                        .captureDateOverlayGeneration,
                         detail: item.filename
                     ) {
-                        try await resolveURL(for: item, photoMaterializer: photoMaterializer)
-                    }
-                    let sourceColorInfo = try stillImageClipFactory.sourceColorInfo(
-                        forImageURL: sourceURL,
-                        dynamicRange: exportDynamicRange
-                    )
-                    let captureDateOverlayText = formattedCaptureDateOverlayText(for: item, style: style)
-                    let captureDateOverlayURL: URL?
-                    if let captureDateOverlayText {
-                        captureDateOverlayURL = diagnostics.measurePreparationOperation(
-                            .captureDateOverlayGeneration,
-                            detail: item.filename
-                        ) {
-                            makeCaptureDateOverlayIfNeeded(
-                                overlayText: captureDateOverlayText,
-                                renderSize: renderSize,
-                                diagnostics: diagnostics
-                            )
-                        }
-                    } else {
-                        captureDateOverlayURL = nil
-                    }
-                    if let captureDateOverlayURL {
-                        temporaryURLs.append(captureDateOverlayURL)
-                    }
-                    let imageClipURL = try await diagnostics.measurePreparationOperation(
-                        .stillClipGeneration,
-                        detail: item.filename
-                    ) {
-                        try await stillImageClipFactory.makeVideoClip(
-                            fromImageURL: sourceURL,
-                            duration: segment.duration,
+                        makeCaptureDateOverlayIfNeeded(
+                            overlayText: captureDateOverlayText,
                             renderSize: renderSize,
-                            frameRate: frameRate,
-                            dynamicRange: exportDynamicRange
+                            diagnostics: diagnostics
                         )
                     }
-                    temporaryURLs.append(imageClipURL)
-                    diagnostics.add("Materialized still image clip for \(item.filename) at \(imageClipURL.path)")
-                    let imageClip = try await diagnostics.measurePreparationOperation(
-                        .clipProbe,
-                        detail: "image \(item.filename)"
-                    ) {
-                        try await makeClip(
-                            assetURL: imageClipURL,
-                            fallbackDuration: segment.duration,
-                            includeAudio: false,
-                            sourceDescription: "image \(item.filename)",
-                            sourceColorInfo: sourceColorInfo,
-                            captureDateOverlayText: captureDateOverlayText,
-                            captureDateOverlayURL: captureDateOverlayURL,
-                            diagnostics: diagnostics,
-                            isTemporary: true,
-                            exportDynamicRange: exportDynamicRange,
-                            exportBinaryMode: exportBinaryMode
-                        )
-                    }
-                    if let imageClip {
-                        clips.append(imageClip)
-                    }
-
-                case .video:
-                    let sourceURL = try await diagnostics.measurePreparationOperation(
-                        .videoSourceResolution,
-                        detail: item.filename
-                    ) {
-                        try await resolveURL(for: item, photoMaterializer: photoMaterializer)
-                    }
-                    let captureDateOverlayText = formattedCaptureDateOverlayText(for: item, style: style)
-                    let captureDateOverlayURL: URL?
-                    if let captureDateOverlayText {
-                        captureDateOverlayURL = diagnostics.measurePreparationOperation(
-                            .captureDateOverlayGeneration,
-                            detail: item.filename
-                        ) {
-                            makeCaptureDateOverlayIfNeeded(
-                                overlayText: captureDateOverlayText,
-                                renderSize: renderSize,
-                                diagnostics: diagnostics
-                            )
-                        }
-                    } else {
-                        captureDateOverlayURL = nil
-                    }
-                    if let captureDateOverlayURL {
-                        temporaryURLs.append(captureDateOverlayURL)
-                    }
-                    diagnostics.add("Using source video clip \(sourceURL.path) for \(item.filename)")
-                    let videoClip = try await diagnostics.measurePreparationOperation(
-                        .clipProbe,
-                        detail: "video \(item.filename)"
-                    ) {
-                        try await makeClip(
-                            assetURL: sourceURL,
-                            fallbackDuration: segment.duration,
-                            includeAudio: true,
-                            sourceDescription: "video \(item.filename)",
-                            sourceColorInfo: item.colorInfo,
-                            captureDateOverlayText: captureDateOverlayText,
-                            captureDateOverlayURL: captureDateOverlayURL,
-                            diagnostics: diagnostics,
-                            isTemporary: false,
-                            exportDynamicRange: exportDynamicRange,
-                            exportBinaryMode: exportBinaryMode
-                        )
-                    }
-                    if let videoClip {
-                        clips.append(videoClip)
-                    }
+                } else {
+                    captureDateOverlayURL = nil
+                }
+                if let captureDateOverlayURL {
+                    temporaryURLs.append(captureDateOverlayURL)
+                }
+                diagnostics.add("Using source video clip \(sourceURL.path) for \(item.filename)")
+                clip = try await diagnostics.measurePreparationOperation(
+                    .clipProbe,
+                    detail: "video \(item.filename)"
+                ) {
+                    try await makeClip(
+                        assetURL: sourceURL,
+                        fallbackDuration: segment.duration,
+                        includeAudio: true,
+                        sourceDescription: "video \(item.filename)",
+                        sourceColorInfo: item.colorInfo,
+                        captureDateOverlayText: captureDateOverlayText,
+                        captureDateOverlayURL: captureDateOverlayURL,
+                        diagnostics: diagnostics,
+                        isTemporary: false,
+                        exportDynamicRange: exportDynamicRange,
+                        exportBinaryMode: exportBinaryMode
+                    )
                 }
             }
-
-            let completedProgress = 0.05 + (Double(index + 1) / Double(totalSegments)) * 0.18
-            reportProgress(completedProgress, handler: progressHandler)
         }
 
-        return clips
+        return MaterializedSegmentResult(index: index, clip: clip, temporaryURLs: temporaryURLs)
     }
 
     private func resolveTitleCardPreviewAssets(
@@ -1246,32 +1390,87 @@ public final class AVFoundationRenderEngine {
         photoMaterializer: PhotoAssetMaterializing?,
         diagnostics: RenderDiagnostics
     ) async throws -> [StillImageClipFactory.TitleCardPreviewAsset] {
-        var previewAssets: [StillImageClipFactory.TitleCardPreviewAsset] = []
-        previewAssets.reserveCapacity(items.count)
-
-        for item in items {
-            do {
-                let url = try await diagnostics.measurePreparationOperation(
-                    .titlePreviewAssetResolution,
-                    detail: item.filename
-                ) {
-                    try await resolveURL(for: item, photoMaterializer: photoMaterializer)
-                }
-                previewAssets.append(
-                    StillImageClipFactory.TitleCardPreviewAsset(
-                        url: url,
-                        mediaType: item.type,
-                        filename: item.filename
-                    )
-                )
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                diagnostics.add("Title preview skipped for \(item.filename): \(describe(error))")
-            }
+        guard !items.isEmpty else {
+            return []
         }
 
-        return previewAssets
+        var previewAssets = Array<StillImageClipFactory.TitleCardPreviewAsset?>(repeating: nil, count: items.count)
+        var nextIndex = 0
+
+        while nextIndex < items.count {
+            let remaining = items.count - nextIndex
+
+            if remaining >= Self.maxConcurrentTitlePreviewResolutions {
+                let firstIndex = nextIndex
+                let secondIndex = nextIndex + 1
+                let thirdIndex = nextIndex + 2
+                let firstItem = items[firstIndex]
+                let secondItem = items[secondIndex]
+                let thirdItem = items[thirdIndex]
+
+                async let firstPreviewAsset = resolveTitleCardPreviewAsset(
+                    firstItem,
+                    photoMaterializer: photoMaterializer,
+                    diagnostics: diagnostics
+                )
+                async let secondPreviewAsset = resolveTitleCardPreviewAsset(
+                    secondItem,
+                    photoMaterializer: photoMaterializer,
+                    diagnostics: diagnostics
+                )
+                async let thirdPreviewAsset = resolveTitleCardPreviewAsset(
+                    thirdItem,
+                    photoMaterializer: photoMaterializer,
+                    diagnostics: diagnostics
+                )
+
+                let (resolvedFirstPreviewAsset, resolvedSecondPreviewAsset, resolvedThirdPreviewAsset) = try await (
+                    firstPreviewAsset,
+                    secondPreviewAsset,
+                    thirdPreviewAsset
+                )
+                previewAssets[firstIndex] = resolvedFirstPreviewAsset
+                previewAssets[secondIndex] = resolvedSecondPreviewAsset
+                previewAssets[thirdIndex] = resolvedThirdPreviewAsset
+                nextIndex += Self.maxConcurrentTitlePreviewResolutions
+                continue
+            }
+
+            let previewAsset = try await resolveTitleCardPreviewAsset(
+                items[nextIndex],
+                photoMaterializer: photoMaterializer,
+                diagnostics: diagnostics
+            )
+            previewAssets[nextIndex] = previewAsset
+            nextIndex += 1
+        }
+
+        return previewAssets.compactMap { $0 }
+    }
+
+    private func resolveTitleCardPreviewAsset(
+        _ item: MediaItem,
+        photoMaterializer: PhotoAssetMaterializing?,
+        diagnostics: RenderDiagnostics
+    ) async throws -> StillImageClipFactory.TitleCardPreviewAsset? {
+        do {
+            let url = try await diagnostics.measurePreparationOperation(
+                .titlePreviewAssetResolution,
+                detail: item.filename
+            ) {
+                try await resolveURL(for: item, photoMaterializer: photoMaterializer)
+            }
+            return StillImageClipFactory.TitleCardPreviewAsset(
+                url: url,
+                mediaType: item.type,
+                filename: item.filename
+            )
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            diagnostics.add("Title preview skipped for \(item.filename): \(describe(error))")
+            return nil
+        }
     }
 
     private func formattedCaptureDateOverlayText(for item: MediaItem, style: StyleProfile) -> String? {

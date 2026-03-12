@@ -384,6 +384,56 @@ final class RenderPipelineTests: XCTestCase {
         XCTAssertTrue(engine.shouldApplyHDRToneMapping(for: profile))
     }
 
+    func testHDRX265ThreadProfileUsesShortJobBoostThroughTwentyMinutes() {
+        let engine = AVFoundationRenderEngine()
+
+        XCTAssertEqual(
+            engine.x265ThreadProfile(
+                forExpectedFinalDurationSeconds: 1199,
+                dynamicRange: .hdr,
+                videoCodec: .hevc
+            ),
+            .shortJobBoost
+        )
+        XCTAssertEqual(
+            engine.x265ThreadProfile(
+                forExpectedFinalDurationSeconds: 1200,
+                dynamicRange: .hdr,
+                videoCodec: .hevc
+            ),
+            .shortJobBoost
+        )
+        XCTAssertEqual(
+            engine.x265ThreadProfile(
+                forExpectedFinalDurationSeconds: 1200.01,
+                dynamicRange: .hdr,
+                videoCodec: .hevc
+            ),
+            .conservative
+        )
+    }
+
+    func testHDRX265ThreadProfileStaysConservativeForNonHDRHEVCPlans() {
+        let engine = AVFoundationRenderEngine()
+
+        XCTAssertEqual(
+            engine.x265ThreadProfile(
+                forExpectedFinalDurationSeconds: 600,
+                dynamicRange: .sdr,
+                videoCodec: .hevc
+            ),
+            .conservative
+        )
+        XCTAssertEqual(
+            engine.x265ThreadProfile(
+                forExpectedFinalDurationSeconds: 600,
+                dynamicRange: .hdr,
+                videoCodec: .h264
+            ),
+            .conservative
+        )
+    }
+
     func testSDRProfileSkipsToneMappingPass() {
         let engine = AVFoundationRenderEngine()
         let profile = ExportProfile(

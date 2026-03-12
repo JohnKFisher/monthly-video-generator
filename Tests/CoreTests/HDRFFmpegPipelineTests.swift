@@ -617,6 +617,42 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("frame-threads=\(expectedFrameThreads)"))
     }
 
+    func testHDRLibx265FinalDeliveryShortJobBoostRaisesThreadCaps() throws {
+        let builder = FFmpegCommandBuilder()
+        let plan = FFmpegRenderPlan(
+            clips: [
+                FFmpegRenderClip(
+                    url: URL(fileURLWithPath: "/tmp/hdr.mov"),
+                    durationSeconds: 3.0,
+                    includeAudio: true,
+                    hasAudioTrack: true,
+                    colorInfo: ColorInfo(isHDR: true, colorPrimaries: "ITU_R_2020", transferFunction: "ITU_R_2100_HLG"),
+                    sourceDescription: "hdr"
+                )
+            ],
+            transitionDurationSeconds: 0,
+            outputURL: URL(fileURLWithPath: "/tmp/out.mp4"),
+            renderSize: CGSize(width: 3840, height: 2160),
+            frameRate: 60,
+            audioLayout: .stereo,
+            bitrateMode: .balanced,
+            container: .mp4,
+            videoCodec: .hevc,
+            dynamicRange: .hdr,
+            hdrHEVCEncoderMode: .automatic,
+            x265ThreadProfile: .shortJobBoost
+        )
+
+        let command = try builder.buildCommand(plan: plan, resolution: makeCapableResolution())
+        let joined = command.arguments.joined(separator: " ")
+        let expectedThreadLimit = min(max(ProcessInfo.processInfo.activeProcessorCount, 1), 6)
+        let expectedFrameThreads = min(max(ProcessInfo.processInfo.activeProcessorCount, 1), 3)
+
+        XCTAssertTrue(joined.contains("-threads \(expectedThreadLimit)"))
+        XCTAssertTrue(joined.contains("pools=\(expectedThreadLimit)"))
+        XCTAssertTrue(joined.contains("frame-threads=\(expectedFrameThreads)"))
+    }
+
     func testCommandBuilderClampsEndFadeToOutputDuration() throws {
         let builder = FFmpegCommandBuilder()
         let plan = FFmpegRenderPlan(

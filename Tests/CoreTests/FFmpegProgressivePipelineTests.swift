@@ -87,6 +87,30 @@ final class FFmpegProgressivePipelineTests: XCTestCase {
         XCTAssertTrue(executionPlan.batchPlans.dropLast().allSatisfy { $0.plan.endFadeToBlackDurationSeconds == 0 })
     }
 
+    func testProgressivePipelineCarriesX265ThreadProfileIntoFinalBatches() throws {
+        let builder = FFmpegHDRProgressivePipelineBuilder()
+        let plan = FFmpegRenderPlan(
+            clips: makeHDRPlan(clipCount: 22, clipDuration: 4.0, transitionDuration: 0.75).clips,
+            transitionDurationSeconds: 0.75,
+            endFadeToBlackDurationSeconds: 1.5,
+            outputURL: URL(fileURLWithPath: "/tmp/final.mp4"),
+            renderSize: CGSize(width: 3840, height: 2160),
+            frameRate: 60,
+            audioLayout: .stereo,
+            bitrateMode: .balanced,
+            container: .mp4,
+            videoCodec: .hevc,
+            dynamicRange: .hdr,
+            hdrHEVCEncoderMode: .automatic,
+            x265ThreadProfile: .shortJobBoost,
+            renderIntent: .finalDelivery
+        )
+
+        let executionPlan = try XCTUnwrap(makeExecutionPlan(builder: builder, plan: plan))
+
+        XCTAssertTrue(executionPlan.batchPlans.allSatisfy { $0.plan.x265ThreadProfile == .shortJobBoost })
+    }
+
     func testPresentationIntermediatesKeepNormalizationButFinalBatchesAddNoNewColorMath() throws {
         let builder = FFmpegHDRProgressivePipelineBuilder()
         let commandBuilder = FFmpegCommandBuilder()

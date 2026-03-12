@@ -351,6 +351,7 @@ struct FFmpegCommandBuilder {
                 return "intent=finalDelivery encoder=h264_videotoolbox bitrate=\(estimatedBitrate(for: plan.renderSize, frameRate: plan.frameRate, bitrateMode: plan.bitrateMode, encoder: encoder, dynamicRange: plan.dynamicRange)) audio=aac"
             case .libx265:
                 var summary = "intent=finalDelivery encoder=libx265 preset=\(x265Preset(for: plan.bitrateMode)) crf=\(x265CRF(for: plan.bitrateMode, dynamicRange: plan.dynamicRange))"
+                summary += " x265_profile=\(plan.x265ThreadProfile.rawValue)"
                 if let threadLimit = ffmpegThreadLimit(for: encoder, plan: plan) {
                     let frameThreads = x265FrameThreadLimit(for: plan)
                     summary += " threads=\(threadLimit) x265=pools=\(threadLimit):frame-threads=\(frameThreads)"
@@ -376,6 +377,7 @@ struct FFmpegCommandBuilder {
             switch encoder {
             case .libx265:
                 var summary = "intent=finalBatch encoder=libx265 preset=\(x265Preset(for: plan.bitrateMode)) crf=\(x265CRF(for: plan.bitrateMode, dynamicRange: plan.dynamicRange)) audio=pcm_s16le"
+                summary += " x265_profile=\(plan.x265ThreadProfile.rawValue)"
                 if let threadLimit = ffmpegThreadLimit(for: encoder, plan: plan) {
                     let frameThreads = x265FrameThreadLimit(for: plan)
                     summary += " threads=\(threadLimit) x265=pools=\(threadLimit):frame-threads=\(frameThreads)"
@@ -866,7 +868,15 @@ struct FFmpegCommandBuilder {
             return nil
         }
 
-        return min(max(ProcessInfo.processInfo.activeProcessorCount, 1), 4)
+        let cap: Int
+        switch plan.x265ThreadProfile {
+        case .conservative:
+            cap = 4
+        case .shortJobBoost:
+            cap = 6
+        }
+
+        return min(max(ProcessInfo.processInfo.activeProcessorCount, 1), cap)
     }
 
     private func x265FrameThreadLimit(for plan: FFmpegRenderPlan) -> Int {
@@ -874,7 +884,15 @@ struct FFmpegCommandBuilder {
             return 0
         }
 
-        return min(max(ProcessInfo.processInfo.activeProcessorCount, 1), 2)
+        let cap: Int
+        switch plan.x265ThreadProfile {
+        case .conservative:
+            cap = 2
+        case .shortJobBoost:
+            cap = 3
+        }
+
+        return min(max(ProcessInfo.processInfo.activeProcessorCount, 1), cap)
     }
 
     private func x265ParameterString(for plan: FFmpegRenderPlan) -> String {
@@ -1051,6 +1069,7 @@ private extension FFmpegRenderPlan {
             videoCodec: videoCodec,
             dynamicRange: dynamicRange,
             hdrHEVCEncoderMode: hdrHEVCEncoderMode,
+            x265ThreadProfile: x265ThreadProfile,
             embeddedMetadata: embeddedMetadata,
             chapters: chapters,
             chapterMetadataURL: chapterMetadataURL,

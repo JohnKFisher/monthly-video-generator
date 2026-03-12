@@ -43,7 +43,7 @@ enum MediaDerivedBackgroundStyle {
     }
 }
 
-public final class StillImageClipFactory {
+public final class StillImageClipFactory: @unchecked Sendable {
     private struct IntermediateColorConfiguration {
         let avColorPrimaries: String
         let avTransferFunction: String
@@ -143,8 +143,11 @@ public final class StillImageClipFactory {
 
     private struct AnimatedTitleCardFrameSet {
         let backgroundImage: CGImage?
+        let backgroundBaseRect: CGRect?
+        let gradientImage: CGImage?
         let palette: AnimatedTitleCardPalette
         let tiles: [AnimatedTitleCardTile]
+        let titleOverlayImage: CGImage?
         let title: String
         let contextLine: String?
     }
@@ -165,7 +168,11 @@ public final class StillImageClipFactory {
         }
     }
 
-    public init() {}
+    private let ciContext: CIContext
+
+    public init() {
+        ciContext = CIContext(options: [CIContextOption.cacheIntermediates: false])
+    }
 
     func sourceColorInfo(forImageURL url: URL, dynamicRange: DynamicRange) throws -> ColorInfo {
         guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil) else {
@@ -382,7 +389,6 @@ public final class StillImageClipFactory {
             throw RenderError.exportFailed(writer.error?.localizedDescription ?? "Unable to start writing")
         }
         writer.startSession(atSourceTime: .zero)
-        let ciContext = CIContext(options: [CIContextOption.cacheIntermediates: false])
 
         for frame in 0..<totalFrames {
             while !input.isReadyForMoreMediaData {
@@ -545,10 +551,23 @@ public final class StillImageClipFactory {
         var shuffledPreviews = previewImages
         shuffledPreviews.shuffle(using: &generator)
         let palette = animatedPalette(using: &generator)
+        let backgroundImage = makeBlurredBackgroundImage(
+            from: shuffledPreviews[0].image,
+            renderSize: renderSize,
+            colorSpace: colorSpace
+        )
+        let backgroundBaseRect = backgroundImage.map {
+            Self.aspectFillRect(
+                imageSize: CGSize(width: $0.width, height: $0.height),
+                into: renderSize
+            )
+        }
 
         return AnimatedTitleCardFrameSet(
-            backgroundImage: makeBlurredBackgroundImage(
-                from: shuffledPreviews[0].image,
+            backgroundImage: backgroundImage,
+            backgroundBaseRect: backgroundBaseRect,
+            gradientImage: makeAnimatedTitleCardGradientImage(
+                palette: palette,
                 renderSize: renderSize,
                 colorSpace: colorSpace
             ),
@@ -557,6 +576,13 @@ public final class StillImageClipFactory {
                 previews: shuffledPreviews,
                 renderSize: renderSize,
                 generator: &generator
+            ),
+            titleOverlayImage: makeAnimatedTitleCardTitleOverlayImage(
+                title: descriptor.resolvedTitle,
+                contextLine: descriptor.displayContextLine,
+                accentColor: palette.accent,
+                renderSize: renderSize,
+                colorSpace: colorSpace
             ),
             title: descriptor.resolvedTitle,
             contextLine: descriptor.displayContextLine
@@ -567,19 +593,72 @@ public final class StillImageClipFactory {
         from previewAssets: [TitleCardPreviewAsset],
         targetDimension: Int
     ) async throws -> [TitleCardPreviewImage] {
-        var previews: [TitleCardPreviewImage] = []
-        previews.reserveCapacity(previewAssets.count)
-
-        for previewAsset in previewAssets {
-            do {
-                let image = try await loadPreviewImage(from: previewAsset, targetDimension: targetDimension)
-                previews.append(TitleCardPreviewImage(image: image, filename: previewAsset.filename))
-            } catch {
-                continue
-            }
+        guard !previewAssets.isEmpty else {
+            return []
         }
 
-        return previews
+        let maxConcurrentPreviewLoads = 3
+        var previews = Array<TitleCardPreviewImage?>(repeating: nil, count: previewAssets.count)
+        var nextIndex = 0
+
+        while nextIndex < previewAssets.count {
+            let remaining = previewAssets.count - nextIndex
+
+            if remaining >= maxConcurrentPreviewLoads {
+                let firstIndex = nextIndex
+                let secondIndex = nextIndex + 1
+                let thirdIndex = nextIndex + 2
+                let firstAsset = previewAssets[firstIndex]
+                let secondAsset = previewAssets[secondIndex]
+                let thirdAsset = previewAssets[thirdIndex]
+
+                async let firstPreview = loadPreviewImageIfAvailable(
+                    from: firstAsset,
+                    targetDimension: targetDimension
+                )
+                async let secondPreview = loadPreviewImageIfAvailable(
+                    from: secondAsset,
+                    targetDimension: targetDimension
+                )
+                async let thirdPreview = loadPreviewImageIfAvailable(
+                    from: thirdAsset,
+                    targetDimension: targetDimension
+                )
+
+                let (resolvedFirstPreview, resolvedSecondPreview, resolvedThirdPreview) = try await (
+                    firstPreview,
+                    secondPreview,
+                    thirdPreview
+                )
+                previews[firstIndex] = resolvedFirstPreview
+                previews[secondIndex] = resolvedSecondPreview
+                previews[thirdIndex] = resolvedThirdPreview
+                nextIndex += maxConcurrentPreviewLoads
+                continue
+            }
+
+            previews[nextIndex] = try await loadPreviewImageIfAvailable(
+                from: previewAssets[nextIndex],
+                targetDimension: targetDimension
+            )
+            nextIndex += 1
+        }
+
+        return previews.compactMap { $0 }
+    }
+
+    private func loadPreviewImageIfAvailable(
+        from previewAsset: TitleCardPreviewAsset,
+        targetDimension: Int
+    ) async throws -> TitleCardPreviewImage? {
+        do {
+            let image = try await loadPreviewImage(from: previewAsset, targetDimension: targetDimension)
+            return TitleCardPreviewImage(image: image, filename: previewAsset.filename)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            return nil
+        }
     }
 
     private func loadPreviewImage(
@@ -717,11 +796,8 @@ public final class StillImageClipFactory {
         context.setFillColor(frameSet.palette.start)
         context.fill(fullRect)
 
-        if let backgroundImage = frameSet.backgroundImage {
-            let baseRect = Self.aspectFillRect(
-                imageSize: CGSize(width: backgroundImage.width, height: backgroundImage.height),
-                into: renderSize
-            )
+        if let backgroundImage = frameSet.backgroundImage,
+           let baseRect = frameSet.backgroundBaseRect {
             let zoom = 1.04 + 0.03 * sin(progress * .pi * 2)
             let backgroundRect = scaled(rect: baseRect, scale: zoom)
 
@@ -731,30 +807,38 @@ public final class StillImageClipFactory {
             context.restoreGState()
         }
 
-        drawFullCanvasGradient(
-            colors: [
-                frameSet.palette.start.copy(alpha: 0.18) ?? frameSet.palette.start,
-                frameSet.palette.end.copy(alpha: 0.82) ?? frameSet.palette.end
-            ],
-            start: CGPoint(x: 0, y: renderSize.height),
-            end: CGPoint(x: renderSize.width, y: 0),
-            colorSpace: colorSpace,
-            context: context,
-            rect: fullRect
-        )
+        if let gradientImage = frameSet.gradientImage {
+            context.draw(gradientImage, in: fullRect)
+        } else {
+            drawFullCanvasGradient(
+                colors: [
+                    frameSet.palette.start.copy(alpha: 0.18) ?? frameSet.palette.start,
+                    frameSet.palette.end.copy(alpha: 0.82) ?? frameSet.palette.end
+                ],
+                start: CGPoint(x: 0, y: renderSize.height),
+                end: CGPoint(x: renderSize.width, y: 0),
+                colorSpace: colorSpace,
+                context: context,
+                rect: fullRect
+            )
+        }
 
         for tile in frameSet.tiles {
             drawAnimatedTile(tile, progress: progress, renderSize: renderSize, context: context, accentColor: frameSet.palette.accent)
         }
 
-        drawTitleBackdrop(renderSize: renderSize, context: context)
-        drawTitleBlock(
-            title: frameSet.title,
-            contextLine: frameSet.contextLine,
-            accentColor: frameSet.palette.accent,
-            renderSize: renderSize,
-            context: context
-        )
+        if let titleOverlayImage = frameSet.titleOverlayImage {
+            context.draw(titleOverlayImage, in: fullRect)
+        } else {
+            drawTitleBackdrop(renderSize: renderSize, context: context)
+            drawTitleBlock(
+                title: frameSet.title,
+                contextLine: frameSet.contextLine,
+                accentColor: frameSet.palette.accent,
+                renderSize: renderSize,
+                context: context
+            )
+        }
 
         guard let image = context.makeImage() else {
             throw RenderError.exportFailed("Unable to create animated title card frame")
@@ -939,6 +1023,69 @@ public final class StillImageClipFactory {
         context.restoreGState()
     }
 
+    private func makeAnimatedTitleCardGradientImage(
+        palette: AnimatedTitleCardPalette,
+        renderSize: CGSize,
+        colorSpace: CGColorSpace
+    ) -> CGImage? {
+        guard let context = bitmapContext(renderSize: renderSize, colorSpace: colorSpace) else {
+            return nil
+        }
+
+        drawFullCanvasGradient(
+            colors: [
+                palette.start.copy(alpha: 0.18) ?? palette.start,
+                palette.end.copy(alpha: 0.82) ?? palette.end
+            ],
+            start: CGPoint(x: 0, y: renderSize.height),
+            end: CGPoint(x: renderSize.width, y: 0),
+            colorSpace: colorSpace,
+            context: context,
+            rect: CGRect(origin: .zero, size: renderSize)
+        )
+        return context.makeImage()
+    }
+
+    private func makeAnimatedTitleCardTitleOverlayImage(
+        title: String,
+        contextLine: String?,
+        accentColor: CGColor,
+        renderSize: CGSize,
+        colorSpace: CGColorSpace
+    ) -> CGImage? {
+        guard let context = bitmapContext(renderSize: renderSize, colorSpace: colorSpace) else {
+            return nil
+        }
+
+        drawTitleBackdrop(renderSize: renderSize, context: context)
+        drawTitleBlock(
+            title: title,
+            contextLine: contextLine,
+            accentColor: accentColor,
+            renderSize: renderSize,
+            context: context
+        )
+        return context.makeImage()
+    }
+
+    private func bitmapContext(
+        renderSize: CGSize,
+        colorSpace: CGColorSpace
+    ) -> CGContext? {
+        let width = max(1, Int(renderSize.width.rounded()))
+        let height = max(1, Int(renderSize.height.rounded()))
+
+        return CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
+        )
+    }
+
     private func makeBlurredBackgroundImage(
         from image: CGImage,
         renderSize: CGSize,
@@ -953,8 +1100,7 @@ public final class StillImageClipFactory {
             parameters: [kCIInputRadiusKey: max(renderSize.width, renderSize.height) * 0.015]
         ).cropped(to: canvasRect)
 
-        let context = CIContext(options: [CIContextOption.cacheIntermediates: false])
-        return context.createCGImage(
+        return ciContext.createCGImage(
             blurred,
             from: canvasRect,
             format: .RGBA8,

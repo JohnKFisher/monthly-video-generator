@@ -42,6 +42,11 @@ enum FFmpegRenderIntent: String, Equatable, Sendable {
     case finalPackaging
 }
 
+enum FFmpegX265ThreadProfile: String, Equatable, Sendable {
+    case conservative
+    case shortJobBoost
+}
+
 struct FFmpegBinary: Equatable, Sendable {
     let ffmpegURL: URL
     let ffprobeURL: URL
@@ -432,6 +437,7 @@ struct FFmpegRenderPlan: Equatable, Sendable {
     let videoCodec: VideoCodec
     let dynamicRange: DynamicRange
     let hdrHEVCEncoderMode: HDRHEVCEncoderMode
+    let x265ThreadProfile: FFmpegX265ThreadProfile
     let embeddedMetadata: EmbeddedOutputMetadata?
     let chapters: [RenderChapter]
     let chapterMetadataURL: URL?
@@ -451,6 +457,7 @@ struct FFmpegRenderPlan: Equatable, Sendable {
         videoCodec: VideoCodec,
         dynamicRange: DynamicRange,
         hdrHEVCEncoderMode: HDRHEVCEncoderMode = .automatic,
+        x265ThreadProfile: FFmpegX265ThreadProfile = .conservative,
         embeddedMetadata: EmbeddedOutputMetadata? = nil,
         chapters: [RenderChapter] = [],
         chapterMetadataURL: URL? = nil,
@@ -469,6 +476,7 @@ struct FFmpegRenderPlan: Equatable, Sendable {
         self.videoCodec = videoCodec
         self.dynamicRange = dynamicRange
         self.hdrHEVCEncoderMode = hdrHEVCEncoderMode
+        self.x265ThreadProfile = x265ThreadProfile
         self.embeddedMetadata = embeddedMetadata
         self.chapters = chapters
         self.chapterMetadataURL = chapterMetadataURL
