@@ -1347,8 +1347,10 @@ public final class StillImageClipFactory {
     }
 
     private func finish(writer: AVAssetWriter) async throws {
+        let writerReference = UncheckedSendableReference(writer)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             writer.finishWriting {
+                let writer = writerReference.value
                 if let error = writer.error {
                     continuation.resume(throwing: RenderError.exportFailed(error.localizedDescription))
                 } else {

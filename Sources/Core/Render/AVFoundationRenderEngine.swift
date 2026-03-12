@@ -1927,8 +1927,10 @@ public final class AVFoundationRenderEngine {
     }
 
     private func finish(writer: AVAssetWriter) async throws {
+        let writerReference = UncheckedSendableReference(writer)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             writer.finishWriting {
+                let writer = writerReference.value
                 if writer.status == .completed {
                     continuation.resume(returning: ())
                 } else {

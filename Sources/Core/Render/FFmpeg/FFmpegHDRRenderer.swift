@@ -243,6 +243,53 @@ final class FFmpegHDRRenderer {
         }
     }
 
+    private final class StderrProcessingState: @unchecked Sendable {
+        private let lock = NSLock()
+        private var tail: [String] = []
+        private var progressParser = FFmpegProgressParser()
+
+        @discardableResult
+        func consumeProgressLine(
+            _ line: String,
+            callbacks: CallbackRelay,
+            dynamicRange: DynamicRange,
+            activityTracker: ActivityTracker,
+            totalDurationMicroseconds: Int64,
+            estimatedOutputBytes: UInt64,
+            renderStartedAt: Date
+        ) -> Bool {
+            lock.lock()
+            let didConsume = FFmpegHDRRenderer.consumeProgressLine(
+                line,
+                parser: &progressParser,
+                callbacks: callbacks,
+                dynamicRange: dynamicRange,
+                activityTracker: activityTracker,
+                totalDurationMicroseconds: totalDurationMicroseconds,
+                estimatedOutputBytes: estimatedOutputBytes,
+                renderStartedAt: renderStartedAt
+            )
+            lock.unlock()
+            return didConsume
+        }
+
+        func appendTailLine(_ line: String) {
+            lock.lock()
+            tail.append(line)
+            if tail.count > 240 {
+                tail.removeFirst(tail.count - 240)
+            }
+            lock.unlock()
+        }
+
+        func snapshotTail() -> [String] {
+            lock.lock()
+            let lines = tail
+            lock.unlock()
+            return lines
+        }
+    }
+
     private let resolver: FFmpegBinaryResolver
     private let commandBuilder: FFmpegCommandBuilder
     private let fileManager: FileManager
@@ -647,16 +694,14 @@ final class FFmpegHDRRenderer {
         estimatedOutputBytes: UInt64,
         renderStartedAt: Date
     ) async -> [String] {
-        var tail: [String] = []
-        var progressParser = FFmpegProgressParser()
+        let state = StderrProcessingState()
         await consumePipeText(handle: handle) { line in
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty {
                 return
             }
-            if consumeProgressLine(
+            if state.consumeProgressLine(
                 trimmed,
-                parser: &progressParser,
                 callbacks: callbacks,
                 dynamicRange: dynamicRange,
                 activityTracker: activityTracker,
@@ -667,12 +712,9 @@ final class FFmpegHDRRenderer {
                 return
             }
             callbacks.log("FFmpeg stderr: \(trimmed)")
-            tail.append(trimmed)
-            if tail.count > 240 {
-                tail.removeFirst(tail.count - 240)
-            }
+            state.appendTailLine(trimmed)
         }
-        return tail
+        return state.snapshotTail()
     }
 
     // Parent never writes to these pipes. Closing the parent-side write ends
@@ -684,7 +726,7 @@ final class FFmpegHDRRenderer {
 
     private static func consumePipeText(
         handle: FileHandle,
-        onLine: @escaping (String) -> Void
+        onLine: @Sendable @escaping (String) -> Void
     ) async {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
