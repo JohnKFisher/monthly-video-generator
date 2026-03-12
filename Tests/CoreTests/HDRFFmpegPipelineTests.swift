@@ -1153,6 +1153,80 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertFalse(message.contains("July 28 (1 photo)"))
     }
 
+    func testCommandSummaryLinesIncludeCommandMetricsAndIntentRollups() {
+        let outputSize = FFmpegHDRRenderer.formatByteCount(12_345_678)
+        let lines = FFmpegHDRRenderer.commandSummaryLines(from: [
+            FFmpegHDRRenderer.CommandExecutionStats(
+                stageLabel: "HDR final batch 1/2",
+                renderIntent: .finalBatch,
+                encoder: "libx265",
+                expectedDurationSeconds: 18,
+                elapsedSeconds: 24.5,
+                startupLatencySeconds: 3.25,
+                firstOutputGrowthLatencySeconds: 4.0,
+                finalOutputSizeBytes: 12_345_678,
+                latestOutTimeMicroseconds: 18_000_000,
+                latestSpeed: 0.82,
+                latestFrameCount: 1_080,
+                effectiveRealtimeFactor: 0.73,
+                longestInactivityGapSeconds: 11,
+                terminationSummary: "exit 0",
+                outputPath: "/tmp/final-batch-1.mov"
+            )
+        ])
+
+        XCTAssertEqual(lines.first, "By intent:")
+        XCTAssertTrue(lines.contains(where: { $0.contains("- finalBatch: count=1, elapsed=24.50s, encoded=18.00s, realtime=0.73x, output=\(outputSize), avg_speed=0.82x") }))
+        XCTAssertTrue(lines.contains("Commands:"))
+        XCTAssertTrue(lines.contains(where: { line in
+            line.contains("- HDR final batch 1/2") &&
+                line.contains("startup=3.25s") &&
+                line.contains("first_output=4.00s") &&
+                line.contains("output=\(outputSize)") &&
+                line.contains("last_out_time=00:00:18.000") &&
+                line.contains("speed=0.82x") &&
+                line.contains("frames=1080") &&
+                line.contains("realtime=0.73x") &&
+                line.contains("max_idle=11.00s") &&
+                line.contains("termination=exit 0") &&
+                line.contains("output_path=/tmp/final-batch-1.mov")
+        }))
+    }
+
+    func testCommandSummaryLinesUseFallbackPlaceholdersWhenMetricsAreUnavailable() {
+        let zeroBytes = FFmpegHDRRenderer.formatByteCount(0)
+        let lines = FFmpegHDRRenderer.commandSummaryLines(from: [
+            FFmpegHDRRenderer.CommandExecutionStats(
+                stageLabel: "HDR concat copy",
+                renderIntent: .concatCopy,
+                encoder: "copy",
+                expectedDurationSeconds: 30,
+                elapsedSeconds: 2,
+                startupLatencySeconds: nil,
+                firstOutputGrowthLatencySeconds: nil,
+                finalOutputSizeBytes: 0,
+                latestOutTimeMicroseconds: 0,
+                latestSpeed: nil,
+                latestFrameCount: nil,
+                effectiveRealtimeFactor: nil,
+                longestInactivityGapSeconds: 0.5,
+                terminationSummary: "exit 0",
+                outputPath: "/tmp/concat.mov"
+            )
+        ])
+
+        XCTAssertTrue(lines.contains(where: { $0.contains("- concatCopy: count=1, elapsed=2.00s, encoded=30.00s, realtime=15.00x, output=\(zeroBytes)") }))
+        XCTAssertTrue(lines.contains(where: { line in
+            line.contains("- HDR concat copy") &&
+                line.contains("startup=--") &&
+                line.contains("first_output=--") &&
+                line.contains("speed=--") &&
+                line.contains("frames=--") &&
+                line.contains("realtime=--") &&
+                line.contains("max_idle=0.50s")
+        }))
+    }
+
     func testProcessCPUTimeSecondsReadsCurrentProcessUsage() {
         let cpuTimeSeconds = FFmpegHDRRenderer.processCPUTimeSeconds(for: getpid())
 

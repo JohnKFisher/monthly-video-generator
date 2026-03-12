@@ -43,6 +43,10 @@ final class FFmpegHDRRenderer {
         let latestOutTimeMicroseconds: Int64
         let latestOutputSizeBytes: UInt64
         let latestSpeed: Double?
+        let latestFrameCount: Int64?
+        let firstMeaningfulProgressLatencySeconds: TimeInterval?
+        let firstOutputGrowthLatencySeconds: TimeInterval?
+        let longestInactivityGapSeconds: TimeInterval
     }
 
     private struct StallContext {
@@ -80,7 +84,26 @@ final class FFmpegHDRRenderer {
         let stderrTail: [String]
     }
 
+    struct CommandExecutionStats: Equatable, Sendable {
+        let stageLabel: String
+        let renderIntent: FFmpegRenderIntent
+        let encoder: String
+        let expectedDurationSeconds: Double
+        let elapsedSeconds: TimeInterval
+        let startupLatencySeconds: TimeInterval?
+        let firstOutputGrowthLatencySeconds: TimeInterval?
+        let finalOutputSizeBytes: UInt64
+        let latestOutTimeMicroseconds: Int64
+        let latestSpeed: Double?
+        let latestFrameCount: Int64?
+        let effectiveRealtimeFactor: Double?
+        let longestInactivityGapSeconds: TimeInterval
+        let terminationSummary: String
+        let outputPath: String
+    }
+
     struct CommandExecutionContext {
+        let stageLabel: String
         let dynamicRange: DynamicRange
         let renderIntent: FFmpegRenderIntent
         let outputURL: URL
@@ -104,23 +127,39 @@ final class FFmpegHDRRenderer {
 
     private final class ActivityTracker: @unchecked Sendable {
         private let lock = NSLock()
+        private let startedAt: Date
+        private let initialOutputSizeBytes: UInt64
         private var lastActivityAt: Date
         private var latestOutTimeMicroseconds: Int64
         private var latestOutputSizeBytes: UInt64
         private var latestSpeed: Double?
+        private var latestFrameCount: Int64?
+        private var firstMeaningfulProgressAt: Date?
+        private var firstOutputGrowthAt: Date?
+        private var longestInactivityGapSeconds: TimeInterval
 
-        init(initialOutputSizeBytes: UInt64) {
-            self.lastActivityAt = Date()
+        init(initialOutputSizeBytes: UInt64, startedAt: Date) {
+            self.startedAt = startedAt
+            self.initialOutputSizeBytes = initialOutputSizeBytes
+            self.lastActivityAt = startedAt
             self.latestOutTimeMicroseconds = 0
             self.latestOutputSizeBytes = initialOutputSizeBytes
             self.latestSpeed = nil
+            self.latestFrameCount = nil
+            self.firstMeaningfulProgressAt = nil
+            self.firstOutputGrowthAt = nil
+            self.longestInactivityGapSeconds = 0
         }
 
         func recordOutTime(_ outTimeMicroseconds: Int64) {
             lock.lock()
             if outTimeMicroseconds > latestOutTimeMicroseconds {
                 latestOutTimeMicroseconds = outTimeMicroseconds
-                lastActivityAt = Date()
+                let now = Date()
+                if outTimeMicroseconds > 0, firstMeaningfulProgressAt == nil {
+                    firstMeaningfulProgressAt = now
+                }
+                noteActivity(at: now)
             }
             lock.unlock()
         }
@@ -129,7 +168,14 @@ final class FFmpegHDRRenderer {
             lock.lock()
             if outputSizeBytes > latestOutputSizeBytes {
                 latestOutputSizeBytes = outputSizeBytes
-                lastActivityAt = Date()
+                let now = Date()
+                if outputSizeBytes > initialOutputSizeBytes, firstOutputGrowthAt == nil {
+                    firstOutputGrowthAt = now
+                }
+                if firstMeaningfulProgressAt == nil {
+                    firstMeaningfulProgressAt = now
+                }
+                noteActivity(at: now)
             }
             lock.unlock()
         }
@@ -140,19 +186,35 @@ final class FFmpegHDRRenderer {
             }
             lock.lock()
             latestSpeed = speed
-            lastActivityAt = Date()
+            noteActivity(at: Date())
+            lock.unlock()
+        }
+
+        func recordFrameProgress(_ frameCount: Int64?) {
+            guard let frameCount, frameCount > 0 else {
+                return
+            }
+            lock.lock()
+            if frameCount > (latestFrameCount ?? 0) {
+                latestFrameCount = frameCount
+                let now = Date()
+                if firstMeaningfulProgressAt == nil {
+                    firstMeaningfulProgressAt = now
+                }
+                noteActivity(at: now)
+            }
             lock.unlock()
         }
 
         func recordCPUActivity() {
             lock.lock()
-            lastActivityAt = Date()
+            noteActivity(at: Date())
             lock.unlock()
         }
 
         func recordHeartbeat() {
             lock.lock()
-            lastActivityAt = Date()
+            noteActivity(at: Date())
             lock.unlock()
         }
 
@@ -162,10 +224,22 @@ final class FFmpegHDRRenderer {
                 lastActivityAt: lastActivityAt,
                 latestOutTimeMicroseconds: latestOutTimeMicroseconds,
                 latestOutputSizeBytes: latestOutputSizeBytes,
-                latestSpeed: latestSpeed
+                latestSpeed: latestSpeed,
+                latestFrameCount: latestFrameCount,
+                firstMeaningfulProgressLatencySeconds: firstMeaningfulProgressAt.map { $0.timeIntervalSince(startedAt) },
+                firstOutputGrowthLatencySeconds: firstOutputGrowthAt.map { $0.timeIntervalSince(startedAt) },
+                longestInactivityGapSeconds: longestInactivityGapSeconds
             )
             lock.unlock()
             return snapshot
+        }
+
+        private func noteActivity(at now: Date) {
+            let gap = max(now.timeIntervalSince(lastActivityAt), 0)
+            if gap > longestInactivityGapSeconds {
+                longestInactivityGapSeconds = gap
+            }
+            lastActivityAt = now
         }
     }
 
@@ -207,6 +281,8 @@ final class FFmpegHDRRenderer {
         diagnostics: @escaping (String) -> Void,
         progressHandler: @escaping (Double) -> Void,
         statusHandler: @escaping (String) -> Void = { _ in },
+        stageLabel: String? = nil,
+        commandStatsHandler: (@Sendable (CommandExecutionStats) -> Void)? = nil,
         systemFFmpegFallbackHandler: SystemFFmpegFallbackHandler? = nil
     ) async throws -> FFmpegBinaryResolution {
         let resolution = try await resolveBinary(
@@ -221,7 +297,9 @@ final class FFmpegHDRRenderer {
             resolution: resolution,
             diagnostics: diagnostics,
             progressHandler: progressHandler,
-            statusHandler: statusHandler
+            statusHandler: statusHandler,
+            stageLabel: stageLabel,
+            commandStatsHandler: commandStatsHandler
         )
         return resolution
     }
@@ -292,7 +370,9 @@ final class FFmpegHDRRenderer {
         resolution: FFmpegBinaryResolution,
         diagnostics: @escaping (String) -> Void,
         progressHandler: @escaping (Double) -> Void,
-        statusHandler: @escaping (String) -> Void = { _ in }
+        statusHandler: @escaping (String) -> Void = { _ in },
+        stageLabel: String? = nil,
+        commandStatsHandler: (@Sendable (CommandExecutionStats) -> Void)? = nil
     ) async throws {
         guard let selectedEncoder = resolution.selectedCapabilities.preferredEncoder(
             for: plan.videoCodec,
@@ -308,10 +388,11 @@ final class FFmpegHDRRenderer {
         try await execute(
             command: command,
             resolution: resolution,
-            context: makeExecutionContext(for: plan, selectedEncoder: selectedEncoder),
+            context: makeExecutionContext(for: plan, selectedEncoder: selectedEncoder, stageLabel: stageLabel),
             diagnostics: diagnostics,
             progressHandler: progressHandler,
-            statusHandler: statusHandler
+            statusHandler: statusHandler,
+            commandStatsHandler: commandStatsHandler
         )
     }
 
@@ -321,7 +402,8 @@ final class FFmpegHDRRenderer {
         context: CommandExecutionContext,
         diagnostics: @escaping (String) -> Void,
         progressHandler: @escaping (Double) -> Void,
-        statusHandler: @escaping (String) -> Void = { _ in }
+        statusHandler: @escaping (String) -> Void = { _ in },
+        commandStatsHandler: (@Sendable (CommandExecutionStats) -> Void)? = nil
     ) async throws {
         let callbacks = CallbackRelay(
             diagnostics: diagnostics,
@@ -397,7 +479,10 @@ final class FFmpegHDRRenderer {
         let totalDurationMicroseconds = Int64(context.expectedDurationSeconds * 1_000_000)
         let estimatedOutputBytes = estimatedFinalOutputBytes(for: context)
         let renderStartedAt = Date()
-        let activityTracker = ActivityTracker(initialOutputSizeBytes: currentOutputSizeBytes(at: context.outputURL) ?? 0)
+        let activityTracker = ActivityTracker(
+            initialOutputSizeBytes: currentOutputSizeBytes(at: context.outputURL) ?? 0,
+            startedAt: renderStartedAt
+        )
 
         let stdoutHandle = stdoutPipe.fileHandleForReading
         let stderrHandle = stderrPipe.fileHandleForReading
@@ -437,10 +522,25 @@ final class FFmpegHDRRenderer {
         _ = await stdoutTask
         stdoutHandle.closeFile()
         stderrHandle.closeFile()
+        let activitySnapshot = activityTracker.snapshot()
+        let finalOutputSizeBytes = max(
+            currentOutputSizeBytes(at: context.outputURL) ?? 0,
+            activitySnapshot.latestOutputSizeBytes
+        )
+        let terminationSummary = terminationDescription(status: termination.status, reason: termination.reason)
+        if let commandStatsHandler {
+            commandStatsHandler(
+                Self.makeCommandExecutionStats(
+                    context: context,
+                    activitySnapshot: activitySnapshot,
+                    elapsedSeconds: Date().timeIntervalSince(renderStartedAt),
+                    finalOutputSizeBytes: finalOutputSizeBytes,
+                    terminationSummary: terminationSummary
+                )
+            )
+        }
 
         guard termination.status == 0 else {
-            let terminationSummary = terminationDescription(status: termination.status, reason: termination.reason)
-            let activitySnapshot = activityTracker.snapshot()
             let failureSnapshot = FailureSnapshot(
                 dynamicRange: context.dynamicRange,
                 terminationSummary: terminationSummary,
@@ -455,7 +555,7 @@ final class FFmpegHDRRenderer {
                 frameRate: context.frameRate,
                 elapsedSeconds: Date().timeIntervalSince(renderStartedAt),
                 latestOutTimeMicroseconds: activitySnapshot.latestOutTimeMicroseconds,
-                latestOutputSizeBytes: activitySnapshot.latestOutputSizeBytes,
+                latestOutputSizeBytes: finalOutputSizeBytes,
                 latestSpeed: activitySnapshot.latestSpeed,
                 fallbackReason: resolution.fallbackReason,
                 stalledForSeconds: termination.stallContext?.stallDurationSeconds,
@@ -484,7 +584,8 @@ final class FFmpegHDRRenderer {
 
     private func makeExecutionContext(
         for plan: FFmpegRenderPlan,
-        selectedEncoder: FFmpegVideoEncoder
+        selectedEncoder: FFmpegVideoEncoder,
+        stageLabel: String? = nil
     ) -> CommandExecutionContext {
         let overlayCount = plan.clips.filter { $0.captureDateOverlayURL != nil }.count
         let expectedDurationSeconds = commandBuilder.expectedDurationSeconds(for: plan)
@@ -498,6 +599,7 @@ final class FFmpegHDRRenderer {
         }
 
         return CommandExecutionContext(
+            stageLabel: stageLabel ?? Self.defaultStageLabel(for: plan.renderIntent),
             dynamicRange: plan.dynamicRange,
             renderIntent: plan.renderIntent,
             outputURL: plan.outputURL,
@@ -659,7 +761,7 @@ final class FFmpegHDRRenderer {
             previousFrameCount: previousFrameCount,
             currentFrameCount: parser.latestFrameCount
         ) {
-            activityTracker.recordHeartbeat()
+            activityTracker.recordFrameProgress(parser.latestFrameCount)
         }
         if parser.latestOutTimeMS > previousOutTime {
             activityTracker.recordOutTime(parser.latestOutTimeMS)
@@ -924,6 +1026,28 @@ final class FFmpegHDRRenderer {
         return lines
     }
 
+    static func commandSummaryLines(from commandStats: [CommandExecutionStats]) -> [String] {
+        guard !commandStats.isEmpty else {
+            return ["none recorded"]
+        }
+
+        var lines: [String] = ["By intent:"]
+        for rollup in commandRollups(from: commandStats) {
+            var line =
+                "- \(rollup.renderIntent.rawValue): count=\(rollup.count), elapsed=\(formatSummarySeconds(rollup.totalElapsedSeconds)), " +
+                "encoded=\(formatSummarySeconds(rollup.totalEncodedSeconds)), realtime=\(formatRatio(rollup.effectiveRealtimeFactor)), " +
+                "output=\(formatByteCount(rollup.totalOutputSizeBytes))"
+            if let averageSpeed = rollup.averageReportedSpeed {
+                line += ", avg_speed=\(formatRatio(averageSpeed))"
+            }
+            lines.append(line)
+        }
+
+        lines.append("Commands:")
+        lines.append(contentsOf: commandStats.map { commandSummaryLine(from: $0) })
+        return lines
+    }
+
     static func filteredFailureStderrLines(from stderrTail: [String]) -> [String] {
         let highlighted = stderrTail.filter { isNoteworthyStderrLine($0) }
         if !highlighted.isEmpty {
@@ -1044,7 +1168,7 @@ final class FFmpegHDRRenderer {
         return "\(rangeLabel) encode: \(percent)% | elapsed \(formatElapsed(elapsed)) | output \(formatByteCount(outputSizeBytes)) | speed \(formatSpeed(speed))"
     }
 
-    private static func formatElapsed(_ elapsed: TimeInterval) -> String {
+    static func formatElapsed(_ elapsed: TimeInterval) -> String {
         let clampedSeconds = max(Int(elapsed.rounded()), 0)
         let minutes = clampedSeconds / 60
         let seconds = clampedSeconds % 60
@@ -1065,12 +1189,12 @@ final class FFmpegHDRRenderer {
         return String(format: "%02lld:%02lld:%02lld.%03lld", hours, minutes, seconds, milliseconds)
     }
 
-    private static func formatByteCount(_ bytes: UInt64) -> String {
+    static func formatByteCount(_ bytes: UInt64) -> String {
         let clampedBytes = min(bytes, UInt64(Int64.max))
         return ByteCountFormatter.string(fromByteCount: Int64(clampedBytes), countStyle: .file)
     }
 
-    private static func formatSpeed(_ speed: Double?) -> String {
+    static func formatSpeed(_ speed: Double?) -> String {
         guard let speed, speed.isFinite, speed > 0 else {
             return "--"
         }
@@ -1150,6 +1274,141 @@ final class FFmpegHDRRenderer {
         case (.sdr, .h264, .sizeFirst):
             return 0.05
         }
+    }
+
+    private static func defaultStageLabel(for renderIntent: FFmpegRenderIntent) -> String {
+        switch renderIntent {
+        case .finalDelivery:
+            return "Final delivery"
+        case .intermediateChunk:
+            return "Intermediate chunk"
+        case .presentationIntermediate:
+            return "Presentation intermediate"
+        case .finalBatch:
+            return "Final batch"
+        case .concatCopy:
+            return "Concat copy"
+        case .finalPackaging:
+            return "Final packaging"
+        }
+    }
+
+    private static func makeCommandExecutionStats(
+        context: CommandExecutionContext,
+        activitySnapshot: ActivitySnapshot,
+        elapsedSeconds: TimeInterval,
+        finalOutputSizeBytes: UInt64,
+        terminationSummary: String
+    ) -> CommandExecutionStats {
+        let encodedSeconds: Double
+        if activitySnapshot.latestOutTimeMicroseconds > 0 {
+            encodedSeconds = Double(activitySnapshot.latestOutTimeMicroseconds) / 1_000_000
+        } else {
+            encodedSeconds = max(context.expectedDurationSeconds, 0)
+        }
+
+        let effectiveRealtimeFactor: Double?
+        if elapsedSeconds > 0, encodedSeconds > 0 {
+            effectiveRealtimeFactor = encodedSeconds / elapsedSeconds
+        } else {
+            effectiveRealtimeFactor = nil
+        }
+
+        return CommandExecutionStats(
+            stageLabel: context.stageLabel,
+            renderIntent: context.renderIntent,
+            encoder: context.encoderDescription,
+            expectedDurationSeconds: context.expectedDurationSeconds,
+            elapsedSeconds: elapsedSeconds,
+            startupLatencySeconds: activitySnapshot.firstMeaningfulProgressLatencySeconds,
+            firstOutputGrowthLatencySeconds: activitySnapshot.firstOutputGrowthLatencySeconds,
+            finalOutputSizeBytes: finalOutputSizeBytes,
+            latestOutTimeMicroseconds: activitySnapshot.latestOutTimeMicroseconds,
+            latestSpeed: activitySnapshot.latestSpeed,
+            latestFrameCount: activitySnapshot.latestFrameCount,
+            effectiveRealtimeFactor: effectiveRealtimeFactor,
+            longestInactivityGapSeconds: activitySnapshot.longestInactivityGapSeconds,
+            terminationSummary: terminationSummary,
+            outputPath: context.outputURL.path
+        )
+    }
+
+    private struct CommandStatsRollup {
+        let renderIntent: FFmpegRenderIntent
+        let count: Int
+        let totalElapsedSeconds: TimeInterval
+        let totalEncodedSeconds: Double
+        let totalOutputSizeBytes: UInt64
+        let averageReportedSpeed: Double?
+        let effectiveRealtimeFactor: Double?
+    }
+
+    private static func commandRollups(from commandStats: [CommandExecutionStats]) -> [CommandStatsRollup] {
+        let grouped = Dictionary(grouping: commandStats, by: \.renderIntent)
+        let order: [FFmpegRenderIntent] = [.presentationIntermediate, .intermediateChunk, .finalBatch, .concatCopy, .finalPackaging, .finalDelivery]
+        return order.compactMap { renderIntent in
+            guard let stats = grouped[renderIntent], !stats.isEmpty else {
+                return nil
+            }
+            let totalElapsed = stats.reduce(0) { $0 + $1.elapsedSeconds }
+            let totalEncoded = stats.reduce(0) { partial, stat in
+                partial + (stat.latestOutTimeMicroseconds > 0 ? Double(stat.latestOutTimeMicroseconds) / 1_000_000 : stat.expectedDurationSeconds)
+            }
+            let totalOutput = stats.reduce(UInt64(0)) { $0 + $1.finalOutputSizeBytes }
+            let reportedSpeeds = stats.compactMap(\.latestSpeed)
+            let averageSpeed = reportedSpeeds.isEmpty ? nil : reportedSpeeds.reduce(0, +) / Double(reportedSpeeds.count)
+            let realtimeFactor = totalElapsed > 0 && totalEncoded > 0 ? totalEncoded / totalElapsed : nil
+            return CommandStatsRollup(
+                renderIntent: renderIntent,
+                count: stats.count,
+                totalElapsedSeconds: totalElapsed,
+                totalEncodedSeconds: totalEncoded,
+                totalOutputSizeBytes: totalOutput,
+                averageReportedSpeed: averageSpeed,
+                effectiveRealtimeFactor: realtimeFactor
+            )
+        }
+    }
+
+    private static func commandSummaryLine(from stats: CommandExecutionStats) -> String {
+        var parts = [
+            "- \(stats.stageLabel)",
+            "intent=\(stats.renderIntent.rawValue)",
+            "encoder=\(stats.encoder)",
+            "expected=\(formatSummarySeconds(stats.expectedDurationSeconds))",
+            "elapsed=\(formatSummarySeconds(stats.elapsedSeconds))",
+            "startup=\(formatOptionalSummarySeconds(stats.startupLatencySeconds))",
+            "first_output=\(formatOptionalSummarySeconds(stats.firstOutputGrowthLatencySeconds))",
+            "output=\(formatByteCount(stats.finalOutputSizeBytes))",
+            "last_out_time=\(formatFFmpegOutTime(stats.latestOutTimeMicroseconds))",
+            "speed=\(formatSpeed(stats.latestSpeed))",
+            "frames=\(stats.latestFrameCount.map(String.init) ?? "--")",
+            "realtime=\(formatRatio(stats.effectiveRealtimeFactor))",
+            "max_idle=\(formatSummarySeconds(stats.longestInactivityGapSeconds))",
+            "termination=\(stats.terminationSummary)"
+        ]
+        if !stats.outputPath.isEmpty {
+            parts.append("output_path=\(stats.outputPath)")
+        }
+        return parts.joined(separator: " | ")
+    }
+
+    private static func formatSummarySeconds(_ value: Double) -> String {
+        String(format: "%.2fs", max(value, 0))
+    }
+
+    private static func formatOptionalSummarySeconds(_ value: Double?) -> String {
+        guard let value, value.isFinite else {
+            return "--"
+        }
+        return formatSummarySeconds(value)
+    }
+
+    private static func formatRatio(_ value: Double?) -> String {
+        guard let value, value.isFinite, value > 0 else {
+            return "--"
+        }
+        return String(format: "%.2fx", value)
     }
 
     private func terminationDescription(status: Int32, reason: Process.TerminationReason) -> String {

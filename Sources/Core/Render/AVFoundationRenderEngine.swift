@@ -64,45 +64,49 @@ public final class AVFoundationRenderEngine {
         }
 
         let diagnostics = RenderDiagnostics()
-        let liveDiagnosticsLogURL: URL?
-        if writeDiagnosticsLog {
-            liveDiagnosticsLogURL = reserveDiagnosticsFileURL(outputTarget: outputTarget)
-        } else {
-            liveDiagnosticsLogURL = nil
-        }
-        diagnostics.add("Render started")
-        if let liveDiagnosticsLogURL {
-            diagnostics.add("Diagnostics log path: \(liveDiagnosticsLogURL.path)")
-        }
-        diagnostics.add("Timeline segments: \(timeline.segments.count)")
-        diagnostics.add(
-            "Style: title=\(style.openingTitle ?? "none"), titleDuration=\(style.titleDurationSeconds), " +
-            "crossfade=\(style.crossfadeDurationSeconds), stillDuration=\(style.stillImageDurationSeconds), " +
-            "captureDateOverlay=\(style.showCaptureDateOverlay)"
-        )
-        diagnostics.add(
-            "Export profile: container=\(exportProfile.container.rawValue), codec=\(exportProfile.videoCodec.rawValue), " +
-            "frameRate=\(exportProfile.frameRate.rawValue), " +
-            "resolution=\(exportProfile.resolution.normalized.rawValue), dynamicRange=\(exportProfile.dynamicRange.rawValue), " +
-            "hdrFFmpegBinaryMode=\(exportProfile.hdrFFmpegBinaryMode.rawValue), " +
-            "hdrHEVCEncoderMode=\(exportProfile.hdrHEVCEncoderMode.rawValue), " +
-            "audioLayout=\(exportProfile.audioLayout.rawValue), bitrate=\(exportProfile.bitrateMode.rawValue)"
-        )
-        if let plexTVMetadata {
+        var liveDiagnosticsLogURL: URL?
+        var resolvedFrameRate = 30
+        var renderSize = CGSize.zero
+        diagnostics.measurePhase(.renderSetup) {
+            if writeDiagnosticsLog {
+                liveDiagnosticsLogURL = reserveDiagnosticsFileURL(outputTarget: outputTarget)
+            } else {
+                liveDiagnosticsLogURL = nil
+            }
+            diagnostics.add("Render started")
+            if let liveDiagnosticsLogURL {
+                diagnostics.add("Diagnostics log path: \(liveDiagnosticsLogURL.path)")
+            }
+            diagnostics.add("Timeline segments: \(timeline.segments.count)")
             diagnostics.add(
-                "Plex TV metadata: show=\(plexTVMetadata.identity.showTitle), " +
-                "episodeID=\(plexTVMetadata.identity.episodeID), title=\(plexTVMetadata.identity.episodeTitle)"
+                "Style: title=\(style.openingTitle ?? "none"), titleDuration=\(style.titleDurationSeconds), " +
+                "crossfade=\(style.crossfadeDurationSeconds), stillDuration=\(style.stillImageDurationSeconds), " +
+                "captureDateOverlay=\(style.showCaptureDateOverlay)"
             )
-        }
-        if !chapters.isEmpty {
-            diagnostics.add("Resolved output chapters: \(chapters.count)")
-        }
+            diagnostics.add(
+                "Export profile: container=\(exportProfile.container.rawValue), codec=\(exportProfile.videoCodec.rawValue), " +
+                "frameRate=\(exportProfile.frameRate.rawValue), " +
+                "resolution=\(exportProfile.resolution.normalized.rawValue), dynamicRange=\(exportProfile.dynamicRange.rawValue), " +
+                "hdrFFmpegBinaryMode=\(exportProfile.hdrFFmpegBinaryMode.rawValue), " +
+                "hdrHEVCEncoderMode=\(exportProfile.hdrHEVCEncoderMode.rawValue), " +
+                "audioLayout=\(exportProfile.audioLayout.rawValue), bitrate=\(exportProfile.bitrateMode.rawValue)"
+            )
+            if let plexTVMetadata {
+                diagnostics.add(
+                    "Plex TV metadata: show=\(plexTVMetadata.identity.showTitle), " +
+                    "episodeID=\(plexTVMetadata.identity.episodeID), title=\(plexTVMetadata.identity.episodeTitle)"
+                )
+            }
+            if !chapters.isEmpty {
+                diagnostics.add("Resolved output chapters: \(chapters.count)")
+            }
 
-        let requestedRenderSize = resolveRenderSize(from: timeline, policy: exportProfile.resolution)
-        let resolvedFrameRate = resolveFrameRate(from: timeline, policy: exportProfile.frameRate)
-        let renderSize = constrainedRenderSizeForExport(requestedSize: requestedRenderSize, profile: exportProfile)
-        diagnostics.add("Render size: \(Int(renderSize.width))x\(Int(renderSize.height))")
-        diagnostics.add("Resolved output frame rate: \(resolvedFrameRate) fps")
+            let requestedRenderSize = resolveRenderSize(from: timeline, policy: exportProfile.resolution)
+            resolvedFrameRate = resolveFrameRate(from: timeline, policy: exportProfile.frameRate)
+            renderSize = constrainedRenderSizeForExport(requestedSize: requestedRenderSize, profile: exportProfile)
+            diagnostics.add("Render size: \(Int(renderSize.width))x\(Int(renderSize.height))")
+            diagnostics.add("Resolved output frame rate: \(resolvedFrameRate) fps")
+        }
         ffmpegProgressivePauseState.reset()
         if let liveDiagnosticsLogURL {
             _ = writeDiagnosticsReport(
@@ -117,19 +121,21 @@ public final class AVFoundationRenderEngine {
         do {
             reportStatus("Preparing media clips...", handler: statusHandler)
             reportProgress(0.02, handler: progressHandler)
-            let clips = try await materializeInputClips(
-                segments: timeline.segments,
-                style: style,
-                renderSize: renderSize,
-                frameRate: resolvedFrameRate,
-                exportDynamicRange: exportProfile.dynamicRange,
-                exportBinaryMode: exportProfile.hdrFFmpegBinaryMode,
-                photoMaterializer: photoMaterializer,
-                temporaryURLs: &temporaryURLs,
-                diagnostics: diagnostics,
-                progressHandler: progressHandler,
-                statusHandler: statusHandler
-            )
+            let clips = try await diagnostics.measurePhase(.clipMaterialization) {
+                try await materializeInputClips(
+                    segments: timeline.segments,
+                    style: style,
+                    renderSize: renderSize,
+                    frameRate: resolvedFrameRate,
+                    exportDynamicRange: exportProfile.dynamicRange,
+                    exportBinaryMode: exportProfile.hdrFFmpegBinaryMode,
+                    photoMaterializer: photoMaterializer,
+                    temporaryURLs: &temporaryURLs,
+                    diagnostics: diagnostics,
+                    progressHandler: progressHandler,
+                    statusHandler: statusHandler
+                )
+            }
 
             guard !clips.isEmpty else {
                 throw RenderError.noRenderableMedia
@@ -256,17 +262,19 @@ public final class AVFoundationRenderEngine {
                     )
                 }
                 reportStatus("Configuring progressive HDR encode...", handler: statusHandler)
-                binaryResolution = try await executeProgressiveFFmpegPlan(
-                    ffmpegPlan,
-                    executionPlan: progressiveExecutionPlan,
-                    resumeSession: &resumeSession,
-                    binaryMode: exportProfile.hdrFFmpegBinaryMode,
-                    diagnostics: diagnostics,
-                    temporaryURLs: &temporaryURLs,
-                    progressHandler: progressHandler,
-                    statusHandler: statusHandler,
-                    systemFFmpegFallbackHandler: systemFFmpegFallbackHandler
-                )
+                binaryResolution = try await diagnostics.measurePhase(.progressiveHDRExecution) {
+                    try await executeProgressiveFFmpegPlan(
+                        ffmpegPlan,
+                        executionPlan: progressiveExecutionPlan,
+                        resumeSession: &resumeSession,
+                        binaryMode: exportProfile.hdrFFmpegBinaryMode,
+                        diagnostics: diagnostics,
+                        temporaryURLs: &temporaryURLs,
+                        progressHandler: progressHandler,
+                        statusHandler: statusHandler,
+                        systemFFmpegFallbackHandler: systemFFmpegFallbackHandler
+                    )
+                }
                 ffmpegProgressiveResumeStore.removeSession(resumeSession)
                 progressiveResumeSession = nil
             } else {
@@ -296,51 +304,55 @@ public final class AVFoundationRenderEngine {
                     chunkingReason = "single_pass_plan"
                 }
                 diagnostics.add("HDR progressive batching enabled: false (reason=\(chunkingReason))")
-                binaryResolution = try await executeFFmpegPlan(
-                    ffmpegPlan,
-                    binaryMode: exportProfile.hdrFFmpegBinaryMode,
-                    diagnostics: diagnostics,
-                    progressRange: 0.30...0.98,
-                    statusPrefix: nil,
-                    progressHandler: progressHandler,
-                    statusHandler: statusHandler,
-                    systemFFmpegFallbackHandler: systemFFmpegFallbackHandler
-                )
+                binaryResolution = try await diagnostics.measurePhase(.directFFmpegExport) {
+                    try await executeFFmpegPlan(
+                        ffmpegPlan,
+                        binaryMode: exportProfile.hdrFFmpegBinaryMode,
+                        diagnostics: diagnostics,
+                        progressRange: 0.30...0.98,
+                        statusPrefix: nil,
+                        progressHandler: progressHandler,
+                        statusHandler: statusHandler,
+                        systemFFmpegFallbackHandler: systemFFmpegFallbackHandler
+                    )
+                }
             }
             reportProgress(1.0, handler: progressHandler)
             reportStatus("Finalizing output...", handler: statusHandler)
 
-            diagnostics.add("Render completed successfully")
-            cleanupTemporaryFiles(&temporaryURLs, diagnostics: diagnostics)
-            let diagnosticsLogURL: URL?
-            if writeDiagnosticsLog {
-                diagnosticsLogURL = persistDiagnosticsReport(
-                    diagnostics.renderReport(outcome: "success", error: nil),
-                    outputTarget: outputTarget,
-                    preferredURL: liveDiagnosticsLogURL
+            return diagnostics.measurePhase(.diagnosticsFinalization) {
+                diagnostics.add("Render completed successfully")
+                cleanupTemporaryFiles(&temporaryURLs, diagnostics: diagnostics)
+                let diagnosticsLogURL: URL?
+                if writeDiagnosticsLog {
+                    diagnosticsLogURL = persistDiagnosticsReport(
+                        diagnostics.renderReport(outcome: "success", error: nil),
+                        outputTarget: outputTarget,
+                        preferredURL: liveDiagnosticsLogURL
+                    )
+                } else {
+                    diagnosticsLogURL = nil
+                }
+                return RenderResult(
+                    outputURL: renderedOutputURL ?? candidateOutputURL,
+                    diagnosticsLogURL: diagnosticsLogURL,
+                    backendSummary: binaryResolution.backendSummary(
+                        codec: exportProfile.videoCodec,
+                        dynamicRange: exportProfile.dynamicRange,
+                        hdrHEVCEncoderMode: exportProfile.hdrHEVCEncoderMode
+                    ),
+                    backendInfo: binaryResolution.backendInfo(
+                        codec: exportProfile.videoCodec,
+                        dynamicRange: exportProfile.dynamicRange,
+                        hdrHEVCEncoderMode: exportProfile.hdrHEVCEncoderMode
+                    ),
+                    resolvedVideoInfo: ResolvedRenderVideoInfo(
+                        width: Int(renderSize.width.rounded()),
+                        height: Int(renderSize.height.rounded()),
+                        frameRate: resolvedFrameRate
+                    )
                 )
-            } else {
-                diagnosticsLogURL = nil
             }
-            return RenderResult(
-                outputURL: renderedOutputURL ?? candidateOutputURL,
-                diagnosticsLogURL: diagnosticsLogURL,
-                backendSummary: binaryResolution.backendSummary(
-                    codec: exportProfile.videoCodec,
-                    dynamicRange: exportProfile.dynamicRange,
-                    hdrHEVCEncoderMode: exportProfile.hdrHEVCEncoderMode
-                ),
-                backendInfo: binaryResolution.backendInfo(
-                    codec: exportProfile.videoCodec,
-                    dynamicRange: exportProfile.dynamicRange,
-                    hdrHEVCEncoderMode: exportProfile.hdrHEVCEncoderMode
-                ),
-                resolvedVideoInfo: ResolvedRenderVideoInfo(
-                    width: Int(renderSize.width.rounded()),
-                    height: Int(renderSize.height.rounded()),
-                    frameRate: resolvedFrameRate
-                )
-            )
         } catch {
             let preservedResumableFailure: Bool
             if let progressiveResumeSession,
@@ -372,23 +384,23 @@ public final class AVFoundationRenderEngine {
             } else {
                 preservedResumableFailure = false
             }
-            diagnostics.add("Render failed with error: \(describe(error))")
-            cleanupTemporaryFiles(&temporaryURLs, diagnostics: diagnostics)
-            let diagnosticURL: URL?
             let isPausedError: Bool
             if case RenderError.paused = error {
                 isPausedError = true
             } else {
                 isPausedError = false
             }
-            if writeDiagnosticsLog {
-                diagnosticURL = persistDiagnosticsReport(
-                    diagnostics.renderReport(outcome: isPausedError ? "paused" : "failure", error: error),
-                    outputTarget: outputTarget,
-                    preferredURL: liveDiagnosticsLogURL
-                )
-            } else {
-                diagnosticURL = nil
+            let diagnosticURL: URL? = diagnostics.measurePhase(.diagnosticsFinalization) {
+                diagnostics.add("Render failed with error: \(describe(error))")
+                cleanupTemporaryFiles(&temporaryURLs, diagnostics: diagnostics)
+                if writeDiagnosticsLog {
+                    return persistDiagnosticsReport(
+                        diagnostics.renderReport(outcome: isPausedError ? "paused" : "failure", error: error),
+                        outputTarget: outputTarget,
+                        preferredURL: liveDiagnosticsLogURL
+                    )
+                }
+                return nil
             }
             let baseMessage = userFacingMessage(from: error)
             let recoveryTip: String
@@ -554,6 +566,8 @@ public final class AVFoundationRenderEngine {
                 let status = statusPrefix.map { "\($0): \(ffmpegStatus)" } ?? ffmpegStatus
                 self.reportStatus(status, handler: statusHandler)
             },
+            stageLabel: statusPrefix,
+            commandStatsHandler: { diagnostics.recordFFmpegCommandSummary($0) },
             systemFFmpegFallbackHandler: systemFFmpegFallbackHandler
         )
     }
@@ -578,7 +592,9 @@ public final class AVFoundationRenderEngine {
             statusHandler: { ffmpegStatus in
                 let status = statusPrefix.map { "\($0): \(ffmpegStatus)" } ?? ffmpegStatus
                 self.reportStatus(status, handler: statusHandler)
-            }
+            },
+            stageLabel: statusPrefix,
+            commandStatsHandler: { diagnostics.recordFFmpegCommandSummary($0) }
         )
     }
 
@@ -604,7 +620,8 @@ public final class AVFoundationRenderEngine {
             statusHandler: { ffmpegStatus in
                 let status = statusPrefix.map { "\($0): \(ffmpegStatus)" } ?? ffmpegStatus
                 self.reportStatus(status, handler: statusHandler)
-            }
+            },
+            commandStatsHandler: { diagnostics.recordFFmpegCommandSummary($0) }
         )
     }
 
@@ -765,6 +782,7 @@ public final class AVFoundationRenderEngine {
             try await executeFFmpegCommand(
                 concatCommand,
                 context: FFmpegHDRRenderer.CommandExecutionContext(
+                    stageLabel: "HDR concat copy",
                     dynamicRange: finalPlan.dynamicRange,
                     renderIntent: .concatCopy,
                     outputURL: executionPlan.concatOutputURL,
@@ -817,6 +835,7 @@ public final class AVFoundationRenderEngine {
         try await executeFFmpegCommand(
             packagingCommand,
             context: FFmpegHDRRenderer.CommandExecutionContext(
+                stageLabel: "HDR final package",
                 dynamicRange: finalPlan.dynamicRange,
                 renderIntent: .finalPackaging,
                 outputURL: finalPlan.outputURL,
@@ -1056,103 +1075,161 @@ public final class AVFoundationRenderEngine {
                     photoMaterializer: photoMaterializer,
                     diagnostics: diagnostics
                 )
-                let titleURL = try await stillImageClipFactory.makeTitleCardClip(
-                    descriptor: descriptor,
-                    previewAssets: previewAssets,
-                    duration: segment.duration,
-                    renderSize: renderSize,
-                    frameRate: frameRate,
-                    dynamicRange: exportDynamicRange
-                )
-                temporaryURLs.append(titleURL)
-                diagnostics.add(
-                    "Materialized title card clip at \(titleURL.path) for title '\(descriptor.resolvedTitle)' " +
-                    "(previews=\(previewAssets.count), seed=\(descriptor.variationSeed))"
-                )
-                if let clip = try await makeClip(
-                    assetURL: titleURL,
-                    fallbackDuration: segment.duration,
-                    includeAudio: false,
-                    sourceDescription: "title card '\(descriptor.resolvedTitle)'",
-                    sourceColorInfo: .unknown,
-                    captureDateOverlayText: nil,
-                    captureDateOverlayURL: nil,
-                    diagnostics: diagnostics,
-                    isTemporary: true,
-                    exportDynamicRange: exportDynamicRange,
-                    exportBinaryMode: exportBinaryMode
+                let titleURL = try await diagnostics.measurePreparationOperation(
+                    .titleCardGeneration,
+                    detail: "title card '\(descriptor.resolvedTitle)'"
                 ) {
-                    clips.append(clip)
-                }
-
-            case let .media(item):
-                switch item.type {
-                case .image:
-                    let sourceURL = try await resolveURL(for: item, photoMaterializer: photoMaterializer)
-                    let sourceColorInfo = try stillImageClipFactory.sourceColorInfo(
-                        forImageURL: sourceURL,
-                        dynamicRange: exportDynamicRange
-                    )
-                    let captureDateOverlayText = formattedCaptureDateOverlayText(for: item, style: style)
-                    let captureDateOverlayURL = makeCaptureDateOverlayIfNeeded(
-                        overlayText: captureDateOverlayText,
-                        renderSize: renderSize,
-                        diagnostics: diagnostics
-                    )
-                    if let captureDateOverlayURL {
-                        temporaryURLs.append(captureDateOverlayURL)
-                    }
-                    let imageClipURL = try await stillImageClipFactory.makeVideoClip(
-                        fromImageURL: sourceURL,
+                    try await stillImageClipFactory.makeTitleCardClip(
+                        descriptor: descriptor,
+                        previewAssets: previewAssets,
                         duration: segment.duration,
                         renderSize: renderSize,
                         frameRate: frameRate,
                         dynamicRange: exportDynamicRange
                     )
-                    temporaryURLs.append(imageClipURL)
-                    diagnostics.add("Materialized still image clip for \(item.filename) at \(imageClipURL.path)")
-                    if let clip = try await makeClip(
-                        assetURL: imageClipURL,
+                }
+                temporaryURLs.append(titleURL)
+                diagnostics.add(
+                    "Materialized title card clip at \(titleURL.path) for title '\(descriptor.resolvedTitle)' " +
+                    "(previews=\(previewAssets.count), seed=\(descriptor.variationSeed))"
+                )
+                let titleClip = try await diagnostics.measurePreparationOperation(
+                    .clipProbe,
+                    detail: "title card '\(descriptor.resolvedTitle)'"
+                ) {
+                    try await makeClip(
+                        assetURL: titleURL,
                         fallbackDuration: segment.duration,
                         includeAudio: false,
-                        sourceDescription: "image \(item.filename)",
-                        sourceColorInfo: sourceColorInfo,
-                        captureDateOverlayText: captureDateOverlayText,
-                        captureDateOverlayURL: captureDateOverlayURL,
+                        sourceDescription: "title card '\(descriptor.resolvedTitle)'",
+                        sourceColorInfo: .unknown,
+                        captureDateOverlayText: nil,
+                        captureDateOverlayURL: nil,
                         diagnostics: diagnostics,
                         isTemporary: true,
                         exportDynamicRange: exportDynamicRange,
                         exportBinaryMode: exportBinaryMode
+                    )
+                }
+                if let titleClip {
+                    clips.append(titleClip)
+                }
+
+            case let .media(item):
+                switch item.type {
+                case .image:
+                    let sourceURL = try await diagnostics.measurePreparationOperation(
+                        .stillImageSourceResolution,
+                        detail: item.filename
                     ) {
-                        clips.append(clip)
+                        try await resolveURL(for: item, photoMaterializer: photoMaterializer)
+                    }
+                    let sourceColorInfo = try stillImageClipFactory.sourceColorInfo(
+                        forImageURL: sourceURL,
+                        dynamicRange: exportDynamicRange
+                    )
+                    let captureDateOverlayText = formattedCaptureDateOverlayText(for: item, style: style)
+                    let captureDateOverlayURL: URL?
+                    if let captureDateOverlayText {
+                        captureDateOverlayURL = diagnostics.measurePreparationOperation(
+                            .captureDateOverlayGeneration,
+                            detail: item.filename
+                        ) {
+                            makeCaptureDateOverlayIfNeeded(
+                                overlayText: captureDateOverlayText,
+                                renderSize: renderSize,
+                                diagnostics: diagnostics
+                            )
+                        }
+                    } else {
+                        captureDateOverlayURL = nil
+                    }
+                    if let captureDateOverlayURL {
+                        temporaryURLs.append(captureDateOverlayURL)
+                    }
+                    let imageClipURL = try await diagnostics.measurePreparationOperation(
+                        .stillClipGeneration,
+                        detail: item.filename
+                    ) {
+                        try await stillImageClipFactory.makeVideoClip(
+                            fromImageURL: sourceURL,
+                            duration: segment.duration,
+                            renderSize: renderSize,
+                            frameRate: frameRate,
+                            dynamicRange: exportDynamicRange
+                        )
+                    }
+                    temporaryURLs.append(imageClipURL)
+                    diagnostics.add("Materialized still image clip for \(item.filename) at \(imageClipURL.path)")
+                    let imageClip = try await diagnostics.measurePreparationOperation(
+                        .clipProbe,
+                        detail: "image \(item.filename)"
+                    ) {
+                        try await makeClip(
+                            assetURL: imageClipURL,
+                            fallbackDuration: segment.duration,
+                            includeAudio: false,
+                            sourceDescription: "image \(item.filename)",
+                            sourceColorInfo: sourceColorInfo,
+                            captureDateOverlayText: captureDateOverlayText,
+                            captureDateOverlayURL: captureDateOverlayURL,
+                            diagnostics: diagnostics,
+                            isTemporary: true,
+                            exportDynamicRange: exportDynamicRange,
+                            exportBinaryMode: exportBinaryMode
+                        )
+                    }
+                    if let imageClip {
+                        clips.append(imageClip)
                     }
 
                 case .video:
-                    let sourceURL = try await resolveURL(for: item, photoMaterializer: photoMaterializer)
+                    let sourceURL = try await diagnostics.measurePreparationOperation(
+                        .videoSourceResolution,
+                        detail: item.filename
+                    ) {
+                        try await resolveURL(for: item, photoMaterializer: photoMaterializer)
+                    }
                     let captureDateOverlayText = formattedCaptureDateOverlayText(for: item, style: style)
-                    let captureDateOverlayURL = makeCaptureDateOverlayIfNeeded(
-                        overlayText: captureDateOverlayText,
-                        renderSize: renderSize,
-                        diagnostics: diagnostics
-                    )
+                    let captureDateOverlayURL: URL?
+                    if let captureDateOverlayText {
+                        captureDateOverlayURL = diagnostics.measurePreparationOperation(
+                            .captureDateOverlayGeneration,
+                            detail: item.filename
+                        ) {
+                            makeCaptureDateOverlayIfNeeded(
+                                overlayText: captureDateOverlayText,
+                                renderSize: renderSize,
+                                diagnostics: diagnostics
+                            )
+                        }
+                    } else {
+                        captureDateOverlayURL = nil
+                    }
                     if let captureDateOverlayURL {
                         temporaryURLs.append(captureDateOverlayURL)
                     }
                     diagnostics.add("Using source video clip \(sourceURL.path) for \(item.filename)")
-                    if let clip = try await makeClip(
-                        assetURL: sourceURL,
-                        fallbackDuration: segment.duration,
-                        includeAudio: true,
-                        sourceDescription: "video \(item.filename)",
-                        sourceColorInfo: item.colorInfo,
-                        captureDateOverlayText: captureDateOverlayText,
-                        captureDateOverlayURL: captureDateOverlayURL,
-                        diagnostics: diagnostics,
-                        isTemporary: false,
-                        exportDynamicRange: exportDynamicRange,
-                        exportBinaryMode: exportBinaryMode
+                    let videoClip = try await diagnostics.measurePreparationOperation(
+                        .clipProbe,
+                        detail: "video \(item.filename)"
                     ) {
-                        clips.append(clip)
+                        try await makeClip(
+                            assetURL: sourceURL,
+                            fallbackDuration: segment.duration,
+                            includeAudio: true,
+                            sourceDescription: "video \(item.filename)",
+                            sourceColorInfo: item.colorInfo,
+                            captureDateOverlayText: captureDateOverlayText,
+                            captureDateOverlayURL: captureDateOverlayURL,
+                            diagnostics: diagnostics,
+                            isTemporary: false,
+                            exportDynamicRange: exportDynamicRange,
+                            exportBinaryMode: exportBinaryMode
+                        )
+                    }
+                    if let videoClip {
+                        clips.append(videoClip)
                     }
                 }
             }
@@ -1174,7 +1251,12 @@ public final class AVFoundationRenderEngine {
 
         for item in items {
             do {
-                let url = try await resolveURL(for: item, photoMaterializer: photoMaterializer)
+                let url = try await diagnostics.measurePreparationOperation(
+                    .titlePreviewAssetResolution,
+                    detail: item.filename
+                ) {
+                    try await resolveURL(for: item, photoMaterializer: photoMaterializer)
+                }
                 previewAssets.append(
                     StillImageClipFactory.TitleCardPreviewAsset(
                         url: url,
@@ -2175,23 +2257,203 @@ public final class AVFoundationRenderEngine {
         }
     }
 
-    private final class RenderDiagnostics {
+    final class RenderDiagnostics: @unchecked Sendable {
+        enum Phase: String, CaseIterable, Hashable {
+            case renderSetup
+            case clipMaterialization
+            case directFFmpegExport
+            case progressiveHDRExecution
+            case diagnosticsFinalization
+
+            var label: String {
+                switch self {
+                case .renderSetup:
+                    return "Render setup"
+                case .clipMaterialization:
+                    return "Clip materialization"
+                case .directFFmpegExport:
+                    return "FFmpeg/direct export"
+                case .progressiveHDRExecution:
+                    return "Progressive HDR execution"
+                case .diagnosticsFinalization:
+                    return "Diagnostics finalization / cleanup"
+                }
+            }
+        }
+
+        enum PreparationOperationKind: String, CaseIterable, Hashable {
+            case titlePreviewAssetResolution
+            case titleCardGeneration
+            case stillImageSourceResolution
+            case stillClipGeneration
+            case videoSourceResolution
+            case captureDateOverlayGeneration
+            case clipProbe
+
+            var label: String {
+                switch self {
+                case .titlePreviewAssetResolution:
+                    return "Title preview asset resolution"
+                case .titleCardGeneration:
+                    return "Title card generation"
+                case .stillImageSourceResolution:
+                    return "Still-image source resolution"
+                case .stillClipGeneration:
+                    return "Still clip generation"
+                case .videoSourceResolution:
+                    return "Video source resolution / Photos materialization"
+                case .captureDateOverlayGeneration:
+                    return "Capture-date overlay generation"
+                case .clipProbe:
+                    return "Clip probe / makeClip"
+                }
+            }
+        }
+
+        private struct PhaseSummary {
+            var count: Int
+            var totalDurationSeconds: TimeInterval
+        }
+
+        private struct PreparationSummary {
+            var count: Int
+            var totalDurationSeconds: TimeInterval
+            var maxDurationSeconds: TimeInterval
+        }
+
+        private struct PreparationOperationRecord {
+            let kind: PreparationOperationKind
+            let detail: String
+            let elapsedSeconds: TimeInterval
+        }
+
         private let startedAt = Date()
         private let runID = UUID().uuidString
+        private let lock = NSLock()
         private var lines: [String] = []
+        private var phaseSummaries: [Phase: PhaseSummary] = [:]
+        private var preparationSummaries: [PreparationOperationKind: PreparationSummary] = [:]
+        private var slowestPreparationOperations: [PreparationOperationRecord] = []
+        private var ffmpegCommandSummaries: [FFmpegHDRRenderer.CommandExecutionStats] = []
 
         func add(_ line: String) {
+            lock.lock()
             lines.append("[\(timestamp())] \(line)")
+            lock.unlock()
+        }
+
+        @discardableResult
+        func measurePhase<T>(_ phase: Phase, _ operation: () throws -> T) rethrows -> T {
+            let startedAt = DispatchTime.now().uptimeNanoseconds
+            do {
+                let result = try operation()
+                recordPhase(phase, elapsedSeconds: elapsedSeconds(since: startedAt))
+                return result
+            } catch {
+                recordPhase(phase, elapsedSeconds: elapsedSeconds(since: startedAt))
+                throw error
+            }
+        }
+
+        @discardableResult
+        func measurePhase<T>(_ phase: Phase, _ operation: () async throws -> T) async rethrows -> T {
+            let startedAt = DispatchTime.now().uptimeNanoseconds
+            do {
+                let result = try await operation()
+                recordPhase(phase, elapsedSeconds: elapsedSeconds(since: startedAt))
+                return result
+            } catch {
+                recordPhase(phase, elapsedSeconds: elapsedSeconds(since: startedAt))
+                throw error
+            }
+        }
+
+        @discardableResult
+        func measurePreparationOperation<T>(
+            _ kind: PreparationOperationKind,
+            detail: String,
+            _ operation: () throws -> T
+        ) rethrows -> T {
+            let startedAt = DispatchTime.now().uptimeNanoseconds
+            do {
+                let result = try operation()
+                recordPreparationOperation(kind, detail: detail, elapsedSeconds: elapsedSeconds(since: startedAt))
+                return result
+            } catch {
+                recordPreparationOperation(kind, detail: detail, elapsedSeconds: elapsedSeconds(since: startedAt))
+                throw error
+            }
+        }
+
+        @discardableResult
+        func measurePreparationOperation<T>(
+            _ kind: PreparationOperationKind,
+            detail: String,
+            _ operation: () async throws -> T
+        ) async rethrows -> T {
+            let startedAt = DispatchTime.now().uptimeNanoseconds
+            do {
+                let result = try await operation()
+                recordPreparationOperation(kind, detail: detail, elapsedSeconds: elapsedSeconds(since: startedAt))
+                return result
+            } catch {
+                recordPreparationOperation(kind, detail: detail, elapsedSeconds: elapsedSeconds(since: startedAt))
+                throw error
+            }
+        }
+
+        func recordPhase(_ phase: Phase, elapsedSeconds: TimeInterval) {
+            lock.lock()
+            var summary = phaseSummaries[phase] ?? PhaseSummary(count: 0, totalDurationSeconds: 0)
+            summary.count += 1
+            summary.totalDurationSeconds += elapsedSeconds
+            phaseSummaries[phase] = summary
+            lock.unlock()
+        }
+
+        func recordPreparationOperation(
+            _ kind: PreparationOperationKind,
+            detail: String,
+            elapsedSeconds: TimeInterval
+        ) {
+            lock.lock()
+            var summary = preparationSummaries[kind] ?? PreparationSummary(count: 0, totalDurationSeconds: 0, maxDurationSeconds: 0)
+            summary.count += 1
+            summary.totalDurationSeconds += elapsedSeconds
+            summary.maxDurationSeconds = max(summary.maxDurationSeconds, elapsedSeconds)
+            preparationSummaries[kind] = summary
+
+            slowestPreparationOperations.append(
+                PreparationOperationRecord(kind: kind, detail: detail, elapsedSeconds: elapsedSeconds)
+            )
+            slowestPreparationOperations.sort {
+                if $0.elapsedSeconds == $1.elapsedSeconds {
+                    return $0.detail < $1.detail
+                }
+                return $0.elapsedSeconds > $1.elapsedSeconds
+            }
+            if slowestPreparationOperations.count > 5 {
+                slowestPreparationOperations.removeLast(slowestPreparationOperations.count - 5)
+            }
+            lock.unlock()
+        }
+
+        func recordFFmpegCommandSummary(_ summary: FFmpegHDRRenderer.CommandExecutionStats) {
+            lock.lock()
+            ffmpegCommandSummaries.append(summary)
+            lock.unlock()
         }
 
         func renderReport(outcome: String, error: Error?) -> String {
+            let snapshot = snapshotState()
+
             var reportLines: [String] = []
             reportLines.append("MonthlyVideoGenerator export diagnostics")
             reportLines.append("run_id=\(runID)")
             reportLines.append("started_at=\(startedAt.ISO8601Format())")
             reportLines.append("ended_at=\(Date().ISO8601Format())")
             reportLines.append("outcome=\(outcome)")
-            reportLines.append("event_count=\(lines.count)")
+            reportLines.append("event_count=\(snapshot.lines.count)")
             if let error {
                 let nsError = error as NSError
                 reportLines.append("error=\(sanitizeHeaderValue(String(describing: error)))")
@@ -2214,17 +2476,95 @@ public final class AVFoundationRenderEngine {
                 reportLines.append("error_domain=none")
                 reportLines.append("error_code=none")
             }
+
             reportLines.append("")
-            reportLines.append(contentsOf: lines)
+            reportLines.append("Timing Summary")
+            reportLines.append(contentsOf: timingSummaryLines(from: snapshot.phaseSummaries))
+            reportLines.append("")
+            reportLines.append("Clip Preparation Breakdown")
+            reportLines.append(contentsOf: preparationBreakdownLines(from: snapshot.preparationSummaries))
+            reportLines.append("")
+            reportLines.append("Slowest Preparation Operations")
+            reportLines.append(contentsOf: slowPreparationLines(from: snapshot.slowestPreparationOperations))
+            reportLines.append("")
+            reportLines.append("FFmpeg Command Summary")
+            reportLines.append(contentsOf: FFmpegHDRRenderer.commandSummaryLines(from: snapshot.ffmpegCommandSummaries))
+            reportLines.append("")
+            reportLines.append(contentsOf: snapshot.lines)
             reportLines.append("")
             reportLines.append("end_of_report")
             return reportLines.joined(separator: "\n")
+        }
+
+        private func snapshotState() -> (
+            lines: [String],
+            phaseSummaries: [Phase: PhaseSummary],
+            preparationSummaries: [PreparationOperationKind: PreparationSummary],
+            slowestPreparationOperations: [PreparationOperationRecord],
+            ffmpegCommandSummaries: [FFmpegHDRRenderer.CommandExecutionStats]
+        ) {
+            lock.lock()
+            let snapshot = (
+                lines: lines,
+                phaseSummaries: phaseSummaries,
+                preparationSummaries: preparationSummaries,
+                slowestPreparationOperations: slowestPreparationOperations,
+                ffmpegCommandSummaries: ffmpegCommandSummaries
+            )
+            lock.unlock()
+            return snapshot
+        }
+
+        private func timingSummaryLines(from summaries: [Phase: PhaseSummary]) -> [String] {
+            var lines = ["- Total render elapsed: \(formatSeconds(Date().timeIntervalSince(startedAt)))"]
+            let phaseLines = Phase.allCases.compactMap { phase -> String? in
+                guard let summary = summaries[phase] else {
+                    return nil
+                }
+                let average = summary.totalDurationSeconds / Double(max(summary.count, 1))
+                return "- \(phase.label): count=\(summary.count) | total=\(formatSeconds(summary.totalDurationSeconds)) | avg=\(formatSeconds(average))"
+            }
+            if phaseLines.isEmpty {
+                lines.append("- none recorded")
+            } else {
+                lines.append(contentsOf: phaseLines)
+            }
+            return lines
+        }
+
+        private func preparationBreakdownLines(from summaries: [PreparationOperationKind: PreparationSummary]) -> [String] {
+            let lines = PreparationOperationKind.allCases.compactMap { kind -> String? in
+                guard let summary = summaries[kind] else {
+                    return nil
+                }
+                let average = summary.totalDurationSeconds / Double(max(summary.count, 1))
+                return "- \(kind.label): count=\(summary.count) | total=\(formatSeconds(summary.totalDurationSeconds)) | avg=\(formatSeconds(average)) | max=\(formatSeconds(summary.maxDurationSeconds))"
+            }
+            return lines.isEmpty ? ["- none recorded"] : lines
+        }
+
+        private func slowPreparationLines(from operations: [PreparationOperationRecord]) -> [String] {
+            guard !operations.isEmpty else {
+                return ["- none recorded"]
+            }
+            return operations.enumerated().map { index, operation in
+                "- \(index + 1). \(operation.kind.label): \(operation.detail) | elapsed=\(formatSeconds(operation.elapsedSeconds))"
+            }
         }
 
         private func sanitizeHeaderValue(_ value: String) -> String {
             value
                 .replacingOccurrences(of: "\r", with: "\\r")
                 .replacingOccurrences(of: "\n", with: "\\n")
+        }
+
+        private func formatSeconds(_ value: TimeInterval) -> String {
+            String(format: "%.2fs", max(value, 0))
+        }
+
+        private func elapsedSeconds(since startedAtNanoseconds: UInt64) -> TimeInterval {
+            let elapsedNanoseconds = DispatchTime.now().uptimeNanoseconds - startedAtNanoseconds
+            return Double(elapsedNanoseconds) / 1_000_000_000
         }
 
         private func timestamp() -> String {

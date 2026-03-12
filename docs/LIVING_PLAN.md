@@ -131,6 +131,7 @@ Operational updates after first packaged run:
 - 2026-03-10: Bumped the shipped app version to `0.9.1` and promoted the current diagnostics/stability state as the new known-good rollback checkpoint: `checkpoint/20260310-known-good-v0-9-1`.
 - 2026-03-10: Replaced the large-job HDR “chunk then giant final merge” path with a progressive presentation-intermediate -> bounded `libx265` final-batch -> concat-copy -> final-packaging pipeline, and locked a hard invariant that no new color/tone/background/overlay math may run after the existing per-source normalization stage.
 - 2026-03-10: Added checkpointed pause/resume for progressive HDR renders only: the UI can now request “pause after current safe checkpoint,” the engine persists completed presentation/batch/concat milestones to app-owned resumable-render storage, and restarting the same large HDR job resumes from the next unfinished checkpoint instead of restarting from zero.
+- 2026-03-12: Added low-overhead diagnostics timing instrumentation to `.log` exports only: top-level phase totals, aggregated clip-preparation breakdowns, top-5 slowest prep operations, per-command FFmpeg throughput summaries, and per-intent rollups for progressive HDR stages. Bumped the shipped app version to `1.0.0`.
 
 ## Decisions Log
 
@@ -193,6 +194,7 @@ Operational updates after first packaged run:
 - 2026-03-10: Added resumable progressive HDR execution state with persisted session manifests, safe-checkpoint pause requests, queue-aware paused-job handling, eager preservation of unfinished progressive artifacts on pause, and tests that lock in resume-state persistence plus paused-job retry ordering.
 - 2026-03-11: Tightened the FFmpeg watchdog for slow `libx265` progressive batches so advancing encoded frame counts and smaller-but-real CPU deltas count as activity, reducing false stall kills without lengthening the nominal stall timeouts.
 - 2026-03-11: Progressive HDR retries now preserve useful failed checkpoints for resume, but retained session artifacts are bounded and auto-pruned by age, count, and total storage so partials do not accumulate indefinitely.
+- 2026-03-12: Added `.log`-only render timing summaries and FFmpeg command throughput reporting so future performance work can identify slow setup/prep/export stages without changing UI behavior or run-report JSON.
 - 2026-03-04: Added `VERSION` file and dynamic build number injection into app `Info.plist`.
 - 2026-03-04: Added version/build label to main UI.
 - 2026-03-04: Reworked still-image rendering to use pre-rasterized CGImage frames for stability.
@@ -320,4 +322,4 @@ Checkpoint tags are retained under the repo's 30-tag policy, so the current know
 
 ## Last Updated
 
-2026-03-10 20:52 America/New_York by Codex
+2026-03-12 12:55 America/New_York by Codex
