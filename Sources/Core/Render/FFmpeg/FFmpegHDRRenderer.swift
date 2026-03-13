@@ -469,15 +469,19 @@ final class FFmpegHDRRenderer {
                 throw failure.renderError
             }
 
-            try await runCommand(
-                command: fallback.command,
-                resolution: fallback.resolution,
-                context: fallback.context,
-                diagnostics: diagnostics,
-                progressHandler: progressHandler,
-                statusHandler: statusHandler,
-                commandStatsHandler: commandStatsHandler
-            )
+            do {
+                try await runCommand(
+                    command: fallback.command,
+                    resolution: fallback.resolution,
+                    context: fallback.context,
+                    diagnostics: diagnostics,
+                    progressHandler: progressHandler,
+                    statusHandler: statusHandler,
+                    commandStatsHandler: commandStatsHandler
+                )
+            } catch let retryFailure as ExecutionFailure {
+                throw retryFailure.renderError
+            }
         }
     }
 

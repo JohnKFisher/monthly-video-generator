@@ -1712,6 +1712,38 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertFalse(joined.contains("vibrance=intensity="))
     }
 
+    func testCommandBuilderNormalizesUnknownSDRInputBeforeHLGUplift() throws {
+        let builder = FFmpegCommandBuilder()
+        let command = try builder.buildCommand(
+            plan: FFmpegRenderPlan(
+                clips: [
+                    FFmpegRenderClip(
+                        url: URL(fileURLWithPath: "/tmp/legacy.mov"),
+                        durationSeconds: 2,
+                        includeAudio: false,
+                        hasAudioTrack: false,
+                        colorInfo: .unknown,
+                        sourceDescription: "legacy-sdr"
+                    )
+                ],
+                transitionDurationSeconds: 0,
+                outputURL: URL(fileURLWithPath: "/tmp/out.mov"),
+                renderSize: CGSize(width: 1920, height: 1080),
+                frameRate: 30,
+                audioLayout: .stereo,
+                bitrateMode: .balanced,
+                container: .mov,
+                videoCodec: .hevc,
+                dynamicRange: .hdr
+            ),
+            resolution: makeCapableResolution()
+        )
+        let joined = command.arguments.joined(separator: " ")
+
+        XCTAssertTrue(joined.contains("colorspace=iall=bt709:all=bt709:fast=1,zscale=transferin=bt709:primariesin=bt709:matrixin=bt709:transfer=linear"))
+        XCTAssertTrue(joined.contains("zscale=transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc:range=tv:npl=225"))
+    }
+
     func testFFprobeSourceMetadataParserDetectsDolbyVision() throws {
         let json = """
         {

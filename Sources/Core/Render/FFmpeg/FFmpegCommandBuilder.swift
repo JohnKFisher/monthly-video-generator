@@ -574,7 +574,7 @@ struct FFmpegCommandBuilder {
 
         let transferIn = sdrTransferInput(for: colorInfo)
         let primariesIn = sdrPrimariesInput(for: colorInfo)
-        return "zscale=transferin=\(transferIn):primariesin=\(primariesIn):matrixin=bt709:transfer=bt709:primaries=bt709:matrix=bt709"
+        return "\(unknownSDRInputPrelude(for: colorInfo))zscale=transferin=\(transferIn):primariesin=\(primariesIn):matrixin=bt709:transfer=bt709:primaries=bt709:matrix=bt709"
     }
 
     private func hdrTransferFlavor(for colorInfo: ColorInfo) -> FFmpegHDRTransferFlavor? {
@@ -591,11 +591,29 @@ struct FFmpegCommandBuilder {
     private func sdrToHLGUpliftFilter(for colorInfo: ColorInfo) throws -> String {
         let transferIn = sdrTransferInput(for: colorInfo)
         let primariesIn = sdrPrimariesInput(for: colorInfo)
-        return "zscale=transferin=\(transferIn):primariesin=\(primariesIn):matrixin=bt709:transfer=linear," +
+        return "\(unknownSDRInputPrelude(for: colorInfo))zscale=transferin=\(transferIn):primariesin=\(primariesIn):matrixin=bt709:transfer=linear," +
             "format=gbrpf32le," +
             // Map SDR into HLG with a lower nominal peak so SDR white lands in
             // the expected HLG range instead of being pushed toward washed-out highlights.
             "zscale=transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc:range=tv:npl=\(Self.hdrSDRNominalPeak)"
+    }
+
+    private func unknownSDRInputPrelude(for colorInfo: ColorInfo) -> String {
+        guard colorInfo.transferFlavor == .sdr else {
+            return ""
+        }
+
+        let hasPrimaries = !(colorInfo.colorPrimaries ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasTransfer = !(colorInfo.transferFunction ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard !hasPrimaries || !hasTransfer else {
+            return ""
+        }
+
+        // Legacy camera/video clips can arrive with missing AVFoundation color
+        // tags even though FFmpeg sees unknown/legacy primaries on the stream.
+        // Normalize them onto our existing BT.709 SDR assumption first so the
+        // later zscale step has a valid source colorspace path.
+        return "colorspace=iall=bt709:all=bt709:fast=1,"
     }
 
     private func sdrTransferInput(for colorInfo: ColorInfo) -> String {
