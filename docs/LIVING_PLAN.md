@@ -134,6 +134,7 @@ Operational updates after first packaged run:
 - 2026-03-12: Added low-overhead diagnostics timing instrumentation to `.log` exports only: top-level phase totals, aggregated clip-preparation breakdowns, top-5 slowest prep operations, per-command FFmpeg throughput summaries, and per-intent rollups for progressive HDR stages. Bumped the shipped app version to `1.0.0`.
 - 2026-03-12: Removed the remaining Swift `Sendable` build warnings at the `AVAssetWriter.finishWriting` callback boundaries and FFmpeg pipe-reader closure boundary, then bumped the shipped app version to `1.0.1`.
 - 2026-03-12: Added bounded two-at-a-time clip materialization, cached immutable animated title-card layers plus bounded preview-image loading, and a `<= 20 minute` HDR short-job `libx265` thread profile (`6` pools / `3` frame threads) while keeping longer HDR jobs on the conservative caps. Bumped the shipped app version to `1.0.2`.
+- 2026-03-12: Hotfix: progressive HDR presentation/intermediate HEVC jobs now retry with `libx265` when `hevc_videotoolbox` fails to open before first output, preserving the fast VideoToolbox path for healthy jobs while recovering source clips that VideoToolbox refuses to initialize.
 
 ## Decisions Log
 

@@ -84,6 +84,14 @@ final class FFmpegHDRRenderer {
         let stderrTail: [String]
     }
 
+    private struct ExecutionFailure: Error {
+        let snapshot: FailureSnapshot
+
+        var renderError: RenderError {
+            .exportFailed(FFmpegHDRRenderer.failureMessage(from: snapshot))
+        }
+    }
+
     struct CommandExecutionStats: Equatable, Sendable {
         let stageLabel: String
         let renderIntent: FFmpegRenderIntent
@@ -123,6 +131,12 @@ final class FFmpegHDRRenderer {
         let captureDateOverlayCount: Int
         let summaryLine: String
         let endpointLine: String?
+    }
+
+    private struct IntermediateSoftwareFallbackAttempt {
+        let resolution: FFmpegBinaryResolution
+        let command: FFmpegCommand
+        let context: CommandExecutionContext
     }
 
     private final class ActivityTracker: @unchecked Sendable {
@@ -432,18 +446,66 @@ final class FFmpegHDRRenderer {
             )
         }
         let command = try commandBuilder.buildCommand(plan: plan, resolution: resolution)
-        try await execute(
-            command: command,
-            resolution: resolution,
-            context: makeExecutionContext(for: plan, selectedEncoder: selectedEncoder, stageLabel: stageLabel),
-            diagnostics: diagnostics,
-            progressHandler: progressHandler,
-            statusHandler: statusHandler,
-            commandStatsHandler: commandStatsHandler
-        )
+        let context = makeExecutionContext(for: plan, selectedEncoder: selectedEncoder, stageLabel: stageLabel)
+        do {
+            try await runCommand(
+                command: command,
+                resolution: resolution,
+                context: context,
+                diagnostics: diagnostics,
+                progressHandler: progressHandler,
+                statusHandler: statusHandler,
+                commandStatsHandler: commandStatsHandler
+            )
+        } catch let failure as ExecutionFailure {
+            guard let fallback = makeIntermediateSoftwareFallbackAttempt(
+                plan: plan,
+                resolution: resolution,
+                failedContext: context,
+                failure: failure,
+                diagnostics: diagnostics,
+                statusHandler: statusHandler
+            ) else {
+                throw failure.renderError
+            }
+
+            try await runCommand(
+                command: fallback.command,
+                resolution: fallback.resolution,
+                context: fallback.context,
+                diagnostics: diagnostics,
+                progressHandler: progressHandler,
+                statusHandler: statusHandler,
+                commandStatsHandler: commandStatsHandler
+            )
+        }
     }
 
     func execute(
+        command: FFmpegCommand,
+        resolution: FFmpegBinaryResolution,
+        context: CommandExecutionContext,
+        diagnostics: @escaping (String) -> Void,
+        progressHandler: @escaping (Double) -> Void,
+        statusHandler: @escaping (String) -> Void = { _ in },
+        commandStatsHandler: (@Sendable (CommandExecutionStats) -> Void)? = nil
+    ) async throws {
+        do {
+            try await runCommand(
+                command: command,
+                resolution: resolution,
+                context: context,
+                diagnostics: diagnostics,
+                progressHandler: progressHandler,
+                statusHandler: statusHandler,
+                commandStatsHandler: commandStatsHandler
+            )
+        } catch let failure as ExecutionFailure {
+            throw failure.renderError
+        }
+    }
+
+    private func runCommand(
         command: FFmpegCommand,
         resolution: FFmpegBinaryResolution,
         context: CommandExecutionContext,
@@ -613,7 +675,7 @@ final class FFmpegHDRRenderer {
             for line in Self.failureDiagnosticLines(from: failureSnapshot) {
                 callbacks.log(line)
             }
-            throw RenderError.exportFailed(Self.failureMessage(from: failureSnapshot))
+            throw ExecutionFailure(snapshot: failureSnapshot)
         }
 
         callbacks.report(1.0)
@@ -627,6 +689,104 @@ final class FFmpegHDRRenderer {
                 speed: nil
             )
         )
+    }
+
+    private func makeIntermediateSoftwareFallbackAttempt(
+        plan: FFmpegRenderPlan,
+        resolution: FFmpegBinaryResolution,
+        failedContext: CommandExecutionContext,
+        failure: ExecutionFailure,
+        diagnostics: @escaping (String) -> Void,
+        statusHandler: @escaping (String) -> Void
+    ) -> IntermediateSoftwareFallbackAttempt? {
+        guard Self.shouldRetryWithSoftwareIntermediateFallback(
+            snapshot: failure.snapshot,
+            selectedCapabilities: resolution.selectedCapabilities
+        ) else {
+            return nil
+        }
+
+        let retryResolution = softwareIntermediateFallbackResolution(from: resolution)
+        guard let retryEncoder = retryResolution.selectedCapabilities.preferredEncoder(
+            for: plan.videoCodec,
+            dynamicRange: plan.dynamicRange,
+            hdrHEVCEncoderMode: plan.hdrHEVCEncoderMode,
+            renderIntent: plan.renderIntent
+        ), retryEncoder == .libx265 else {
+            return nil
+        }
+        guard let retryCommand = try? commandBuilder.buildCommand(plan: plan, resolution: retryResolution) else {
+            return nil
+        }
+
+        diagnostics("FFmpeg intermediate encoder retry: hevc_videotoolbox failed before producing output; retrying with libx265.")
+        let retrySignals = Self.videoToolboxRetryIndicators(from: failure.snapshot.stderrTail)
+        if !retrySignals.isEmpty {
+            diagnostics("FFmpeg intermediate encoder retry cause: \(retrySignals.joined(separator: " | "))")
+        }
+        statusHandler("\(failedContext.dynamicRange == .hdr ? "HDR" : "SDR") encode: retrying with software HEVC encoder...")
+
+        return IntermediateSoftwareFallbackAttempt(
+            resolution: retryResolution,
+            command: retryCommand,
+            context: makeExecutionContext(for: plan, selectedEncoder: retryEncoder, stageLabel: failedContext.stageLabel)
+        )
+    }
+
+    private func softwareIntermediateFallbackResolution(from resolution: FFmpegBinaryResolution) -> FFmpegBinaryResolution {
+        let selected = resolution.selectedCapabilities
+        let fallbackCapabilities = FFmpegCapabilities(
+            versionDescription: selected.versionDescription,
+            hasZscale: selected.hasZscale,
+            hasTonemap: selected.hasTonemap,
+            hasXfade: selected.hasXfade,
+            hasAcrossfade: selected.hasAcrossfade,
+            hasOverlay: selected.hasOverlay,
+            hasLibx264: selected.hasLibx264,
+            hasH264VideoToolbox: selected.hasH264VideoToolbox,
+            hasLibx265: selected.hasLibx265,
+            hasHEVCVideoToolbox: false
+        )
+        return FFmpegBinaryResolution(
+            selectedBinary: resolution.selectedBinary,
+            selectedCapabilities: fallbackCapabilities,
+            systemCapabilities: resolution.systemCapabilities,
+            bundledCapabilities: resolution.bundledCapabilities,
+            fallbackReason: resolution.fallbackReason
+        )
+    }
+
+    static func shouldRetryWithSoftwareIntermediateFallback(
+        snapshot: FailureSnapshot,
+        selectedCapabilities: FFmpegCapabilities
+    ) -> Bool {
+        guard snapshot.renderIntent == .intermediateChunk || snapshot.renderIntent == .presentationIntermediate else {
+            return false
+        }
+        guard snapshot.selectedEncoder == FFmpegVideoEncoder.hevcVideoToolbox.rawValue else {
+            return false
+        }
+        guard selectedCapabilities.hasLibx265 else {
+            return false
+        }
+        guard snapshot.latestOutTimeMicroseconds <= 0, snapshot.latestOutputSizeBytes == 0 else {
+            return false
+        }
+        return !videoToolboxRetryIndicators(from: snapshot.stderrTail).isEmpty
+    }
+
+    private static func videoToolboxRetryIndicators(from stderrTail: [String]) -> [String] {
+        let indicators = [
+            "cannot create compression session",
+            "error while opening encoder",
+            "could not open encoder before eof",
+            "try -allow_sw 1",
+            "kvtcouldnotfindvideoencodererr"
+        ]
+        return stderrTail.filter { line in
+            let lowered = line.lowercased()
+            return indicators.contains { lowered.contains($0) }
+        }
     }
 
     private func makeExecutionContext(

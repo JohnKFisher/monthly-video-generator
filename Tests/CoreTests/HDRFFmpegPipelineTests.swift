@@ -1148,6 +1148,142 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         ])
     }
 
+    func testShouldRetrySoftwareIntermediateFallbackForVideoToolboxStartupFailure() {
+        let snapshot = FFmpegHDRRenderer.FailureSnapshot(
+            dynamicRange: .hdr,
+            terminationSummary: "exit 187",
+            selectedEncoder: FFmpegVideoEncoder.hevcVideoToolbox.rawValue,
+            binarySource: .bundled,
+            binaryPath: "/tmp/ffmpeg",
+            renderIntent: .presentationIntermediate,
+            outputPath: "/tmp/out.mov",
+            clipCount: 1,
+            chapterCount: 0,
+            renderSize: CGSize(width: 3840, height: 2160),
+            frameRate: 30,
+            elapsedSeconds: 0.2,
+            latestOutTimeMicroseconds: 0,
+            latestOutputSizeBytes: 0,
+            latestSpeed: nil,
+            fallbackReason: nil,
+            stalledForSeconds: nil,
+            stalledOutTimeMicroseconds: nil,
+            stalledOutputSizeBytes: nil,
+            stderrTail: [
+                "[hevc_videotoolbox @ 0x123] Error: cannot create compression session: -12908",
+                "[vost#0:0/hevc_videotoolbox @ 0x123] [enc:hevc_videotoolbox @ 0x456] Could not open encoder before EOF"
+            ]
+        )
+        let capabilities = FFmpegCapabilities(
+            versionDescription: "dual-encoder",
+            hasZscale: true,
+            hasTonemap: true,
+            hasXfade: true,
+            hasAcrossfade: true,
+            hasLibx264: true,
+            hasH264VideoToolbox: true,
+            hasLibx265: true,
+            hasHEVCVideoToolbox: true
+        )
+
+        XCTAssertTrue(
+            FFmpegHDRRenderer.shouldRetryWithSoftwareIntermediateFallback(
+                snapshot: snapshot,
+                selectedCapabilities: capabilities
+            )
+        )
+    }
+
+    func testShouldNotRetrySoftwareIntermediateFallbackAfterProgressBegins() {
+        let snapshot = FFmpegHDRRenderer.FailureSnapshot(
+            dynamicRange: .hdr,
+            terminationSummary: "exit 187",
+            selectedEncoder: FFmpegVideoEncoder.hevcVideoToolbox.rawValue,
+            binarySource: .bundled,
+            binaryPath: "/tmp/ffmpeg",
+            renderIntent: .presentationIntermediate,
+            outputPath: "/tmp/out.mov",
+            clipCount: 1,
+            chapterCount: 0,
+            renderSize: CGSize(width: 3840, height: 2160),
+            frameRate: 30,
+            elapsedSeconds: 12,
+            latestOutTimeMicroseconds: 3_000_000,
+            latestOutputSizeBytes: 512_000,
+            latestSpeed: 0.5,
+            fallbackReason: nil,
+            stalledForSeconds: nil,
+            stalledOutTimeMicroseconds: nil,
+            stalledOutputSizeBytes: nil,
+            stderrTail: [
+                "[hevc_videotoolbox @ 0x123] Error while opening encoder - maybe incorrect parameters such as bit_rate, rate, width or height."
+            ]
+        )
+        let capabilities = FFmpegCapabilities(
+            versionDescription: "dual-encoder",
+            hasZscale: true,
+            hasTonemap: true,
+            hasXfade: true,
+            hasAcrossfade: true,
+            hasLibx264: true,
+            hasH264VideoToolbox: true,
+            hasLibx265: true,
+            hasHEVCVideoToolbox: true
+        )
+
+        XCTAssertFalse(
+            FFmpegHDRRenderer.shouldRetryWithSoftwareIntermediateFallback(
+                snapshot: snapshot,
+                selectedCapabilities: capabilities
+            )
+        )
+    }
+
+    func testShouldNotRetrySoftwareIntermediateFallbackWithoutLibx265() {
+        let snapshot = FFmpegHDRRenderer.FailureSnapshot(
+            dynamicRange: .hdr,
+            terminationSummary: "exit 187",
+            selectedEncoder: FFmpegVideoEncoder.hevcVideoToolbox.rawValue,
+            binarySource: .bundled,
+            binaryPath: "/tmp/ffmpeg",
+            renderIntent: .intermediateChunk,
+            outputPath: "/tmp/out.mov",
+            clipCount: 2,
+            chapterCount: 0,
+            renderSize: CGSize(width: 3840, height: 2160),
+            frameRate: 30,
+            elapsedSeconds: 0.3,
+            latestOutTimeMicroseconds: 0,
+            latestOutputSizeBytes: 0,
+            latestSpeed: nil,
+            fallbackReason: nil,
+            stalledForSeconds: nil,
+            stalledOutTimeMicroseconds: nil,
+            stalledOutputSizeBytes: nil,
+            stderrTail: [
+                "[hevc_videotoolbox @ 0x123] Try -allow_sw 1. The hardware encoder may be busy, or not supported."
+            ]
+        )
+        let capabilities = FFmpegCapabilities(
+            versionDescription: "vt-only",
+            hasZscale: true,
+            hasTonemap: true,
+            hasXfade: true,
+            hasAcrossfade: true,
+            hasLibx264: true,
+            hasH264VideoToolbox: true,
+            hasLibx265: false,
+            hasHEVCVideoToolbox: true
+        )
+
+        XCTAssertFalse(
+            FFmpegHDRRenderer.shouldRetryWithSoftwareIntermediateFallback(
+                snapshot: snapshot,
+                selectedCapabilities: capabilities
+            )
+        )
+    }
+
     func testFailureMessageIncludesStructuredProgressSnapshot() {
         let snapshot = FFmpegHDRRenderer.FailureSnapshot(
             dynamicRange: .hdr,
