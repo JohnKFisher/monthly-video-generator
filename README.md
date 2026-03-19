@@ -136,14 +136,16 @@ New default export profile for fresh installs (existing saved preferences are pr
 - Bitrate mode: `Balanced`
 - FFmpeg engine: `Bundled Preferred` (asks before falling back to system FFmpeg)
 - HDR HEVC Encoder: `Default` (`libx265` first, then `hevc_videotoolbox` if required)
+- Still images: `Stable` by default, with an optional `Experimental Faster Path` that lets FFmpeg read still photos directly instead of generating temporary MOV clips
 
 Notes:
 
 - In HDR mode, codec selection is constrained to effective renderer behavior (`HEVC`), but audio remains selectable (`Mono`, `Stereo`, `5.1`, `Smart`).
 - In HDR mode, `HDR HEVC Encoder` can stay on `Default` for the current quality-first order or switch to `VideoToolbox` for faster hardware HEVC; explicit `VideoToolbox` selection fails if the chosen FFmpeg binary does not provide `hevc_videotoolbox`.
 - SDR and HDR final exports both use the FFmpeg backend; still/title intermediate clips are still generated locally with AVFoundation.
+- The optional `Experimental Faster Path` for still images is opt-in and leaves the existing stable path untouched until selected in Advanced Export Settings.
 - SDR exports that include HDR source videos now apply FFmpeg HDR-to-SDR tone mapping per affected video clip; HLG source videos use a retuned high-nominal-peak SDR conversion path before `BT.709` output so bright iPhone highlights land closer to the source look instead of clipping or washing out.
-- In Apple Photos mode, Smart fps may inspect/download selected videos during render prep to decide between `30 fps` and `60 fps`, then reuse that materialized asset during export.
+- In Apple Photos mode, Smart fps may inspect/download selected videos during render prep to decide between `30 fps` and `60 fps`, then reuse that materialized asset during export. Smart inspection now runs with bounded parallelism to reduce long serial prep delays on larger selections.
 - In Apple Photos mode, Smart audio may inspect/download selected videos during render prep to choose `Mono`, `Stereo`, or `5.1`, and uninspectable videos fall back toward `5.1` to avoid dropping channels.
 - Title cards are rendered at the resolved output size for both fixed-tier and Smart exports.
 - Use the app's `Reset to Plex Defaults` action to apply this profile to an existing installation.

@@ -334,6 +334,11 @@ struct FFmpegBinaryResolution: Equatable, Sendable {
 }
 
 struct FFmpegRenderClip: Equatable, Sendable {
+    enum SourceType: String, Equatable, Sendable {
+        case videoAsset
+        case stillImage
+    }
+
     let url: URL
     let durationSeconds: Double
     let includeAudio: Bool
@@ -341,6 +346,7 @@ struct FFmpegRenderClip: Equatable, Sendable {
     let colorInfo: ColorInfo
     let sourceDescription: String
     let captureDateOverlayURL: URL?
+    let sourceType: SourceType
 
     init(
         url: URL,
@@ -349,7 +355,8 @@ struct FFmpegRenderClip: Equatable, Sendable {
         hasAudioTrack: Bool,
         colorInfo: ColorInfo,
         sourceDescription: String,
-        captureDateOverlayURL: URL? = nil
+        captureDateOverlayURL: URL? = nil,
+        sourceType: SourceType = .videoAsset
     ) {
         self.url = url
         self.durationSeconds = durationSeconds
@@ -358,6 +365,7 @@ struct FFmpegRenderClip: Equatable, Sendable {
         self.colorInfo = colorInfo
         self.sourceDescription = sourceDescription
         self.captureDateOverlayURL = captureDateOverlayURL
+        self.sourceType = sourceType
     }
 }
 

@@ -14,6 +14,11 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
         let temporaryURLs: [URL]
     }
 
+    private enum InputClipSourceKind: Sendable {
+        case mediaAsset
+        case stillImage
+    }
+
     private let stillImageClipFactory: StillImageClipFactory
     private let captureDateOverlayFactory: CaptureDateOverlayFactory
     private let ffmpegHDRRenderer: FFmpegHDRRenderer
@@ -137,6 +142,7 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                     style: style,
                     renderSize: renderSize,
                     frameRate: resolvedFrameRate,
+                    stillImageProcessingMode: exportProfile.stillImageProcessingMode,
                     exportDynamicRange: exportProfile.dynamicRange,
                     exportBinaryMode: exportProfile.hdrFFmpegBinaryMode,
                     photoMaterializer: photoMaterializer,
@@ -466,7 +472,8 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                 hasAudioTrack: $0.audioTrack != nil,
                 colorInfo: $0.colorInfo,
                 sourceDescription: $0.sourceDescription,
-                captureDateOverlayURL: $0.captureDateOverlayURL
+                captureDateOverlayURL: $0.captureDateOverlayURL,
+                sourceType: $0.sourceKind == .stillImage ? .stillImage : .videoAsset
             )
         }
         let transitionDurationSeconds = max(transitionDuration.seconds, 0)
@@ -1092,6 +1099,7 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
         style: StyleProfile,
         renderSize: CGSize,
         frameRate: Int,
+        stillImageProcessingMode: StillImageProcessingMode,
         exportDynamicRange: DynamicRange,
         exportBinaryMode: HDRFFmpegBinaryMode,
         photoMaterializer: PhotoAssetMaterializing?,
@@ -1127,6 +1135,7 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                     style: style,
                     renderSize: renderSize,
                     frameRate: frameRate,
+                    stillImageProcessingMode: stillImageProcessingMode,
                     exportDynamicRange: exportDynamicRange,
                     exportBinaryMode: exportBinaryMode,
                     photoMaterializer: photoMaterializer,
@@ -1138,6 +1147,7 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                     style: style,
                     renderSize: renderSize,
                     frameRate: frameRate,
+                    stillImageProcessingMode: stillImageProcessingMode,
                     exportDynamicRange: exportDynamicRange,
                     exportBinaryMode: exportBinaryMode,
                     photoMaterializer: photoMaterializer,
@@ -1173,6 +1183,7 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                 style: style,
                 renderSize: renderSize,
                 frameRate: frameRate,
+                stillImageProcessingMode: stillImageProcessingMode,
                 exportDynamicRange: exportDynamicRange,
                 exportBinaryMode: exportBinaryMode,
                 photoMaterializer: photoMaterializer,
@@ -1217,6 +1228,7 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
         style: StyleProfile,
         renderSize: CGSize,
         frameRate: Int,
+        stillImageProcessingMode: StillImageProcessingMode,
         exportDynamicRange: DynamicRange,
         exportBinaryMode: HDRFFmpegBinaryMode,
         photoMaterializer: PhotoAssetMaterializing?,
@@ -1300,6 +1312,19 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                 }
                 if let captureDateOverlayURL {
                     temporaryURLs.append(captureDateOverlayURL)
+                }
+                if stillImageProcessingMode == .directFFmpegInput {
+                    diagnostics.add("Using direct still-image FFmpeg input for \(item.filename)")
+                    clip = makeDirectStillImageClip(
+                        assetURL: sourceURL,
+                        fallbackDuration: segment.duration,
+                        naturalSize: item.pixelSize,
+                        sourceDescription: "image \(item.filename)",
+                        sourceColorInfo: sourceColorInfo,
+                        captureDateOverlayText: captureDateOverlayText,
+                        captureDateOverlayURL: captureDateOverlayURL
+                    )
+                    break
                 }
                 let imageClipURL = try await diagnostics.measurePreparationOperation(
                     .stillClipGeneration,
@@ -1584,6 +1609,7 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
         )
 
         return InputClip(
+            sourceKind: .mediaAsset,
             sourceAsset: asset,
             videoTrack: videoTrack,
             audioTrack: audioTrack,
@@ -1599,6 +1625,38 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
             isTemporary: isTemporary,
             includeAudio: includeAudio,
             colorInfo: resolvedColorInfo,
+            captureDateOverlayText: captureDateOverlayText,
+            captureDateOverlayURL: captureDateOverlayURL
+        )
+    }
+
+    private func makeDirectStillImageClip(
+        assetURL: URL,
+        fallbackDuration: CMTime,
+        naturalSize: CGSize,
+        sourceDescription: String,
+        sourceColorInfo: ColorInfo,
+        captureDateOverlayText: String?,
+        captureDateOverlayURL: URL?
+    ) -> InputClip {
+        let clipDuration = fallbackDuration > .zero ? fallbackDuration : CMTime(seconds: 1, preferredTimescale: 600)
+        return InputClip(
+            sourceKind: .stillImage,
+            sourceAsset: nil,
+            videoTrack: nil,
+            audioTrack: nil,
+            assetURL: assetURL,
+            videoTrackTimeRange: nil,
+            audioTrackTimeRange: nil,
+            videoTrackDuration: nil,
+            audioTrackDuration: nil,
+            duration: clipDuration,
+            preferredTransform: .identity,
+            naturalSize: naturalSize == .zero ? CGSize(width: 1920, height: 1080) : naturalSize,
+            sourceDescription: sourceDescription,
+            isTemporary: false,
+            includeAudio: false,
+            colorInfo: sourceColorInfo,
             captureDateOverlayText: captureDateOverlayText,
             captureDateOverlayURL: captureDateOverlayURL
         )
@@ -2222,9 +2280,10 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
     }
 
     private struct InputClip {
+        let sourceKind: InputClipSourceKind
         // Keep a strong reference to the backing asset for track lifetime safety.
-        let sourceAsset: AVAsset
-        let videoTrack: AVAssetTrack
+        let sourceAsset: AVAsset?
+        let videoTrack: AVAssetTrack?
         let audioTrack: AVAssetTrack?
         let assetURL: URL
         let videoTrackTimeRange: CMTimeRange?

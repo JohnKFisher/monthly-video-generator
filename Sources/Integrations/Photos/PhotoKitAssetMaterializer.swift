@@ -36,6 +36,7 @@ public enum PhotoMaterializerError: LocalizedError {
 public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecked Sendable {
     typealias VideoInspectionLoader = @Sendable (String) async throws -> LoadedVideoInspection
     typealias VideoFileMaterializer = @Sendable (String, String) async throws -> URL
+    private static let maxConcurrentSmartInspections = 3
 
     struct LoadedVideoInspection: Equatable, Sendable {
         let sourceFrameRate: Double?
@@ -404,40 +405,78 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
         var warnings: [String] = []
         var emittedInspectionWarning = false
 
-        for (position, inspectionTarget) in inspectionTargets.enumerated() {
-            try Task.checkCancellation()
+        let totalTargets = inspectionTargets.count
+        let maxConcurrentInspections = min(Self.maxConcurrentSmartInspections, totalTargets)
+        var completedCount = 0
 
-            let progress = Double(position) / Double(inspectionTargets.count)
-            progressHandler?(progress)
-            statusHandler?(inspectionStatusMessage(
-                position: position + 1,
-                total: inspectionTargets.count,
-                inspectFrameRate: inspectFrameRate,
-                inspectAudioChannels: inspectAudioChannels
-            ))
+        progressHandler?(0)
+        statusHandler?(inspectionStatusMessage(
+            position: 1,
+            total: totalTargets,
+            inspectFrameRate: inspectFrameRate,
+            inspectAudioChannels: inspectAudioChannels
+        ))
 
-            do {
-                let loadedVideoInspection = try await loadVideoInspection(localIdentifier: inspectionTarget.2)
-                updatedItems[inspectionTarget.0] = inspectionTarget.1.withSourceInspection(
-                    sourceFrameRate: inspectFrameRate ? loadedVideoInspection.sourceFrameRate : inspectionTarget.1.sourceFrameRate,
-                    sourceAudioChannelCount: inspectAudioChannels ? loadedVideoInspection.sourceAudioChannelCount : inspectionTarget.1.sourceAudioChannelCount
-                )
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                if !emittedInspectionWarning {
-                    warnings.append(
-                        inspectionFailureWarning(
-                            inspectFrameRate: inspectFrameRate,
-                            inspectAudioChannels: inspectAudioChannels
-                        )
-                    )
-                    emittedInspectionWarning = true
+        try await withThrowingTaskGroup(of: (Int, Result<LoadedVideoInspection, Error>).self) { group in
+            var nextTargetIndex = 0
+
+            func enqueueNextIfAvailable() {
+                guard nextTargetIndex < totalTargets else {
+                    return
                 }
+                let targetIndex = nextTargetIndex
+                let target = inspectionTargets[targetIndex]
+                group.addTask { [self] in
+                    do {
+                        return (targetIndex, .success(try await loadVideoInspection(localIdentifier: target.2)))
+                    } catch {
+                        return (targetIndex, .failure(error))
+                    }
+                }
+                nextTargetIndex += 1
             }
 
-            let completedProgress = Double(position + 1) / Double(inspectionTargets.count)
-            progressHandler?(completedProgress)
+            for _ in 0..<maxConcurrentInspections {
+                enqueueNextIfAvailable()
+            }
+
+            while let (targetIndex, result) = try await group.next() {
+                try Task.checkCancellation()
+
+                let inspectionTarget = inspectionTargets[targetIndex]
+                switch result {
+                case let .success(loadedVideoInspection):
+                    updatedItems[inspectionTarget.0] = inspectionTarget.1.withSourceInspection(
+                        sourceFrameRate: inspectFrameRate ? loadedVideoInspection.sourceFrameRate : inspectionTarget.1.sourceFrameRate,
+                        sourceAudioChannelCount: inspectAudioChannels ? loadedVideoInspection.sourceAudioChannelCount : inspectionTarget.1.sourceAudioChannelCount
+                    )
+                case let .failure(error):
+                    if error is CancellationError {
+                        throw CancellationError()
+                    }
+                    if !emittedInspectionWarning {
+                        warnings.append(
+                            inspectionFailureWarning(
+                                inspectFrameRate: inspectFrameRate,
+                                inspectAudioChannels: inspectAudioChannels
+                            )
+                        )
+                        emittedInspectionWarning = true
+                    }
+                }
+
+                completedCount += 1
+                progressHandler?(Double(completedCount) / Double(totalTargets))
+                if completedCount < totalTargets {
+                    statusHandler?(inspectionStatusMessage(
+                        position: completedCount + 1,
+                        total: totalTargets,
+                        inspectFrameRate: inspectFrameRate,
+                        inspectAudioChannels: inspectAudioChannels
+                    ))
+                }
+                enqueueNextIfAvailable()
+            }
         }
 
         return SmartMediaInspectionResult(items: updatedItems, warnings: warnings)

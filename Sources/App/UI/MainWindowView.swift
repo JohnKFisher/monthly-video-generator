@@ -415,6 +415,15 @@ struct MainWindowView: View {
                             }
 
                             GridRow {
+                                Picker("Still Images", selection: $viewModel.selectedStillImageProcessingMode) {
+                                    ForEach(StillImageProcessingMode.allCases, id: \.self) { mode in
+                                        Text(mode.displayLabel).tag(mode)
+                                    }
+                                }
+                                Color.clear
+                            }
+
+                            GridRow {
                                 Picker("Range", selection: $viewModel.selectedDynamicRange) {
                                     ForEach(DynamicRange.allCases, id: \.self) { range in
                                         Text(range.rawValue.uppercased()).tag(range)
@@ -436,6 +445,7 @@ struct MainWindowView: View {
                         }
                         caption(viewModel.ffmpegEngineDescription)
                         caption(viewModel.hdrHEVCEncoderDescription)
+                        caption(viewModel.stillImageProcessingDescription)
 
                         VStack(alignment: .leading, spacing: 4) {
                             caption(viewModel.bitrateModeDescription)

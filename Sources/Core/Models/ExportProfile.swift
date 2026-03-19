@@ -173,6 +173,20 @@ public enum BitrateMode: String, CaseIterable, Codable, Sendable {
     case sizeFirst
 }
 
+public enum StillImageProcessingMode: String, CaseIterable, Codable, Sendable {
+    case intermediateClip
+    case directFFmpegInput
+
+    public var displayLabel: String {
+        switch self {
+        case .intermediateClip:
+            return "Stable"
+        case .directFFmpegInput:
+            return "Experimental Faster Path"
+        }
+    }
+}
+
 public struct ExportProfile: Equatable, Codable, Sendable {
     public let container: ContainerFormat
     public let videoCodec: VideoCodec
@@ -184,6 +198,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
     public let hdrHEVCEncoderMode: HDRHEVCEncoderMode
     public let audioLayout: AudioLayout
     public let bitrateMode: BitrateMode
+    public let stillImageProcessingMode: StillImageProcessingMode
 
     public init(
         container: ContainerFormat,
@@ -195,7 +210,8 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         hdrFFmpegBinaryMode: HDRFFmpegBinaryMode = .bundledPreferred,
         hdrHEVCEncoderMode: HDRHEVCEncoderMode = .automatic,
         audioLayout: AudioLayout,
-        bitrateMode: BitrateMode
+        bitrateMode: BitrateMode,
+        stillImageProcessingMode: StillImageProcessingMode = .intermediateClip
     ) {
         self.container = container
         self.videoCodec = videoCodec
@@ -207,6 +223,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         self.hdrHEVCEncoderMode = hdrHEVCEncoderMode
         self.audioLayout = audioLayout
         self.bitrateMode = bitrateMode
+        self.stillImageProcessingMode = stillImageProcessingMode
     }
 
     public static let balancedDefault = ExportProfile(
@@ -219,7 +236,8 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         hdrFFmpegBinaryMode: .bundledPreferred,
         hdrHEVCEncoderMode: .automatic,
         audioLayout: .smart,
-        bitrateMode: .balanced
+        bitrateMode: .balanced,
+        stillImageProcessingMode: .intermediateClip
     )
 
     public static let plexInfuseAppleTV4KDefault = ExportProfile(
@@ -232,7 +250,8 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         hdrFFmpegBinaryMode: .bundledPreferred,
         hdrHEVCEncoderMode: .automatic,
         audioLayout: .smart,
-        bitrateMode: .balanced
+        bitrateMode: .balanced,
+        stillImageProcessingMode: .intermediateClip
     )
 
     private enum CodingKeys: String, CodingKey {
@@ -246,6 +265,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         case hdrHEVCEncoderMode
         case audioLayout
         case bitrateMode
+        case stillImageProcessingMode
     }
 
     public init(from decoder: Decoder) throws {
@@ -260,6 +280,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         self.hdrHEVCEncoderMode = try container.decodeIfPresent(HDRHEVCEncoderMode.self, forKey: .hdrHEVCEncoderMode) ?? .automatic
         self.audioLayout = try container.decode(AudioLayout.self, forKey: .audioLayout)
         self.bitrateMode = try container.decode(BitrateMode.self, forKey: .bitrateMode)
+        self.stillImageProcessingMode = try container.decodeIfPresent(StillImageProcessingMode.self, forKey: .stillImageProcessingMode) ?? .intermediateClip
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -274,5 +295,6 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         try container.encode(self.hdrHEVCEncoderMode, forKey: .hdrHEVCEncoderMode)
         try container.encode(self.audioLayout, forKey: .audioLayout)
         try container.encode(self.bitrateMode, forKey: .bitrateMode)
+        try container.encode(self.stillImageProcessingMode, forKey: .stillImageProcessingMode)
     }
 }

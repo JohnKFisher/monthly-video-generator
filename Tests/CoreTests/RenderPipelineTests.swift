@@ -36,6 +36,7 @@ final class RenderPipelineTests: XCTestCase {
         XCTAssertEqual(profile.hdrHEVCEncoderMode, .automatic)
         XCTAssertEqual(profile.audioLayout, .smart)
         XCTAssertEqual(profile.bitrateMode, .balanced)
+        XCTAssertEqual(profile.stillImageProcessingMode, .intermediateClip)
     }
 
     func testExportProfileManagerDefaultProfileUsesPlexInfuseAppleTV4KDefault() {
@@ -236,6 +237,26 @@ final class RenderPipelineTests: XCTestCase {
         let decoded = try JSONDecoder().decode(ExportProfile.self, from: Data(json.utf8))
 
         XCTAssertEqual(decoded.hdrHEVCEncoderMode, .automatic)
+    }
+
+    func testExportProfileDecodesMissingStillImageProcessingModeAsIntermediateClip() throws {
+        let json = """
+        {
+          "audioCodec": "aac",
+          "audioLayout": "stereo",
+          "bitrateMode": "balanced",
+          "container": "mp4",
+          "dynamicRange": "sdr",
+          "frameRate": "smart",
+          "hdrFFmpegBinaryMode": "bundledPreferred",
+          "resolution": "smart",
+          "videoCodec": "hevc"
+        }
+        """
+
+        let decoded = try JSONDecoder().decode(ExportProfile.self, from: Data(json.utf8))
+
+        XCTAssertEqual(decoded.stillImageProcessingMode, .intermediateClip)
     }
 
     func testSmartRenderSizeChooses720p() {
