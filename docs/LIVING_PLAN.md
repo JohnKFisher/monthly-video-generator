@@ -57,6 +57,7 @@ Operational updates after first packaged run:
 - Improved Apple Photos Smart fps/audio inspection throughput with bounded parallel inspection instead of fully serial metadata loads.
 - Reduced folder discovery overhead for image dimensions by switching from `NSImage` decode to ImageIO property reads.
 - Added an opt-in `Experimental Faster Path` for still images that lets FFmpeg read still photos directly, while keeping the existing intermediate-clip render path as the default rollback-safe behavior.
+- Hotfix: export-profile normalization now preserves the user-selected still-image processing mode so the experimental direct-photo path no longer silently resets to stable during profile resolution.
 - Added visible app version/build label in the main window.
 - Patched still-image rendering path to decode and rasterize source images once before frame emission to reduce provider-related crash risk.
 - Hotfix: title card generation now runs on the main actor with a fallback solid-card path to prevent immediate export failure when title card rasterization fails.
@@ -204,6 +205,7 @@ Operational updates after first packaged run:
 - 2026-03-11: Progressive HDR retries now preserve useful failed checkpoints for resume, but retained session artifacts are bounded and auto-pruned by age, count, and total storage so partials do not accumulate indefinitely.
 - 2026-03-12: Added `.log`-only render timing summaries and FFmpeg command throughput reporting so future performance work can identify slow setup/prep/export stages without changing UI behavior or run-report JSON.
 - 2026-03-12: Cleaned up the remaining Swift concurrency warnings by moving non-`Sendable` `AVAssetWriter` captures behind explicit unchecked references and by moving FFmpeg stderr parser/tail mutation into a dedicated sendable state object, eliminating warning noise from normal test/build runs.
+- 2026-03-19: Fixed `ExportProfileManager` normalization so HDR/Smart profile resolution no longer drops `stillImageProcessingMode`; added regression coverage for the direct-still experimental path.
 - 2026-03-04: Added `VERSION` file and dynamic build number injection into app `Info.plist`.
 - 2026-03-04: Added version/build label to main UI.
 - 2026-03-04: Reworked still-image rendering to use pre-rasterized CGImage frames for stability.
