@@ -1474,6 +1474,16 @@ public final class StillImageClipFactory: @unchecked Sendable {
     }
 
     @available(macOS 15.0, *)
+    static func hdrGainMapImageSourceOptions() -> [CIImageOption: Any] {
+        // Gain maps follow the source image's orientation metadata. If we decode
+        // them without that transform, HDR stills can show a rotated ghost image.
+        [
+            .applyOrientationProperty: true,
+            .auxiliaryHDRGainMap: true
+        ]
+    }
+
+    @available(macOS 15.0, *)
     private func makeGainMappedHDRImageIfAvailable(from imageSource: CGImageSource) -> CIImage? {
         guard hasHDRGainMap(imageSource) else {
             return nil
@@ -1487,7 +1497,7 @@ public final class StillImageClipFactory: @unchecked Sendable {
         let gainMap = CIImage(
             cgImageSource: imageSource,
             index: 0,
-            options: [.auxiliaryHDRGainMap: true]
+            options: Self.hdrGainMapImageSourceOptions()
         )
         return sourceImage.applyingGainMap(gainMap)
     }

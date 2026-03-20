@@ -170,6 +170,14 @@ final class StillImageClipFactoryTests: XCTestCase {
         XCTAssertEqual(colorInfo.transferFunction, AVVideoTransferFunction_ITU_R_2100_HLG)
     }
 
+    @available(macOS 15.0, *)
+    func testHDRGainMapLoadOptionsApplySourceOrientation() {
+        let options = StillImageClipFactory.hdrGainMapImageSourceOptions()
+
+        XCTAssertEqual(options[.applyOrientationProperty] as? Bool, true)
+        XCTAssertEqual(options[.auxiliaryHDRGainMap] as? Bool, true)
+    }
+
     func testPortraitStillUsesMediaDerivedBackgroundInsteadOfBlackBars() async throws {
         let factory = StillImageClipFactory()
         let imageURL = try makePortraitFixtureImage()
