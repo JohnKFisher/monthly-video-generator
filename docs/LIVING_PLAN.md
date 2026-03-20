@@ -58,8 +58,6 @@ Operational updates after first packaged run:
 - Reduced folder discovery overhead for image dimensions by switching from `NSImage` decode to ImageIO property reads.
 - Added an opt-in `Experimental Faster Path` for still images that lets FFmpeg read still photos directly, while keeping the existing intermediate-clip render path as the default rollback-safe behavior.
 - Hotfix: export-profile normalization now preserves the user-selected still-image processing mode so the experimental direct-photo path no longer silently resets to stable during profile resolution.
-- Hotfix: experimental direct-photo renders now normalize tagged JPEG still inputs onto a safe FFmpeg colorspace path before the existing SDR uplift math runs, preserving prior color-tuning while avoiding `zscale` failures on Photos exports.
-- Hotfix: experimental direct-photo renders now fall back per-item to the stable still-clip path for HEIC/HEIF and gain-map stills that bundled FFmpeg cannot open directly, while ordinary JPEG stills stay on the fast path.
 - Added visible app version/build label in the main window.
 - Patched still-image rendering path to decode and rasterize source images once before frame emission to reduce provider-related crash risk.
 - Hotfix: title card generation now runs on the main actor with a fallback solid-card path to prevent immediate export failure when title card rasterization fails.

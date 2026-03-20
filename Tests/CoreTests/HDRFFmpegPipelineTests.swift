@@ -1712,48 +1712,6 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertFalse(joined.contains("vibrance=intensity="))
     }
 
-    func testCommandBuilderNormalizesTaggedDirectStillImageInputBeforeP3HLGUplift() throws {
-        let builder = FFmpegCommandBuilder()
-        let command = try builder.buildCommand(
-            plan: FFmpegRenderPlan(
-                clips: [
-                    FFmpegRenderClip(
-                        url: URL(fileURLWithPath: "/tmp/p3.jpg"),
-                        durationSeconds: 2,
-                        includeAudio: false,
-                        hasAudioTrack: false,
-                        colorInfo: ColorInfo(
-                            isHDR: false,
-                            colorPrimaries: "P3_D65",
-                            transferFunction: "IEC_sRGB",
-                            transferFlavor: .sdr
-                        ),
-                        sourceDescription: "still-p3",
-                        sourceType: .stillImage
-                    )
-                ],
-                transitionDurationSeconds: 0,
-                outputURL: URL(fileURLWithPath: "/tmp/out.mov"),
-                renderSize: CGSize(width: 1920, height: 1080),
-                frameRate: 30,
-                audioLayout: .stereo,
-                bitrateMode: .balanced,
-                container: .mov,
-                videoCodec: .hevc,
-                dynamicRange: .hdr
-            ),
-            resolution: makeCapableResolution()
-        )
-        let joined = command.arguments.joined(separator: " ")
-
-        XCTAssertTrue(
-            joined.contains(
-                "colorspace=iall=bt470bg:all=bt470bg:fast=1,zscale=transferin=iec61966-2-1:primariesin=smpte432:matrixin=bt709:transfer=linear"
-            )
-        )
-        XCTAssertTrue(joined.contains("zscale=transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc:range=tv:npl=225"))
-    }
-
     func testCommandBuilderNormalizesUnknownSDRInputBeforeHLGUplift() throws {
         let builder = FFmpegCommandBuilder()
         let command = try builder.buildCommand(
@@ -1784,39 +1742,6 @@ final class HDRFFmpegPipelineTests: XCTestCase {
 
         XCTAssertTrue(joined.contains("colorspace=iall=bt709:all=bt709:fast=1,zscale=transferin=bt709:primariesin=bt709:matrixin=bt709:transfer=linear"))
         XCTAssertTrue(joined.contains("zscale=transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc:range=tv:npl=225"))
-    }
-
-    func testCommandBuilderKeepsLegacyPreludeForUnknownDirectStillImageInput() throws {
-        let builder = FFmpegCommandBuilder()
-        let command = try builder.buildCommand(
-            plan: FFmpegRenderPlan(
-                clips: [
-                    FFmpegRenderClip(
-                        url: URL(fileURLWithPath: "/tmp/legacy.jpg"),
-                        durationSeconds: 2,
-                        includeAudio: false,
-                        hasAudioTrack: false,
-                        colorInfo: .unknown,
-                        sourceDescription: "legacy-still",
-                        sourceType: .stillImage
-                    )
-                ],
-                transitionDurationSeconds: 0,
-                outputURL: URL(fileURLWithPath: "/tmp/out.mov"),
-                renderSize: CGSize(width: 1920, height: 1080),
-                frameRate: 30,
-                audioLayout: .stereo,
-                bitrateMode: .balanced,
-                container: .mov,
-                videoCodec: .hevc,
-                dynamicRange: .hdr
-            ),
-            resolution: makeCapableResolution()
-        )
-        let joined = command.arguments.joined(separator: " ")
-
-        XCTAssertTrue(joined.contains("colorspace=iall=bt709:all=bt709:fast=1,zscale=transferin=bt709:primariesin=bt709:matrixin=bt709:transfer=linear"))
-        XCTAssertFalse(joined.contains("colorspace=iall=bt470bg:all=bt470bg:fast=1,colorspace=iall=bt709:all=bt709:fast=1"))
     }
 
     func testFFprobeSourceMetadataParserDetectsDolbyVision() throws {

@@ -139,7 +139,7 @@ struct FFmpegCommandBuilder {
         let downsampledBackgroundHeight = Int(backgroundMetrics.downsampledSize.height.rounded())
         for (index, clip) in plan.clips.enumerated() {
             let clipDuration = max(clip.durationSeconds, 0.01)
-            let normalizeFilter = try colorNormalizeFilter(for: clip, outputDynamicRange: plan.dynamicRange)
+            let normalizeFilter = try colorNormalizeFilter(for: clip.colorInfo, outputDynamicRange: plan.dynamicRange)
             guard let videoInputIndex = videoInputIndexForClip[index] else {
                 throw RenderError.exportFailed("FFmpeg command build failed: missing video input index for clip index \(index).")
             }
@@ -557,33 +557,13 @@ struct FFmpegCommandBuilder {
         return FFmpegCommand(executableURL: executableURL, arguments: arguments)
     }
 
-    private func colorNormalizeFilter(for clip: FFmpegRenderClip, outputDynamicRange: DynamicRange) throws -> String {
-        let stillImagePrelude = stillImageSDRInputPrelude(for: clip)
+    private func colorNormalizeFilter(for colorInfo: ColorInfo, outputDynamicRange: DynamicRange) throws -> String {
         switch outputDynamicRange {
         case .hdr:
-            return stillImagePrelude + (try hdrColorNormalizeFilter(for: clip.colorInfo))
+            return try hdrColorNormalizeFilter(for: colorInfo)
         case .sdr:
-            return stillImagePrelude + sdrColorNormalizeFilter(for: clip.colorInfo)
+            return sdrColorNormalizeFilter(for: colorInfo)
         }
-    }
-
-    private func stillImageSDRInputPrelude(for clip: FFmpegRenderClip) -> String {
-        guard clip.sourceType == .stillImage, clip.colorInfo.transferFlavor == .sdr else {
-            return ""
-        }
-
-        let hasPrimaries = !(clip.colorInfo.colorPrimaries ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let hasTransfer = !(clip.colorInfo.transferFunction ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        guard hasPrimaries, hasTransfer else {
-            return ""
-        }
-
-        // FFmpeg decodes many tagged JPEG stills as legacy full-range YUV with
-        // incomplete stream metadata. Reassert the decoded JPEG matrix first so
-        // the existing display-referred SDR uplift can keep its tuned
-        // primaries/transfer mapping without tripping zscale's colorspace-path
-        // failure.
-        return "colorspace=iall=bt470bg:all=bt470bg:fast=1,"
     }
 
     private func hdrColorNormalizeFilter(for colorInfo: ColorInfo) throws -> String {
