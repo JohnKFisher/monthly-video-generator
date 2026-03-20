@@ -1313,7 +1313,8 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                 if let captureDateOverlayURL {
                     temporaryURLs.append(captureDateOverlayURL)
                 }
-                if stillImageProcessingMode == .directFFmpegInput {
+                if stillImageProcessingMode == .directFFmpegInput,
+                   Self.isDirectStillImageFFmpegCompatibleSource(assetURL: sourceURL, sourceColorInfo: sourceColorInfo) {
                     diagnostics.add("Using direct still-image FFmpeg input for \(item.filename)")
                     clip = makeDirectStillImageClip(
                         assetURL: sourceURL,
@@ -1325,6 +1326,11 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                         captureDateOverlayURL: captureDateOverlayURL
                     )
                     break
+                } else if stillImageProcessingMode == .directFFmpegInput {
+                    diagnostics.add(
+                        "Direct still-image FFmpeg input unavailable for \(item.filename); " +
+                        "falling back to intermediate clip because the source format requires Apple-side decode/materialization."
+                    )
                 }
                 let imageClipURL = try await diagnostics.measurePreparationOperation(
                     .stillClipGeneration,
@@ -1660,6 +1666,19 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
             captureDateOverlayText: captureDateOverlayText,
             captureDateOverlayURL: captureDateOverlayURL
         )
+    }
+
+    static func isDirectStillImageFFmpegCompatibleSource(assetURL: URL, sourceColorInfo: ColorInfo) -> Bool {
+        let pathExtension = assetURL.pathExtension.lowercased()
+        if ["heic", "heif"].contains(pathExtension) {
+            return false
+        }
+
+        if sourceColorInfo.usesGainMapPromotion {
+            return false
+        }
+
+        return true
     }
 
     private func effectiveTransitionDuration(clips: [InputClip], requestedSeconds: Double) -> CMTime {

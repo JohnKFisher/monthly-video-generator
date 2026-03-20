@@ -96,6 +96,49 @@ final class RenderPipelineTests: XCTestCase {
         XCTAssertEqual(resolved.effectiveProfile.stillImageProcessingMode, .directFFmpegInput)
     }
 
+    func testDirectStillImageFFmpegCompatibilityRejectsHEICSources() {
+        XCTAssertFalse(
+            AVFoundationRenderEngine.isDirectStillImageFFmpegCompatibleSource(
+                assetURL: URL(fileURLWithPath: "/tmp/photo.HEIC"),
+                sourceColorInfo: ColorInfo(
+                    isHDR: false,
+                    colorPrimaries: "P3_D65",
+                    transferFunction: "IEC_sRGB",
+                    transferFlavor: .sdr
+                )
+            )
+        )
+    }
+
+    func testDirectStillImageFFmpegCompatibilityRejectsGainMapSources() {
+        XCTAssertFalse(
+            AVFoundationRenderEngine.isDirectStillImageFFmpegCompatibleSource(
+                assetURL: URL(fileURLWithPath: "/tmp/photo.jpg"),
+                sourceColorInfo: ColorInfo(
+                    isHDR: true,
+                    colorPrimaries: "ITU_R_2020",
+                    transferFunction: "ITU_R_2100_HLG",
+                    transferFlavor: .hlg,
+                    hdrMetadataFlavor: .gainMap
+                )
+            )
+        )
+    }
+
+    func testDirectStillImageFFmpegCompatibilityKeepsJPEGSourcesOnFastPath() {
+        XCTAssertTrue(
+            AVFoundationRenderEngine.isDirectStillImageFFmpegCompatibleSource(
+                assetURL: URL(fileURLWithPath: "/tmp/photo.jpg"),
+                sourceColorInfo: ColorInfo(
+                    isHDR: false,
+                    colorPrimaries: "P3_D65",
+                    transferFunction: "IEC_sRGB",
+                    transferFlavor: .sdr
+                )
+            )
+        )
+    }
+
     func testResolveProfileForSDRKeepsSelectedCodecAndAudioLayout() {
         let manager = ExportProfileManager()
         let selected = ExportProfile(
