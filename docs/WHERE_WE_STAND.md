@@ -1,13 +1,13 @@
 # Monthly Video Generator
 
 Current version/build:
-- `1.0.3`
-- Latest packaged local build verified in this repo: `20260319232500`
+- `1.0.4`
+- Latest packaged local build verified in this repo: `200`
 
 Current overall status:
 - The app is in active development but usable now for local folder-based and Apple Photos-based slideshow exports.
-- `main` is currently back on the stable still-image pipeline after the experimental direct-photo path was rolled back.
-- The rolled-back stable path was verified with a full Apple Photos album export of `Testing` on March 19, 2026.
+- The stable still-image path remains the active production path on `main`, and the `1.0.4` release includes a targeted HDR still-photo fix for rotated ghost-image overlays caused by misaligned gain-map orientation.
+- Packaged app build numbers now use a repo-tracked counted sequence instead of timestamp IDs.
 
 What is working now:
 - Local-only macOS app workflow with no telemetry or cloud requirement.
@@ -19,10 +19,11 @@ What is working now:
 - HDR `HEVC` output for the current Plex/Infuse/Apple TV 4K workflow.
 - Embedded MP4 metadata and named chapters for the `Family Videos` workflow.
 - Stable still-image handling through Apple/AVFoundation materialized intermediate clips.
+- HDR still-photo gain-map decoding that now respects source-image orientation for affected rotated/oriented HDR photos.
 
 What is partially implemented:
-- Stage 4 export controls are in place, but the project still treats some advanced choices as constrained by renderer/backend reality.
-- Progress reporting exists, but long-running HDR exports are still better than polished rather than fully “done.”
+- Stage 4 export controls are in place, but some advanced choices are still constrained by renderer/backend reality.
+- Progress reporting exists, but long-running HDR exports are improved rather than fully polished.
 - Resumable HDR execution exists for large jobs, but the UX around it is still technical.
 
 What is not implemented yet:
@@ -36,7 +37,7 @@ Known limitations and trust warnings:
 - Large HDR `HEVC` exports can take a long time and use substantial CPU, memory, disk, and temporary storage.
 - Apple Photos exports depend on Photos permissions and can be affected by PhotoKit/iCloud materialization latency.
 - Balanced bitrate is workable now, but very large 4K60 HDR outputs may still need more tuning for size.
-- Experimental direct-photo still handling was rolled back because it did not hold up as a reliable speed win.
+- Older exports and diagnostics still contain the earlier timestamp-style build identifiers; they are historical and were not rewritten.
 
 Setup/runtime requirements:
 - macOS 15-class environment for the current SwiftPM/app workflow.
@@ -50,10 +51,10 @@ Important operational risks:
 - The app is safest when treated as local-only and single-user; it is not designed around shared/networked coordination.
 
 Recommended next priorities:
+- Re-run the Chicago HDR export case in the packaged `1.0.4` build and visually confirm the previously bad held still is clean.
 - Re-tune export defaults and bitrate targets using real-world 4K60 HDR examples.
 - Improve progress/cancel/resume UX for long-running FFmpeg/HDR jobs.
 - Replace or redesign the abandoned experimental still-photo fast path only if it can be proven faster without quality or stability regressions.
-- Continue reducing places where requested export settings and actual renderer behavior can diverge.
 
 Most recent durable known-good anchor:
-- `known-good/20260320-stable-rollback`
+- `known-good/20260320-v1-0-4-hdr-still-fix`

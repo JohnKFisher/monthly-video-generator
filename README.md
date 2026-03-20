@@ -41,11 +41,7 @@ when needed:
 APP_ARCHS="arm64" ./scripts/build_app.sh
 ```
 
-Optional override:
-
-```bash
-BUILD_NUMBER=42 ./scripts/build_app.sh
-```
+Packaged builds use the repo-tracked `BUILD_NUMBER` file as the source of truth for `CFBundleVersion`. A successful `./scripts/build_app.sh` run increments that counter exactly once after the app bundle finishes building and signing.
 
 Optional signing override for a real certificate:
 
@@ -160,26 +156,22 @@ Current temporary test-only app behavior:
 
 Current durable known-good anchor:
 
+- `known-good/20260320-v1-0-4-hdr-still-fix`
+
+Current release checkpoint:
+
+- `checkpoint/20260320-v1-0-4`
+
+Previous durable known-good anchor:
+
 - `known-good/20260320-stable-rollback`
 
-Current known-good rollback checkpoint (`v0.9.1`):
+Older legacy checkpoint anchors:
 
 - `checkpoint/20260310-known-good-v0-9-1`
-
-Previous known-good release checkpoint (`v0.9.0`):
-
 - `checkpoint/20260310-known-good-v0-9-0`
-
-Older known-good release checkpoint (`v0.7.0`):
-
 - `checkpoint/20260309-known-good-v0-7-0`
-
-Older known-good release checkpoint (`v0.6.0`):
-
 - `checkpoint/20260308-known-good-v0-6-0`
-
-Older known-good release checkpoint (`v0.5.0`):
-
 - `checkpoint/20260307-known-good-v0-5-0`
 
 Pre-FFmpeg-pivot rollback checkpoint:
@@ -191,7 +183,7 @@ Rollback commands for current known-good:
 ```bash
 git fetch --tags
 git status
-git checkout -b codex/recover-known-good-v0-9-1 checkpoint/20260310-known-good-v0-9-1
+git checkout -b codex/recover-known-good-v1-0-4 known-good/20260320-v1-0-4-hdr-still-fix
 ```
 
 If you already have local changes you want to keep before rolling back, stash them first:
@@ -203,10 +195,12 @@ git stash push -u -m "pre-rollback safety stash"
 To inspect the exact checkpoint without creating a branch:
 
 ```bash
-git checkout checkpoint/20260310-known-good-v0-9-1
+git checkout known-good/20260320-v1-0-4-hdr-still-fix
 ```
 
-Checkpoint tags are kept under the repo's bounded-retention policy, so treat the current known-good tag and the previous release tag above as the supported rollback anchors.
+Durable rollback anchors now use the `known-good/*` tag namespace. Older `checkpoint/...known-good...` tags remain as historical references, but new releases should prefer `known-good/*` for long-lived rollback points.
+
+Build numbers now represent successful packaged app builds, not timestamps. Older exports and logs still contain the earlier timestamp-style build identifiers and are intentionally left unchanged.
 
 ## Test
 

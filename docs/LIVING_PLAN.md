@@ -138,6 +138,8 @@ Operational updates after first packaged run:
 - 2026-03-12: Hotfix: progressive HDR presentation/intermediate HEVC jobs now retry with `libx265` when `hevc_videotoolbox` fails to open before first output, preserving the fast VideoToolbox path for healthy jobs while recovering source clips that VideoToolbox refuses to initialize.
 - 2026-03-12: Bumped the shipped app version to `1.0.3` and rebuilt the packaged app.
 - 2026-03-13: Hotfix: progressive HDR retry failures are now rewrapped into the normal `RenderError` surface, and SDR clips with missing color tags now normalize through a BT.709 colorspace prelude before HLG uplift so legacy camera MOVs do not fail immediately with zscale `no path between colorspaces`.
+- 2026-03-20: Hotfix: HDR still gain-map decoding now applies source-image orientation to the auxiliary gain map too, eliminating rotated ghost-image overlays on affected HDR photos.
+- 2026-03-20: Bumped the shipped app version to `1.0.4`, switched packaged-app build numbers from timestamp IDs to a repo-tracked counted `BUILD_NUMBER` sequence, rebuilt the packaged app as `1.0.4 (200)`, and promoted the release to durable anchor `known-good/20260320-v1-0-4-hdr-still-fix` plus checkpoint `checkpoint/20260320-v1-0-4`.
 
 ## Decisions Log
 
@@ -146,7 +148,7 @@ Operational updates after first packaged run:
 - 2026-03-03: Photos filtering uses capture date in local timezone.
 - 2026-03-03: Default output naming uses auto-versioning in a default output folder.
 - 2026-03-03: Kept zero third-party dependencies through S3.
-- 2026-03-04: Standardized app bundling via `scripts/build_app.sh` with `VERSION` file + generated build number.
+- 2026-03-04: Standardized app bundling via `scripts/build_app.sh` with `VERSION` file + build number injection.
 - 2026-03-04: Surface `CFBundleShortVersionString` and `CFBundleVersion` in UI for runtime traceability.
 - 2026-03-04: Switched still image clip creation to ImageIO decode + rasterization path to address crash in CoreGraphics provider reads.
 - 2026-03-04: Added title-card creation fallback and main-actor AppKit rendering path after user-reported `Unable to create title card image` runtime failure.
@@ -179,6 +181,7 @@ Operational updates after first packaged run:
 - 2026-03-06: Approved a space-efficiency UI pass so the full control set remains visible without vertically clipping the window.
 - 2026-03-10: Approved progressive HDR assembly for large HEVC/HDR exports, with VideoToolbox allowed only for pre-final presentation intermediates and a non-negotiable frozen-color invariant after source normalization.
 - 2026-03-10: Approved resumable large HDR exports only at explicit safe checkpoints between progressive pipeline stages/batches; no attempt will be made to pause and resume an in-flight FFmpeg command mid-batch.
+- 2026-03-20: Approved durable release anchors under the `known-good/*` tag namespace and switched packaged builds from timestamp-based `CFBundleVersion` values to a repo-tracked monotonically increasing packaged-build count stored in `BUILD_NUMBER`.
 
 ## Changes Since Last Update
 
@@ -306,27 +309,31 @@ Operational updates after first packaged run:
 
 ## Rollback Procedure
 
-To return to the current known-good rollback (`v0.9.1`):
+To return to the current durable known-good rollback (`1.0.4`):
 
 1. `git fetch --tags`
 2. `git status`
 3. Optional safety stash if you have local edits: `git stash push -u -m "pre-rollback safety stash"`
-4. Create a recovery branch directly from the checkpoint tag: `git checkout -b codex/recover-known-good-v0-9-1 checkpoint/20260310-known-good-v0-9-1`
+4. Create a recovery branch directly from the durable tag: `git checkout -b codex/recover-known-good-v1-0-4 known-good/20260320-v1-0-4-hdr-still-fix`
 
 To inspect the exact tag without creating a branch:
 
-- `git checkout checkpoint/20260310-known-good-v0-9-1`
+- `git checkout known-good/20260320-v1-0-4-hdr-still-fix`
 
-For the prior release checkpoint, use:
+For the prior durable rollback anchor, use:
 
-- `git checkout -b codex/recover-known-good-v0-9-0 checkpoint/20260310-known-good-v0-9-0`
+- `git checkout -b codex/recover-known-good-stable known-good/20260320-stable-rollback`
+
+For older historical checkpoint-style anchors, use:
+
+- `git checkout -b codex/recover-known-good-v0-9-1 checkpoint/20260310-known-good-v0-9-1`
 
 For the pre-FFmpeg-pivot baseline, use:
 
 - `git checkout checkpoint/20260304-known-good-pre-ffmpeg-pivot`
 
-Checkpoint tags are retained under the repo's 30-tag policy, so the current known-good release tag and the immediately prior release tag above are the supported rollback anchors.
+Durable `known-good/*` tags are not pruned by the routine checkpoint-retention policy. Older `checkpoint/...known-good...` tags remain as historical references, but new long-lived rollback anchors should use `known-good/*`.
 
 ## Last Updated
 
-2026-03-12 13:16 America/New_York by Codex
+2026-03-20 11:24 America/New_York by Codex

@@ -6,6 +6,7 @@ APP_NAME="Monthly Video Generator"
 EXECUTABLE_NAME="MonthlyVideoGeneratorApp"
 BUNDLE_ID="com.jkfisher.MonthlyVideoGenerator"
 VERSION_FILE="$ROOT_DIR/VERSION"
+BUILD_NUMBER_FILE="$ROOT_DIR/BUILD_NUMBER"
 DIST_DIR="$ROOT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/${APP_NAME}.app"
 CONTENTS_DIR="$APP_BUNDLE/Contents"
@@ -39,7 +40,18 @@ if [[ -z "$APP_VERSION" ]]; then
   APP_VERSION="0.1.0"
 fi
 
-BUILD_NUMBER="${BUILD_NUMBER:-$(date +%Y%m%d%H%M%S)}"
+if [[ ! -f "$BUILD_NUMBER_FILE" ]]; then
+  echo "Error: missing build number file at $BUILD_NUMBER_FILE." >&2
+  exit 1
+fi
+
+CURRENT_BUILD_NUMBER="$(tr -d '[:space:]' < "$BUILD_NUMBER_FILE")"
+if [[ ! "$CURRENT_BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
+  echo "Error: BUILD_NUMBER must contain an integer, found '$CURRENT_BUILD_NUMBER'." >&2
+  exit 1
+fi
+
+NEXT_BUILD_NUMBER="$((CURRENT_BUILD_NUMBER + 1))"
 
 read -r -a BUILD_ARCHS <<< "$APP_ARCHS"
 if [[ "${#BUILD_ARCHS[@]}" -eq 0 ]]; then
@@ -209,7 +221,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key>
   <string>$APP_VERSION</string>
   <key>CFBundleVersion</key>
-  <string>$BUILD_NUMBER</string>
+  <string>$NEXT_BUILD_NUMBER</string>
   <key>LSMinimumSystemVersion</key>
   <string>$MINIMUM_SYSTEM_VERSION</string>
   <key>NSHighResolutionCapable</key>
@@ -223,8 +235,12 @@ PLIST
 codesign_target "$APP_BUNDLE"
 codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
 
+temp_build_number_file="$(mktemp "${TMPDIR:-/tmp}/monthly-video-generator-build-number.XXXXXX")"
+printf '%s\n' "$NEXT_BUILD_NUMBER" > "$temp_build_number_file"
+mv "$temp_build_number_file" "$BUILD_NUMBER_FILE"
+
 echo "Built app bundle: $APP_BUNDLE"
-echo "Version: $APP_VERSION ($BUILD_NUMBER)"
+echo "Version: $APP_VERSION ($NEXT_BUILD_NUMBER)"
 echo "Architectures: ${BUILD_ARCHS[*]}"
 if [[ "$CODESIGN_IDENTITY" == "-" ]]; then
   echo "Signing: ad-hoc"
