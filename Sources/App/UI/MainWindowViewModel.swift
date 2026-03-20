@@ -391,6 +391,7 @@ final class MainWindowViewModel: ObservableObject {
     @Published private(set) var queuedRenderJobs: [QueuedRenderJob] = []
     @Published private(set) var isQueueRunning: Bool = false
     @Published private(set) var isPreparingYearQueue: Bool = false
+    @Published private(set) var preparingYearQueueTargetYear: Int?
     @Published private(set) var renderCompleteAlertTitle: String = "Render Complete"
     @Published var showRenderCompleteAlert: Bool = false
     @Published var pendingSystemFFmpegFallbackConfirmation: SystemFFmpegFallbackConfirmation?
@@ -639,7 +640,11 @@ final class MainWindowViewModel: ObservableObject {
     }
 
     var selectedYearQueueDescription: String {
-        "Scans \(selectedYear) and adds one queued job per month that has Photos media. Month-based filenames are generated automatically."
+        "Scans \(yearQueueLabelYear) and adds one queued job per month that has Photos media. Month-based filenames are generated automatically."
+    }
+
+    var yearQueueLabelYear: Int {
+        preparingYearQueueTargetYear ?? selectedYear
     }
 
     var queueStatusDescription: String {
@@ -821,6 +826,7 @@ final class MainWindowViewModel: ObservableObject {
 
         let baseSnapshot = makeCurrentRenderSnapshot()
         isPreparingYearQueue = true
+        preparingYearQueueTargetYear = baseSnapshot.selectedYear
         statusMessage = "Scanning Photos for \(baseSnapshot.selectedYear)..."
 
         Task {
@@ -1142,7 +1148,10 @@ final class MainWindowViewModel: ObservableObject {
     }
 
     private func queueSelectedYearRenders(from baseSnapshot: QueuedRenderSnapshot) async {
-        defer { isPreparingYearQueue = false }
+        defer {
+            isPreparingYearQueue = false
+            preparingYearQueueTargetYear = nil
+        }
 
         do {
             try await ensurePhotosAuthorizationIfNeeded()

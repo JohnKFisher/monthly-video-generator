@@ -532,7 +532,7 @@ struct MainWindowView: View {
                         if viewModel.isPreparingYearQueue {
                             HStack(spacing: 8) {
                                 ProgressView()
-                                caption("Scanning \(viewModel.selectedYear) for non-empty months...")
+                                caption("Scanning \(viewModel.yearQueueLabelYear) for non-empty months...")
                             }
                         }
 
