@@ -201,7 +201,6 @@ final class MainWindowViewModel: ObservableObject {
         let selectedHDRHEVCEncoderMode: HDRHEVCEncoderMode
         let selectedAudioLayout: AudioLayout
         let selectedBitrateMode: BitrateMode
-        let selectedStillImageProcessingMode: StillImageProcessingMode
         let writeDiagnosticsLog: Bool
     }
 
@@ -364,9 +363,6 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
     @Published var selectedBitrateMode: BitrateMode = MainWindowViewModel.defaultExportProfile.bitrateMode {
-        didSet { handleRenderSettingChange() }
-    }
-    @Published var selectedStillImageProcessingMode: StillImageProcessingMode = MainWindowViewModel.defaultExportProfile.stillImageProcessingMode {
         didSet { handleRenderSettingChange() }
     }
     @Published var writeDiagnosticsLog: Bool = false {
@@ -571,15 +567,6 @@ final class MainWindowViewModel: ObservableObject {
         "Bundled FFmpeg is used by default. If bundled FFmpeg cannot satisfy the selected export, the app will ask before falling back to system FFmpeg."
     }
 
-    var stillImageProcessingDescription: String {
-        switch selectedStillImageProcessingMode {
-        case .intermediateClip:
-            return "Stable still-image path: photos are rendered to intermediate clips before final FFmpeg export."
-        case .directFFmpegInput:
-            return "Experimental still-image path: FFmpeg reads still photos directly to reduce temp MOV IO. Default path remains unchanged until you opt in."
-        }
-    }
-
     var bitrateModeDescription: String {
         "Bitrate mode controls FFmpeg encode quality, size, and speed tradeoffs for both SDR and HDR exports."
     }
@@ -756,7 +743,6 @@ final class MainWindowViewModel: ObservableObject {
         selectedHDRHEVCEncoderMode = profile.hdrHEVCEncoderMode
         selectedAudioLayout = profile.audioLayout
         selectedBitrateMode = profile.bitrateMode
-        selectedStillImageProcessingMode = profile.stillImageProcessingMode
         writeDiagnosticsLog = false
         isRestoringPersistedSettings = false
         enforceHDRSelectionConstraints()
@@ -1063,7 +1049,6 @@ final class MainWindowViewModel: ObservableObject {
             selectedHDRHEVCEncoderMode: selectedHDRHEVCEncoderMode,
             selectedAudioLayout: selectedAudioLayout,
             selectedBitrateMode: selectedBitrateMode,
-            selectedStillImageProcessingMode: selectedStillImageProcessingMode,
             writeDiagnosticsLog: writeDiagnosticsLog
         )
     }
@@ -1593,8 +1578,7 @@ final class MainWindowViewModel: ObservableObject {
             hdrFFmpegBinaryMode: snapshot.selectedHDRBinaryMode,
             hdrHEVCEncoderMode: hdrHEVCEncoderMode,
             audioLayout: audioLayout,
-            bitrateMode: snapshot.selectedBitrateMode,
-            stillImageProcessingMode: snapshot.selectedStillImageProcessingMode
+            bitrateMode: snapshot.selectedBitrateMode
         )
     }
 
@@ -2312,7 +2296,6 @@ final class MainWindowViewModel: ObservableObject {
         selectedHDRHEVCEncoderMode = settings.selectedHDRHEVCEncoderMode ?? .automatic
         selectedAudioLayout = settings.selectedAudioLayout
         selectedBitrateMode = settings.selectedBitrateMode
-        selectedStillImageProcessingMode = settings.selectedStillImageProcessingMode ?? .intermediateClip
         writeDiagnosticsLog = settings.writeDiagnosticsLog ?? false
         plexDescriptionText = settings.plexDescriptionText ?? ""
         isPlexDescriptionAutoManaged = settings.isPlexDescriptionAutoManaged ?? true
@@ -2354,7 +2337,6 @@ final class MainWindowViewModel: ObservableObject {
             selectedHDRHEVCEncoderMode: selectedHDRHEVCEncoderMode,
             selectedAudioLayout: selectedAudioLayout,
             selectedBitrateMode: selectedBitrateMode,
-            selectedStillImageProcessingMode: selectedStillImageProcessingMode,
             writeDiagnosticsLog: writeDiagnosticsLog,
             plexDescriptionText: plexDescriptionText,
             isPlexDescriptionAutoManaged: isPlexDescriptionAutoManaged
@@ -2388,7 +2370,6 @@ final class MainWindowViewModel: ObservableObject {
         let selectedHDRHEVCEncoderMode: HDRHEVCEncoderMode?
         let selectedAudioLayout: AudioLayout
         let selectedBitrateMode: BitrateMode
-        let selectedStillImageProcessingMode: StillImageProcessingMode?
         let writeDiagnosticsLog: Bool?
         let plexDescriptionText: String?
         let isPlexDescriptionAutoManaged: Bool?

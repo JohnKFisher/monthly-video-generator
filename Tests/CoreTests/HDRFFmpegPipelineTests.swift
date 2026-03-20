@@ -2224,41 +2224,6 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertFalse(intermediateCommand.arguments.joined(separator: " ").contains("-map_chapters"))
     }
 
-    func testCommandBuilderUsesLoopedStillImageInputsForDirectStillPath() throws {
-        let builder = FFmpegCommandBuilder()
-        let plan = FFmpegRenderPlan(
-            clips: [
-                FFmpegRenderClip(
-                    url: URL(fileURLWithPath: "/tmp/photo.jpg"),
-                    durationSeconds: 2.5,
-                    includeAudio: false,
-                    hasAudioTrack: false,
-                    colorInfo: .unknown,
-                    sourceDescription: "image photo.jpg",
-                    sourceType: .stillImage
-                )
-            ],
-            transitionDurationSeconds: 0,
-            outputURL: URL(fileURLWithPath: "/tmp/out.mp4"),
-            renderSize: CGSize(width: 1920, height: 1080),
-            frameRate: 30,
-            audioLayout: .stereo,
-            bitrateMode: .balanced,
-            container: .mp4,
-            videoCodec: .h264,
-            dynamicRange: .sdr
-        )
-
-        let command = try builder.buildCommand(plan: plan, resolution: makeCapableResolution())
-        let joined = command.arguments.joined(separator: " ")
-
-        XCTAssertTrue(joined.contains("-framerate 30"))
-        XCTAssertTrue(joined.contains("-loop 1"))
-        XCTAssertTrue(joined.contains("-t 2.500000"))
-        XCTAssertTrue(joined.contains("/tmp/photo.jpg"))
-        XCTAssertTrue(joined.contains("anullsrc=r=48000:cl=stereo"))
-    }
-
     func testBundledFFmpegPreservesPlexTVTagsInMP4() throws {
         guard
             let ffmpegURL = bundledBinaryURL(named: "ffmpeg"),

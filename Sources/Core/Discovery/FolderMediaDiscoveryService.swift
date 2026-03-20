@@ -1,6 +1,5 @@
 import AVFoundation
 import Foundation
-import ImageIO
 #if canImport(AppKit)
 import AppKit
 #endif
@@ -130,14 +129,11 @@ public final class FolderMediaDiscoveryService {
     }
 
     private func imagePixelSize(url: URL) -> CGSize {
-        if let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-           let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-           let width = properties[kCGImagePropertyPixelWidth] as? CGFloat,
-           let height = properties[kCGImagePropertyPixelHeight] as? CGFloat,
-           width > 0,
-           height > 0 {
-            return CGSize(width: width, height: height)
+        #if canImport(AppKit)
+        if let image = NSImage(contentsOf: url), let representation = image.representations.first {
+            return CGSize(width: representation.pixelsWide, height: representation.pixelsHigh)
         }
+        #endif
         return CGSize(width: 1920, height: 1080)
     }
 

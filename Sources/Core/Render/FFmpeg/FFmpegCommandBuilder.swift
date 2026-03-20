@@ -77,17 +77,7 @@ struct FFmpegCommandBuilder {
 
         for (clipIndex, clip) in plan.clips.enumerated() {
             let videoInputIndex = nextInputIndex
-            switch clip.sourceType {
-            case .videoAsset:
-                arguments.append(contentsOf: ["-i", clip.url.path])
-            case .stillImage:
-                arguments.append(contentsOf: [
-                    "-framerate", String(plan.frameRate),
-                    "-loop", "1",
-                    "-t", formatSeconds(clip.durationSeconds),
-                    "-i", clip.url.path
-                ])
-            }
+            arguments.append(contentsOf: ["-i", clip.url.path])
             nextInputIndex += 1
             videoInputIndexForClip[clipIndex] = videoInputIndex
 

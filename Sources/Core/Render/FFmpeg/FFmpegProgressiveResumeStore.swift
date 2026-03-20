@@ -274,8 +274,7 @@ final class FFmpegProgressiveResumeStore {
                 "clip[\(index)]=\(clip.sourceDescription)|duration=\(format(clip.durationSeconds))|includeAudio=\(clip.includeAudio)|" +
                     "hasAudioTrack=\(clip.hasAudioTrack)|isHDR=\(clip.colorInfo.isHDR)|primaries=\(clip.colorInfo.colorPrimaries ?? "nil")|" +
                     "transfer=\(clip.colorInfo.transferFunction ?? "nil")|transferFlavor=\(clip.colorInfo.transferFlavor.rawValue)|" +
-                    "hdrMetadata=\(clip.colorInfo.hdrMetadataFlavor.rawValue)|overlay=\(clip.captureDateOverlayURL != nil)|" +
-                    "sourceType=\(clip.sourceType.rawValue)"
+                    "hdrMetadata=\(clip.colorInfo.hdrMetadataFlavor.rawValue)|overlay=\(clip.captureDateOverlayURL != nil)"
             )
         }
 

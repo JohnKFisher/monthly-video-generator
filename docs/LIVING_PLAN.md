@@ -39,7 +39,7 @@ Implemented now:
 - Safe output naming with auto-versioning in selected output directory.
 - PhotoKit discovery/materialization for month/year library rendering.
 - PhotoKit source selection now supports both month/year filtering and album-based filtering.
-- Export UI/model for container/codec/frame rate/resolution/HDR/audio layout/bitrate mode, plus an opt-in experimental still-image fast path.
+- Export UI/model for container/codec/frame rate/resolution/HDR/audio layout/bitrate mode.
 - Plex/Infuse-oriented default export preset for Apple TV 4K (`MP4 + HEVC + HDR + Smart Audio + Balanced + HDR Auto + HDR HEVC Encoder Default`), plus explicit UI reset action.
 - Plex TV episode naming + embedded MP4 metadata for the `Family Videos` library workflow, plus mega-test batch UI for exercising Resolution/FPS/Range/Audio combinations.
 
@@ -54,9 +54,6 @@ Operational updates after first packaged run:
 - Updated `.app` bundling to produce a release universal bundle, package SwiftPM resources conventionally, embed Swift runtime libraries, and ad-hoc sign the finished app for off-machine testing.
 - Stabilized HDR final-delivery `libx265` commands by capping FFmpeg/x265 thread pressure to reduce OS-level `SIGKILL` risk on large renders.
 - Expanded FFmpeg diagnostics and surfaced error text with structured failure snapshots (encoder/binary/progress/output/stderr), richer report headers, and duplicate-line cleanup in the UI error formatter.
-- Improved Apple Photos Smart fps/audio inspection throughput with bounded parallel inspection instead of fully serial metadata loads.
-- Reduced folder discovery overhead for image dimensions by switching from `NSImage` decode to ImageIO property reads.
-- Added an opt-in `Experimental Faster Path` for still images that lets FFmpeg read still photos directly, while keeping the existing intermediate-clip render path as the default rollback-safe behavior.
 - Added visible app version/build label in the main window.
 - Patched still-image rendering path to decode and rasterize source images once before frame emission to reduce provider-related crash risk.
 - Hotfix: title card generation now runs on the main actor with a fallback solid-card path to prevent immediate export failure when title card rasterization fails.
