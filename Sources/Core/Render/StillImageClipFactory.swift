@@ -119,6 +119,18 @@ public final class StillImageClipFactory: @unchecked Sendable {
         }
     }
 
+    package final class TitleCardPreviewRenderer {
+        private let renderImage: (CGFloat) throws -> CGImage
+
+        fileprivate init(renderImage: @escaping (CGFloat) throws -> CGImage) {
+            self.renderImage = renderImage
+        }
+
+        package func render(progress: CGFloat) throws -> CGImage {
+            try renderImage(min(max(progress, 0), 1))
+        }
+    }
+
     private struct AnimatedTitleCardPalette {
         let start: CGColor
         let end: CGColor
@@ -403,12 +415,31 @@ public final class StillImageClipFactory: @unchecked Sendable {
         guard !progressValues.isEmpty else {
             return []
         }
+        let renderer = try await makeTitleCardPreviewRenderer(
+            descriptor: descriptor,
+            previewAssets: previewAssets,
+            renderSize: renderSize,
+            dynamicRange: dynamicRange,
+            treatment: treatment
+        )
+        return try progressValues.map { try renderer.render(progress: $0) }
+        #else
+        throw RenderError.exportFailed("Title card rendering requires AppKit support")
+        #endif
+    }
 
+    package func makeTitleCardPreviewRenderer(
+        descriptor: OpeningTitleCardDescriptor,
+        previewAssets: [TitleCardPreviewAsset],
+        renderSize: CGSize,
+        dynamicRange: DynamicRange = .sdr,
+        treatment: OpeningTitleTreatment
+    ) async throws -> TitleCardPreviewRenderer {
+        #if canImport(AppKit)
         let resolvedTitle = descriptor.resolvedTitle
         let displayContextLine = descriptor.displayContextLine
         let titleCardColorConfiguration = titleCardColorConfiguration(for: dynamicRange)
         let titleCardColorSpace = titleCardColorConfiguration.cgColorSpace
-        let clampedProgressValues = progressValues.map { min(max($0, 0), 1) }
 
         switch treatment {
         case .currentCollage:
@@ -420,7 +451,7 @@ public final class StillImageClipFactory: @unchecked Sendable {
                         renderSize: renderSize,
                         colorSpace: titleCardColorSpace
                     )
-                    return try clampedProgressValues.map { progress in
+                    return TitleCardPreviewRenderer { progress in
                         try self.makeAnimatedTitleCardFrameImage(
                             frameSet: animatedFrameSet,
                             progress: progress,
@@ -451,7 +482,7 @@ public final class StillImageClipFactory: @unchecked Sendable {
                     colorSpace: titleCardColorSpace
                 )
             }
-            return Array(repeating: titleImage, count: clampedProgressValues.count)
+            return TitleCardPreviewRenderer { _ in titleImage }
 
         default:
             let frameSet = try await makeConceptTitleCardFrameSet(
@@ -461,7 +492,7 @@ public final class StillImageClipFactory: @unchecked Sendable {
                 renderSize: renderSize,
                 colorSpace: titleCardColorSpace
             )
-            return try clampedProgressValues.map { progress in
+            return TitleCardPreviewRenderer { progress in
                 try self.makeConceptTitleCardFrameImage(
                     frameSet: frameSet,
                     progress: progress,

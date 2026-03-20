@@ -94,6 +94,7 @@ private struct TitleTreatmentBoardEntry {
 package final class TitleTreatmentPreviewGeneratorService: @unchecked Sendable {
     private let discoveryService = FolderMediaDiscoveryService()
     private let clipFactory = StillImageClipFactory()
+    private let ffmpegResolver = FFmpegBinaryResolver()
 
     package init() {}
 
@@ -116,6 +117,7 @@ package final class TitleTreatmentPreviewGeneratorService: @unchecked Sendable {
             targetDimension: normalizedPreviewDimension(for: config.renderSize),
             outputDirectory: normalizedPreviewDirectory
         )
+        let ffmpegURL = try resolvePreviewFFmpegURL()
 
         var artifacts: [TitleTreatmentPreviewArtifact] = []
         var boardEntries: [TitleTreatmentBoardEntry] = []
@@ -131,15 +133,15 @@ package final class TitleTreatmentPreviewGeneratorService: @unchecked Sendable {
                 guard config.durationSeconds > 0 else { return CGFloat.zero }
                 return CGFloat(min(max($0.seconds / config.durationSeconds, 0), 1))
             }
-
-            let stills = try await clipFactory.makeTitleCardPreviewImages(
+            let renderer = try await clipFactory.makeTitleCardPreviewRenderer(
                 descriptor: descriptor,
                 previewAssets: previewAssets,
                 renderSize: config.renderSize,
                 dynamicRange: .sdr,
-                treatment: treatment,
-                progressValues: stillProgresses
+                treatment: treatment
             )
+
+            let stills = try stillProgresses.map { try renderer.render(progress: $0) }
             guard stills.count == 2 else {
                 throw RenderError.exportFailed("Expected two preview stills for treatment \(treatment.rawValue)")
             }
@@ -168,8 +170,15 @@ package final class TitleTreatmentPreviewGeneratorService: @unchecked Sendable {
                 clipFilename = clipURL.lastPathComponent
                 clipNote = nil
             } catch {
-                clipFilename = nil
-                clipNote = "Video preview unavailable in this environment; use the still comparisons for review."
+                try exportMovieWithFFmpeg(
+                    renderer: renderer,
+                    durationSeconds: config.durationSeconds,
+                    frameRate: config.frameRate,
+                    ffmpegURL: ffmpegURL,
+                    outputURL: clipURL
+                )
+                clipFilename = clipURL.lastPathComponent
+                clipNote = "Video preview encoded via ffmpeg fallback."
             }
 
             let artifact = TitleTreatmentPreviewArtifact(
@@ -277,6 +286,10 @@ package final class TitleTreatmentPreviewGeneratorService: @unchecked Sendable {
     private func normalizedPreviewDimension(for renderSize: CGSize) -> Int {
         let maxDimension = Int(max(renderSize.width, renderSize.height).rounded())
         return min(max(maxDimension, 720), 1440)
+    }
+
+    private func resolvePreviewFFmpegURL() throws -> URL {
+        try ffmpegResolver.resolveProbeBinary(mode: .autoSystemThenBundled).ffmpegURL
     }
 
     private func materializePreviewAssets(
@@ -412,6 +425,65 @@ package final class TitleTreatmentPreviewGeneratorService: @unchecked Sendable {
             images.append(image)
         }
         return images
+    }
+
+    private func exportMovieWithFFmpeg(
+        renderer: StillImageClipFactory.TitleCardPreviewRenderer,
+        durationSeconds: Double,
+        frameRate: Int,
+        ffmpegURL: URL,
+        outputURL: URL
+    ) throws {
+        let fileManager = FileManager.default
+        let frameDirectory = fileManager.temporaryDirectory
+            .appendingPathComponent("TitleTreatmentPreviewFrames-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: frameDirectory, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: frameDirectory) }
+
+        let totalFrames = max(Int(ceil(durationSeconds * Double(max(frameRate, 1)))), 1)
+        let denominator = max(totalFrames - 1, 1)
+        for frameIndex in 0..<totalFrames {
+            let progress = CGFloat(frameIndex) / CGFloat(denominator)
+            let image = try renderer.render(progress: progress)
+            let frameURL = frameDirectory.appendingPathComponent(String(format: "frame-%05d", frameIndex + 1)).appendingPathExtension("png")
+            try writePNG(image, to: frameURL)
+        }
+
+        let process = Process()
+        process.executableURL = ffmpegURL
+        process.arguments = [
+            "-hide_banner",
+            "-y",
+            "-framerate", "\(max(frameRate, 1))",
+            "-i", frameDirectory.appendingPathComponent("frame-%05d.png").path,
+            "-an",
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", "18",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            outputURL.path
+        ]
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        try process.run()
+        process.waitUntilExit()
+
+        let stdout = String(data: stdoutPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let stderr = String(data: stderrPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let combined = [stdout, stderr]
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .joined(separator: "\n")
+
+        guard process.terminationStatus == 0, fileManager.fileExists(atPath: outputURL.path) else {
+            throw RenderError.exportFailed(
+                "FFmpeg preview movie export failed for \(outputURL.lastPathComponent) with status \(process.terminationStatus). Output: \(combined)"
+            )
+        }
     }
 
     private func writeContactSheet(
@@ -613,7 +685,8 @@ package final class TitleTreatmentPreviewGeneratorService: @unchecked Sendable {
         artifacts.map { artifact in
             let mediaBlock: String
             if let clipFilename = artifact.clipFilename {
-                mediaBlock = "<video controls loop muted playsinline src=\"\(escapeHTML(clipFilename))\"></video>"
+                let noteBlock = artifact.clipNote.map { "<p class=\"clip-note\">\(escapeHTML($0))</p>" } ?? ""
+                mediaBlock = "<video controls loop muted playsinline src=\"\(escapeHTML(clipFilename))\"></video>\(noteBlock)"
             } else {
                 let note = artifact.clipNote ?? "Video preview unavailable."
                 mediaBlock = "<p class=\"clip-note\">\(escapeHTML(note))</p>"
