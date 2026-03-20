@@ -158,6 +158,10 @@ Current temporary test-only app behavior:
 
 ## Known-Good Rollback
 
+Current durable known-good anchor:
+
+- `known-good/20260320-stable-rollback`
+
 Current known-good rollback checkpoint (`v0.9.1`):
 
 - `checkpoint/20260310-known-good-v0-9-1`
