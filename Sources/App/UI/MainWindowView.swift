@@ -471,10 +471,17 @@ struct MainWindowView: View {
                     VStack(alignment: .leading, spacing: rowSpacing) {
                         ViewThatFits(in: .horizontal) {
                             HStack(spacing: 10) {
-                                Button("Add Current Settings") {
+                                Button(viewModel.addCurrentSettingsToQueueLabel) {
                                     viewModel.addCurrentSettingsToQueue()
                                 }
-                                .disabled(viewModel.isRendering)
+                                .disabled(!viewModel.canAddCurrentSettingsToQueue)
+
+                                if viewModel.showsSelectedYearQueueAction {
+                                    Button(viewModel.isPreparingYearQueue ? "Scanning Year..." : "Add Full Year") {
+                                        viewModel.addSelectedYearToQueue()
+                                    }
+                                    .disabled(!viewModel.canAddSelectedYearToQueue)
+                                }
 
                                 Spacer(minLength: 0)
 
@@ -490,10 +497,17 @@ struct MainWindowView: View {
                             }
 
                             VStack(alignment: .leading, spacing: rowSpacing) {
-                                Button("Add Current Settings") {
+                                Button(viewModel.addCurrentSettingsToQueueLabel) {
                                     viewModel.addCurrentSettingsToQueue()
                                 }
-                                .disabled(viewModel.isRendering)
+                                .disabled(!viewModel.canAddCurrentSettingsToQueue)
+
+                                if viewModel.showsSelectedYearQueueAction {
+                                    Button(viewModel.isPreparingYearQueue ? "Scanning Year..." : "Add Full Year") {
+                                        viewModel.addSelectedYearToQueue()
+                                    }
+                                    .disabled(!viewModel.canAddSelectedYearToQueue)
+                                }
 
                                 HStack(spacing: 10) {
                                     Button("Start Queue") {
@@ -510,6 +524,17 @@ struct MainWindowView: View {
                         }
 
                         caption(viewModel.queueStatusDescription)
+
+                        if viewModel.showsSelectedYearQueueAction {
+                            caption(viewModel.selectedYearQueueDescription)
+                        }
+
+                        if viewModel.isPreparingYearQueue {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                caption("Scanning \(viewModel.selectedYear) for non-empty months...")
+                            }
+                        }
 
                         if viewModel.queuedRenderJobs.isEmpty {
                             caption("No queued renders yet.")

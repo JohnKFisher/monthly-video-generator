@@ -1,6 +1,8 @@
 import AVFoundation
 import Core
 import Foundation
+import Photos
+import PhotosIntegration
 @testable import MonthlyVideoGeneratorApp
 import XCTest
 
@@ -982,6 +984,91 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.queuedRenderJobs.map(\.state), [.completed, .completed])
     }
 
+    func testAddSelectedYearToQueueAddsOneJobPerNonEmptyMonthWithAutoMonthFilenames() async throws {
+        let photoDiscovery = PhotoLibraryDiscoveringSpy(
+            monthItems: [
+                MonthYear(month: 1, year: 2025): [makeImageItem(id: "jan-item", captureDate: makeDate(year: 2025, month: 1, day: 12))],
+                MonthYear(month: 3, year: 2025): [makeImageItem(id: "mar-item", captureDate: makeDate(year: 2025, month: 3, day: 22))]
+            ]
+        )
+        let viewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            photoDiscovery: photoDiscovery,
+            preferencesStore: makePreferencesStore(),
+            calendar: makeUTCGregorianCalendar(),
+            nowProvider: { self.makeDate(year: 2026, month: 3, day: 9) }
+        )
+
+        viewModel.sourceMode = .photos
+        viewModel.selectedPhotosFilterMode = .monthYear
+        viewModel.selectedYear = 2025
+        viewModel.selectedMonth = 7
+        viewModel.outputFilename = "Manual Override"
+
+        viewModel.addSelectedYearToQueue()
+        await waitUntil(
+            message: "Timed out waiting for full-year queue scan."
+        ) {
+            !viewModel.isPreparingYearQueue
+        }
+
+        XCTAssertEqual(
+            photoDiscovery.discoveredMonthYears,
+            (1...12).map { MonthYear(month: $0, year: 2025) }
+        )
+        XCTAssertEqual(viewModel.queuedRenderJobs.count, 2)
+        XCTAssertEqual(
+            viewModel.queuedRenderJobs.map(\.sourceSummary),
+            ["Photos: January 2025", "Photos: March 2025"]
+        )
+        XCTAssertEqual(
+            viewModel.queuedRenderJobs.map(\.outputNamePreview),
+            [
+                expectedOutputName(monthYear: MonthYear(month: 1, year: 2025)),
+                expectedOutputName(monthYear: MonthYear(month: 3, year: 2025))
+            ]
+        )
+        XCTAssertEqual(
+            viewModel.queuedRenderJobs.map { MonthYear(month: $0.snapshot.selectedMonth, year: $0.snapshot.selectedYear) },
+            [
+                MonthYear(month: 1, year: 2025),
+                MonthYear(month: 3, year: 2025)
+            ]
+        )
+        XCTAssertEqual(viewModel.queuedRenderJobs.map(\.snapshot.isOutputNameAutoManaged), [true, true])
+        XCTAssertEqual(
+            viewModel.queuedRenderJobs.map(\.snapshot.openingTitleText),
+            ["January 2025", "March 2025"]
+        )
+        XCTAssertEqual(viewModel.queuedRenderJobs.map(\.state), [.queued, .queued])
+        XCTAssertEqual(viewModel.statusMessage, "Queued 2 month(s) for 2025. Skipped 10 empty month(s).")
+    }
+
+    func testAddSelectedYearToQueueReportsWhenNoMonthsContainMedia() async throws {
+        let photoDiscovery = PhotoLibraryDiscoveringSpy()
+        let viewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            photoDiscovery: photoDiscovery,
+            preferencesStore: makePreferencesStore(),
+            calendar: makeUTCGregorianCalendar(),
+            nowProvider: { self.makeDate(year: 2026, month: 3, day: 9) }
+        )
+
+        viewModel.sourceMode = .photos
+        viewModel.selectedPhotosFilterMode = .monthYear
+        viewModel.selectedYear = 2024
+
+        viewModel.addSelectedYearToQueue()
+        await waitUntil(
+            message: "Timed out waiting for empty full-year queue scan."
+        ) {
+            !viewModel.isPreparingYearQueue
+        }
+
+        XCTAssertTrue(viewModel.queuedRenderJobs.isEmpty)
+        XCTAssertEqual(viewModel.statusMessage, "No Photos media found for 2024.")
+    }
+
     func testQueueProgressReflectsOverallCompletion() async throws {
         let coordinator = RenderCoordinatorSpy(
             preparation: makePreparation(),
@@ -1337,6 +1424,7 @@ final class MainWindowViewModelTests: XCTestCase {
 
     private func makeViewModel(
         coordinator: RenderCoordinating,
+        photoDiscovery: any PhotoLibraryDiscovering = PhotoLibraryDiscoveringSpy(),
         preferencesStore: UserDefaults,
         exportProvenanceIdentity: OutputProvenanceAppIdentity = AppMetadata.exportProvenanceIdentity,
         calendar: Calendar = .current,
@@ -1344,6 +1432,7 @@ final class MainWindowViewModelTests: XCTestCase {
     ) -> MainWindowViewModel {
         MainWindowViewModel(
             coordinator: coordinator,
+            photoDiscovery: photoDiscovery,
             preferencesStore: preferencesStore,
             filenameGenerator: PlexTVFilenameGenerator(),
             exportProvenanceIdentity: exportProvenanceIdentity,
@@ -1472,6 +1561,44 @@ final class MainWindowViewModelTests: XCTestCase {
             return ""
         }
         return row.displayValue
+    }
+}
+
+private final class PhotoLibraryDiscoveringSpy: PhotoLibraryDiscovering, @unchecked Sendable {
+    var authorizationStatusValue: PHAuthorizationStatus = .authorized
+    var requestedAuthorizationStatus: PHAuthorizationStatus?
+    var monthItems: [MonthYear: [MediaItem]] = [:]
+    private(set) var discoveredMonthYears: [MonthYear] = []
+
+    init(
+        authorizationStatusValue: PHAuthorizationStatus = .authorized,
+        requestedAuthorizationStatus: PHAuthorizationStatus? = nil,
+        monthItems: [MonthYear: [MediaItem]] = [:]
+    ) {
+        self.authorizationStatusValue = authorizationStatusValue
+        self.requestedAuthorizationStatus = requestedAuthorizationStatus
+        self.monthItems = monthItems
+    }
+
+    func authorizationStatus() -> PHAuthorizationStatus {
+        authorizationStatusValue
+    }
+
+    func requestAuthorization() async -> PHAuthorizationStatus {
+        requestedAuthorizationStatus ?? authorizationStatusValue
+    }
+
+    func discover(monthYear: MonthYear, timeZone: TimeZone) async throws -> [MediaItem] {
+        discoveredMonthYears.append(monthYear)
+        return monthItems[monthYear] ?? []
+    }
+
+    func discover(albumLocalIdentifier: String) async throws -> [MediaItem] {
+        []
+    }
+
+    func discoverAlbums() async throws -> [PhotoAlbumSummary] {
+        []
     }
 }
 

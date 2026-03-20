@@ -39,6 +39,7 @@ Implemented now:
 - Safe output naming with auto-versioning in selected output directory.
 - PhotoKit discovery/materialization for month/year library rendering.
 - PhotoKit source selection now supports both month/year filtering and album-based filtering.
+- The render queue can now scan a selected Photos year and enqueue one separate month-based export per non-empty month, using month-specific auto filenames to avoid collisions.
 - Export UI/model for container/codec/frame rate/resolution/HDR/audio layout/bitrate mode.
 - Plex/Infuse-oriented default export preset for Apple TV 4K (`MP4 + HEVC + HDR + Smart Audio + Balanced + HDR Auto + HDR HEVC Encoder Default`), plus explicit UI reset action.
 - Plex TV episode naming + embedded MP4 metadata for the `Family Videos` library workflow, plus mega-test batch UI for exercising Resolution/FPS/Range/Audio combinations.
@@ -140,6 +141,7 @@ Operational updates after first packaged run:
 - 2026-03-13: Hotfix: progressive HDR retry failures are now rewrapped into the normal `RenderError` surface, and SDR clips with missing color tags now normalize through a BT.709 colorspace prelude before HLG uplift so legacy camera MOVs do not fail immediately with zscale `no path between colorspaces`.
 - 2026-03-20: Hotfix: HDR still gain-map decoding now applies source-image orientation to the auxiliary gain map too, eliminating rotated ghost-image overlays on affected HDR photos.
 - 2026-03-20: Bumped the shipped app version to `1.0.4`, switched packaged-app build numbers from timestamp IDs to a repo-tracked counted `BUILD_NUMBER` sequence, rebuilt the packaged app as `1.0.4 (200)`, and promoted the release to durable anchor `known-good/20260320-v1-0-4-hdr-still-fix` plus checkpoint `checkpoint/20260320-v1-0-4`.
+- 2026-03-20: Added a Photos year-queue action in the Export panel so the selected year can be scanned once and queued as separate month exports for each non-empty month, while preserving per-month auto titles and auto filenames.
 
 ## Decisions Log
 

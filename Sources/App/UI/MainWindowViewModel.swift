@@ -10,6 +10,16 @@ import AppKit
 typealias RenderProgressHandler = (@MainActor @Sendable (Double) -> Void)?
 typealias RenderStatusHandler = (@MainActor @Sendable (String) -> Void)?
 
+protocol PhotoLibraryDiscovering: Sendable {
+    func authorizationStatus() -> PHAuthorizationStatus
+    func requestAuthorization() async -> PHAuthorizationStatus
+    func discover(monthYear: MonthYear, timeZone: TimeZone) async throws -> [MediaItem]
+    func discover(albumLocalIdentifier: String) async throws -> [MediaItem]
+    func discoverAlbums() async throws -> [PhotoAlbumSummary]
+}
+
+extension PhotoKitMediaDiscoveryService: PhotoLibraryDiscovering {}
+
 @MainActor
 protocol RenderCoordinating: AnyObject, Sendable {
     func prepareFolderRender(request: RenderRequest) async throws -> RenderPreparation
@@ -380,6 +390,7 @@ final class MainWindowViewModel: ObservableObject {
     @Published private(set) var lastSingleRenderCompletionSummary: RenderCompletionSummary?
     @Published private(set) var queuedRenderJobs: [QueuedRenderJob] = []
     @Published private(set) var isQueueRunning: Bool = false
+    @Published private(set) var isPreparingYearQueue: Bool = false
     @Published private(set) var renderCompleteAlertTitle: String = "Render Complete"
     @Published var showRenderCompleteAlert: Bool = false
     @Published var pendingSystemFFmpegFallbackConfirmation: SystemFFmpegFallbackConfirmation?
@@ -389,7 +400,7 @@ final class MainWindowViewModel: ObservableObject {
     let years: [Int]
 
     private let coordinator: RenderCoordinating
-    private let photoDiscovery: PhotoKitMediaDiscoveryService
+    private let photoDiscovery: any PhotoLibraryDiscovering
     private let photoMaterializer: PhotoKitAssetMaterializer
     private let exportProfileManager: ExportProfileManager
     private let runReportService: RunReportService
@@ -422,7 +433,7 @@ final class MainWindowViewModel: ObservableObject {
 
     init(
         coordinator: RenderCoordinating = RenderCoordinator(),
-        photoDiscovery: PhotoKitMediaDiscoveryService = PhotoKitMediaDiscoveryService(),
+        photoDiscovery: any PhotoLibraryDiscovering = PhotoKitMediaDiscoveryService(),
         photoMaterializer: PhotoKitAssetMaterializer = PhotoKitAssetMaterializer(),
         exportProfileManager: ExportProfileManager = ExportProfileManager(),
         runReportService: RunReportService = RunReportService(),
@@ -597,15 +608,38 @@ final class MainWindowViewModel: ObservableObject {
     }
 
     var canStartQueue: Bool {
-        !isRendering && nextQueuedRenderStartIndex() != nil
+        !isRendering && !isPreparingYearQueue && nextQueuedRenderStartIndex() != nil
     }
 
     var canClearQueue: Bool {
-        !isRendering && !queuedRenderJobs.isEmpty
+        !isRendering && !isPreparingYearQueue && !queuedRenderJobs.isEmpty
     }
 
     var canPauseRender: Bool {
         isRendering && !isPauseRequested && selectedDynamicRange == .hdr && selectedVideoCodec == .hevc
+    }
+
+    var canAddCurrentSettingsToQueue: Bool {
+        !isRendering && !isPreparingYearQueue
+    }
+
+    var canAddSelectedYearToQueue: Bool {
+        sourceMode == .photos &&
+        selectedPhotosFilterMode == .monthYear &&
+        !isRendering &&
+        !isPreparingYearQueue
+    }
+
+    var showsSelectedYearQueueAction: Bool {
+        sourceMode == .photos && selectedPhotosFilterMode == .monthYear
+    }
+
+    var addCurrentSettingsToQueueLabel: String {
+        showsSelectedYearQueueAction ? "Add Selected Month" : "Add Current Settings"
+    }
+
+    var selectedYearQueueDescription: String {
+        "Scans \(selectedYear) and adds one queued job per month that has Photos media. Month-based filenames are generated automatically."
     }
 
     var queueStatusDescription: String {
@@ -779,20 +813,23 @@ final class MainWindowViewModel: ObservableObject {
             return
         }
 
-        queuedRenderJobs.append(
-            QueuedRenderJob(
-                id: UUID(),
-                snapshot: snapshot,
-                sourceSummary: queueSourceSummary(for: snapshot),
-                outputNamePreview: queueOutputNamePreview(for: snapshot),
-                state: .queued,
-                lastResultMessage: ""
-            )
-        )
+        enqueueRenderSnapshot(snapshot)
+    }
+
+    func addSelectedYearToQueue() {
+        guard canAddSelectedYearToQueue else { return }
+
+        let baseSnapshot = makeCurrentRenderSnapshot()
+        isPreparingYearQueue = true
+        statusMessage = "Scanning Photos for \(baseSnapshot.selectedYear)..."
+
+        Task {
+            await queueSelectedYearRenders(from: baseSnapshot)
+        }
     }
 
     func startQueue() {
-        guard !isRendering, renderTask == nil, nextQueuedRenderStartIndex() != nil else { return }
+        guard !isRendering, !isPreparingYearQueue, renderTask == nil, nextQueuedRenderStartIndex() != nil else { return }
 
         renderTask = Task {
             await performQueuedRenders()
@@ -813,7 +850,7 @@ final class MainWindowViewModel: ObservableObject {
     }
 
     func clearQueuedRenderJobs() {
-        guard !isRendering else {
+        guard !isRendering, !isPreparingYearQueue else {
             return
         }
         queuedRenderJobs.removeAll()
@@ -1091,6 +1128,62 @@ final class MainWindowViewModel: ObservableObject {
         return generatedOutputName(for: snapshot)
     }
 
+    private func enqueueRenderSnapshot(_ snapshot: QueuedRenderSnapshot) {
+        queuedRenderJobs.append(
+            QueuedRenderJob(
+                id: UUID(),
+                snapshot: snapshot,
+                sourceSummary: queueSourceSummary(for: snapshot),
+                outputNamePreview: queueOutputNamePreview(for: snapshot),
+                state: .queued,
+                lastResultMessage: ""
+            )
+        )
+    }
+
+    private func queueSelectedYearRenders(from baseSnapshot: QueuedRenderSnapshot) async {
+        defer { isPreparingYearQueue = false }
+
+        do {
+            try await ensurePhotosAuthorizationIfNeeded()
+
+            let targetYear = baseSnapshot.selectedYear
+            var addedSnapshots: [QueuedRenderSnapshot] = []
+
+            for month in months {
+                let monthYear = MonthYear(month: month, year: targetYear)
+                let discovered = try await photoDiscovery.discover(
+                    monthYear: monthYear,
+                    timeZone: calendar.timeZone
+                )
+                guard !discovered.isEmpty else {
+                    continue
+                }
+
+                addedSnapshots.append(
+                    makeSelectedYearQueueSnapshot(
+                        from: baseSnapshot,
+                        monthYear: monthYear
+                    )
+                )
+            }
+
+            guard !addedSnapshots.isEmpty else {
+                statusMessage = "No Photos media found for \(targetYear)."
+                return
+            }
+
+            for snapshot in addedSnapshots {
+                enqueueRenderSnapshot(snapshot)
+            }
+
+            let skippedCount = months.count - addedSnapshots.count
+            statusMessage = "Queued \(addedSnapshots.count) month(s) for \(targetYear). Skipped \(skippedCount) empty month(s)."
+        } catch {
+            statusMessage = formatErrorForDisplay(error)
+        }
+    }
+
     private func nextQueuedRenderStartIndex() -> Int? {
         if let failedIndex = queuedRenderJobs.firstIndex(where: { $0.state == .failed }) {
             return failedIndex
@@ -1266,6 +1359,97 @@ final class MainWindowViewModel: ObservableObject {
         filenameGenerator.makeOutputName(
             showTitle: resolvedPlexShowTitle(for: snapshot),
             monthYear: previewMonthYear(for: snapshot)
+        )
+    }
+
+    private func makeSelectedYearQueueSnapshot(
+        from baseSnapshot: QueuedRenderSnapshot,
+        monthYear: MonthYear
+    ) -> QueuedRenderSnapshot {
+        let openingTitleText: String
+        if baseSnapshot.isOpeningTitleAutoManaged {
+            openingTitleText = monthYear.displayLabel
+        } else {
+            openingTitleText = baseSnapshot.openingTitleText
+        }
+
+        let seededSnapshot = QueuedRenderSnapshot(
+            sourceMode: .photos,
+            selectedFolderURL: baseSnapshot.selectedFolderURL,
+            recursiveScan: baseSnapshot.recursiveScan,
+            selectedMonth: monthYear.month,
+            selectedYear: monthYear.year,
+            selectedPhotosFilterMode: .monthYear,
+            selectedPhotoAlbumID: baseSnapshot.selectedPhotoAlbumID,
+            selectedPhotoAlbumTitle: baseSnapshot.selectedPhotoAlbumTitle,
+            outputDirectoryURL: baseSnapshot.outputDirectoryURL,
+            plexShowTitle: baseSnapshot.plexShowTitle,
+            outputFilename: "",
+            isOutputNameAutoManaged: true,
+            plexDescriptionText: baseSnapshot.plexDescriptionText,
+            isPlexDescriptionAutoManaged: baseSnapshot.isPlexDescriptionAutoManaged,
+            showsManualMonthYearOverride: false,
+            manualMonthYearOverrideMonth: monthYear.month,
+            manualMonthYearOverrideYear: monthYear.year,
+            includeOpeningTitle: baseSnapshot.includeOpeningTitle,
+            openingTitleText: openingTitleText,
+            isOpeningTitleAutoManaged: baseSnapshot.isOpeningTitleAutoManaged,
+            titleDurationSeconds: baseSnapshot.titleDurationSeconds,
+            openingTitleCaptionMode: baseSnapshot.openingTitleCaptionMode,
+            openingTitleCaptionText: baseSnapshot.openingTitleCaptionText,
+            crossfadeDurationSeconds: baseSnapshot.crossfadeDurationSeconds,
+            stillImageDurationSeconds: baseSnapshot.stillImageDurationSeconds,
+            showCaptureDateOverlay: baseSnapshot.showCaptureDateOverlay,
+            selectedContainer: baseSnapshot.selectedContainer,
+            selectedVideoCodec: baseSnapshot.selectedVideoCodec,
+            selectedFrameRatePolicy: baseSnapshot.selectedFrameRatePolicy,
+            selectedResolutionPolicy: baseSnapshot.selectedResolutionPolicy,
+            selectedDynamicRange: baseSnapshot.selectedDynamicRange,
+            selectedHDRBinaryMode: baseSnapshot.selectedHDRBinaryMode,
+            selectedHDRHEVCEncoderMode: baseSnapshot.selectedHDRHEVCEncoderMode,
+            selectedAudioLayout: baseSnapshot.selectedAudioLayout,
+            selectedBitrateMode: baseSnapshot.selectedBitrateMode,
+            writeDiagnosticsLog: baseSnapshot.writeDiagnosticsLog
+        )
+
+        let generatedFilename = generatedOutputName(for: seededSnapshot)
+        return QueuedRenderSnapshot(
+            sourceMode: seededSnapshot.sourceMode,
+            selectedFolderURL: seededSnapshot.selectedFolderURL,
+            recursiveScan: seededSnapshot.recursiveScan,
+            selectedMonth: seededSnapshot.selectedMonth,
+            selectedYear: seededSnapshot.selectedYear,
+            selectedPhotosFilterMode: seededSnapshot.selectedPhotosFilterMode,
+            selectedPhotoAlbumID: seededSnapshot.selectedPhotoAlbumID,
+            selectedPhotoAlbumTitle: seededSnapshot.selectedPhotoAlbumTitle,
+            outputDirectoryURL: seededSnapshot.outputDirectoryURL,
+            plexShowTitle: seededSnapshot.plexShowTitle,
+            outputFilename: generatedFilename,
+            isOutputNameAutoManaged: true,
+            plexDescriptionText: seededSnapshot.plexDescriptionText,
+            isPlexDescriptionAutoManaged: seededSnapshot.isPlexDescriptionAutoManaged,
+            showsManualMonthYearOverride: seededSnapshot.showsManualMonthYearOverride,
+            manualMonthYearOverrideMonth: seededSnapshot.manualMonthYearOverrideMonth,
+            manualMonthYearOverrideYear: seededSnapshot.manualMonthYearOverrideYear,
+            includeOpeningTitle: seededSnapshot.includeOpeningTitle,
+            openingTitleText: seededSnapshot.openingTitleText,
+            isOpeningTitleAutoManaged: seededSnapshot.isOpeningTitleAutoManaged,
+            titleDurationSeconds: seededSnapshot.titleDurationSeconds,
+            openingTitleCaptionMode: seededSnapshot.openingTitleCaptionMode,
+            openingTitleCaptionText: seededSnapshot.openingTitleCaptionText,
+            crossfadeDurationSeconds: seededSnapshot.crossfadeDurationSeconds,
+            stillImageDurationSeconds: seededSnapshot.stillImageDurationSeconds,
+            showCaptureDateOverlay: seededSnapshot.showCaptureDateOverlay,
+            selectedContainer: seededSnapshot.selectedContainer,
+            selectedVideoCodec: seededSnapshot.selectedVideoCodec,
+            selectedFrameRatePolicy: seededSnapshot.selectedFrameRatePolicy,
+            selectedResolutionPolicy: seededSnapshot.selectedResolutionPolicy,
+            selectedDynamicRange: seededSnapshot.selectedDynamicRange,
+            selectedHDRBinaryMode: seededSnapshot.selectedHDRBinaryMode,
+            selectedHDRHEVCEncoderMode: seededSnapshot.selectedHDRHEVCEncoderMode,
+            selectedAudioLayout: seededSnapshot.selectedAudioLayout,
+            selectedBitrateMode: seededSnapshot.selectedBitrateMode,
+            writeDiagnosticsLog: seededSnapshot.writeDiagnosticsLog
         )
     }
 
@@ -1616,18 +1800,15 @@ final class MainWindowViewModel: ObservableObject {
             )
 
         case .photos:
-            let status = photoDiscovery.authorizationStatus()
-            if status != .authorized && status != .limited {
-                let newStatus = await photoDiscovery.requestAuthorization()
-                if newStatus != .authorized && newStatus != .limited {
-                    throw PhotoKitDiscoveryError.unauthorized(newStatus)
-                }
-            }
+            try await ensurePhotosAuthorizationIfNeeded()
 
             switch snapshot.selectedPhotosFilterMode {
             case .monthYear:
                 let source: MediaSource = .photosLibrary(scope: .entireLibrary(monthYear: monthYear))
-                let discovered = try await photoDiscovery.discover(monthYear: monthYear)
+                let discovered = try await photoDiscovery.discover(
+                    monthYear: monthYear,
+                    timeZone: calendar.timeZone
+                )
                 try Task.checkCancellation()
                 let inspection = try await inspectPhotoVideosForSmartPoliciesIfNeeded(
                     discovered,
@@ -1707,6 +1888,18 @@ final class MainWindowViewModel: ObservableObject {
                     usesPhotoMaterializer: true
                 )
             }
+        }
+    }
+
+    private func ensurePhotosAuthorizationIfNeeded() async throws {
+        let status = photoDiscovery.authorizationStatus()
+        if status == .authorized || status == .limited {
+            return
+        }
+
+        let newStatus = await photoDiscovery.requestAuthorization()
+        guard newStatus == .authorized || newStatus == .limited else {
+            throw PhotoKitDiscoveryError.unauthorized(newStatus)
         }
     }
 
