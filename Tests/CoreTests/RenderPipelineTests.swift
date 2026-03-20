@@ -67,35 +67,6 @@ final class RenderPipelineTests: XCTestCase {
         XCTAssertFalse(resolved.warnings.contains { $0.message.contains("adjusted to Stereo") })
     }
 
-    func testResolveProfilePreservesDirectStillImageModeAcrossNormalizationSteps() {
-        let manager = ExportProfileManager()
-        let selected = ExportProfile(
-            container: .mp4,
-            videoCodec: .h264,
-            audioCodec: .aac,
-            frameRate: .smart,
-            resolution: .matchSourceMax,
-            dynamicRange: .hdr,
-            hdrFFmpegBinaryMode: .bundledPreferred,
-            audioLayout: .smart,
-            bitrateMode: .balanced,
-            stillImageProcessingMode: .directFFmpegInput
-        )
-
-        let resolved = manager.resolveProfile(
-            for: selected,
-            items: [
-                makeVideoMediaItem(frameRate: 30, audioChannelCount: 1),
-                makeVideoMediaItem(frameRate: 30, audioChannelCount: 2)
-            ]
-        )
-
-        XCTAssertEqual(resolved.effectiveProfile.resolution, .smart)
-        XCTAssertEqual(resolved.effectiveProfile.videoCodec, .hevc)
-        XCTAssertEqual(resolved.effectiveProfile.audioLayout, .stereo)
-        XCTAssertEqual(resolved.effectiveProfile.stillImageProcessingMode, .directFFmpegInput)
-    }
-
     func testResolveProfileForSDRKeepsSelectedCodecAndAudioLayout() {
         let manager = ExportProfileManager()
         let selected = ExportProfile(

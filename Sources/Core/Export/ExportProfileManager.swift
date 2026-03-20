@@ -188,8 +188,7 @@ public final class ExportProfileManager {
             hdrFFmpegBinaryMode: profile.hdrFFmpegBinaryMode,
             hdrHEVCEncoderMode: profile.hdrHEVCEncoderMode,
             audioLayout: profile.audioLayout,
-            bitrateMode: profile.bitrateMode,
-            stillImageProcessingMode: profile.stillImageProcessingMode
+            bitrateMode: profile.bitrateMode
         )
     }
 
@@ -204,8 +203,7 @@ public final class ExportProfileManager {
             hdrFFmpegBinaryMode: profile.hdrFFmpegBinaryMode,
             hdrHEVCEncoderMode: profile.hdrHEVCEncoderMode,
             audioLayout: profile.audioLayout,
-            bitrateMode: profile.bitrateMode,
-            stillImageProcessingMode: profile.stillImageProcessingMode
+            bitrateMode: profile.bitrateMode
         )
     }
 
@@ -220,8 +218,7 @@ public final class ExportProfileManager {
             hdrFFmpegBinaryMode: profile.hdrFFmpegBinaryMode,
             hdrHEVCEncoderMode: profile.hdrHEVCEncoderMode,
             audioLayout: audioLayout,
-            bitrateMode: profile.bitrateMode,
-            stillImageProcessingMode: profile.stillImageProcessingMode
+            bitrateMode: profile.bitrateMode
         )
     }
 
