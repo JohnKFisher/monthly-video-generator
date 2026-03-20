@@ -43,6 +43,68 @@ enum MediaDerivedBackgroundStyle {
     }
 }
 
+private extension StillImageClipFactory.AnimatedCollageMotionProfile {
+    func with(
+        driftX: CGFloat? = nil,
+        driftY: CGFloat? = nil,
+        rotationMultiplier: CGFloat? = nil,
+        scaleAmplitudeMultiplier: CGFloat? = nil,
+        staggerStep: CGFloat? = nil,
+        entranceFloor: CGFloat? = nil,
+        parallaxX: CGFloat? = nil,
+        parallaxY: CGFloat? = nil,
+        backgroundZoomBase: CGFloat? = nil,
+        backgroundZoomAmplitude: CGFloat? = nil,
+        backgroundCycles: CGFloat? = nil,
+        centerAttraction: CGFloat? = nil,
+        orbitDegrees: CGFloat? = nil,
+        bounceStrength: CGFloat? = nil
+    ) -> StillImageClipFactory.AnimatedCollageMotionProfile {
+        .init(
+            backgroundZoomBase: backgroundZoomBase ?? self.backgroundZoomBase,
+            backgroundZoomAmplitude: backgroundZoomAmplitude ?? self.backgroundZoomAmplitude,
+            backgroundCycles: backgroundCycles ?? self.backgroundCycles,
+            driftScaleX: driftX ?? self.driftScaleX,
+            driftScaleY: driftY ?? self.driftScaleY,
+            rotationMultiplier: rotationMultiplier ?? self.rotationMultiplier,
+            scaleAmplitudeMultiplier: scaleAmplitudeMultiplier ?? self.scaleAmplitudeMultiplier,
+            staggerStep: staggerStep ?? self.staggerStep,
+            entranceFloor: entranceFloor ?? self.entranceFloor,
+            parallaxOffsetX: parallaxX ?? self.parallaxOffsetX,
+            parallaxOffsetY: parallaxY ?? self.parallaxOffsetY,
+            centerAttraction: centerAttraction ?? self.centerAttraction,
+            orbitDegrees: orbitDegrees ?? self.orbitDegrees,
+            bounceStrength: bounceStrength ?? self.bounceStrength
+        )
+    }
+}
+
+private extension StillImageClipFactory.AnimatedCollageLightingStyle {
+    func with(
+        backgroundAlpha: CGFloat? = nil,
+        vignetteAlpha: CGFloat? = nil,
+        overlayGradientAlpha: CGFloat? = nil,
+        bloomAlpha: CGFloat? = nil,
+        edgeGlowAlpha: CGFloat? = nil,
+        lightLeakAlpha: CGFloat? = nil,
+        reflectionAlpha: CGFloat? = nil,
+        ghostOffset: CGFloat? = nil,
+        dustAlpha: CGFloat? = nil
+    ) -> StillImageClipFactory.AnimatedCollageLightingStyle {
+        .init(
+            backgroundAlpha: backgroundAlpha ?? self.backgroundAlpha,
+            vignetteAlpha: vignetteAlpha ?? self.vignetteAlpha,
+            overlayGradientAlpha: overlayGradientAlpha ?? self.overlayGradientAlpha,
+            bloomAlpha: bloomAlpha ?? self.bloomAlpha,
+            edgeGlowAlpha: edgeGlowAlpha ?? self.edgeGlowAlpha,
+            lightLeakAlpha: lightLeakAlpha ?? self.lightLeakAlpha,
+            reflectionAlpha: reflectionAlpha ?? self.reflectionAlpha,
+            ghostOffset: ghostOffset ?? self.ghostOffset,
+            dustAlpha: dustAlpha ?? self.dustAlpha
+        )
+    }
+}
+
 public final class StillImageClipFactory: @unchecked Sendable {
     private struct IntermediateColorConfiguration {
         let avColorPrimaries: String
@@ -131,10 +193,105 @@ public final class StillImageClipFactory: @unchecked Sendable {
         }
     }
 
-    private struct AnimatedTitleCardPalette {
+    fileprivate struct AnimatedTitleCardPalette {
         let start: CGColor
         let end: CGColor
         let accent: CGColor
+        let secondaryAccent: CGColor
+        let text: CGColor
+        let panel: CGColor
+        let highlight: CGColor
+
+        init(
+            start: CGColor,
+            end: CGColor,
+            accent: CGColor,
+            secondaryAccent: CGColor? = nil,
+            text: CGColor = CGColor(red: 1, green: 1, blue: 1, alpha: 0.98),
+            panel: CGColor = CGColor(gray: 0, alpha: 0.28),
+            highlight: CGColor? = nil
+        ) {
+            self.start = start
+            self.end = end
+            self.accent = accent
+            self.secondaryAccent = secondaryAccent ?? accent
+            self.text = text
+            self.panel = panel
+            self.highlight = highlight ?? CGColor(red: 1, green: 1, blue: 1, alpha: 0.22)
+        }
+    }
+
+    fileprivate enum AnimatedCollageTileShape {
+        case rounded
+        case framed
+        case cutout
+    }
+
+    fileprivate struct AnimatedCollageMotionProfile {
+        let backgroundZoomBase: CGFloat
+        let backgroundZoomAmplitude: CGFloat
+        let backgroundCycles: CGFloat
+        let driftScaleX: CGFloat
+        let driftScaleY: CGFloat
+        let rotationMultiplier: CGFloat
+        let scaleAmplitudeMultiplier: CGFloat
+        let staggerStep: CGFloat
+        let entranceFloor: CGFloat
+        let parallaxOffsetX: CGFloat
+        let parallaxOffsetY: CGFloat
+        let centerAttraction: CGFloat
+        let orbitDegrees: CGFloat
+        let bounceStrength: CGFloat
+    }
+
+    fileprivate struct AnimatedCollageLayoutTemplate {
+        let normalizedRects: [CGRect]
+        let tileShape: AnimatedCollageTileShape
+        let frameInsetRatio: CGFloat
+        let cornerRadiusRatio: CGFloat
+        let shuffleRects: Bool
+    }
+
+    fileprivate struct AnimatedCollageOverlayStyle {
+        let backdropRect: CGRect
+        let titleRect: CGRect
+        let contextRect: CGRect
+        let accentRect: CGRect
+        let cornerRadius: CGFloat
+        let alignment: CTTextAlignment
+        let titleFontName: String
+        let titleFontScale: CGFloat
+        let contextFontName: String
+        let contextFontScale: CGFloat
+        let accentColorUsesSecondary: Bool
+        let showBackdrop: Bool
+        let showAccentRule: Bool
+        let strokeAlpha: CGFloat
+        let glowAlpha: CGFloat
+    }
+
+    fileprivate struct AnimatedCollageLightingStyle {
+        let backgroundAlpha: CGFloat
+        let vignetteAlpha: CGFloat
+        let overlayGradientAlpha: CGFloat
+        let bloomAlpha: CGFloat
+        let edgeGlowAlpha: CGFloat
+        let lightLeakAlpha: CGFloat
+        let reflectionAlpha: CGFloat
+        let ghostOffset: CGFloat
+        let dustAlpha: CGFloat
+    }
+
+    fileprivate struct AnimatedCollageRecipe {
+        let paletteOptions: [AnimatedTitleCardPalette]
+        let layout: AnimatedCollageLayoutTemplate
+        let motion: AnimatedCollageMotionProfile
+        let overlay: AnimatedCollageOverlayStyle
+        let lighting: AnimatedCollageLightingStyle
+        let maxTileCount: Int
+        let tileOpacityRange: ClosedRange<CGFloat>
+        let tileRotationRange: ClosedRange<CGFloat>
+        let tileScaleRange: ClosedRange<CGFloat>
     }
 
     private struct TitleCardPreviewImage {
@@ -151,9 +308,11 @@ public final class StillImageClipFactory: @unchecked Sendable {
         let opacity: CGFloat
         let delay: CGFloat
         let phase: CGFloat
+        let depth: CGFloat
     }
 
     private struct AnimatedTitleCardFrameSet {
+        let recipe: AnimatedCollageRecipe
         let backgroundImage: CGImage?
         let backgroundBaseRect: CGRect?
         let gradientImage: CGImage?
@@ -374,6 +533,31 @@ public final class StillImageClipFactory: @unchecked Sendable {
                 colorSpace: titleCardColorSpace
             )
 
+        case _ where animatedCollageRecipe(for: treatment) != nil:
+            let collageRecipe = animatedCollageRecipe(for: treatment)!
+            let animatedFrameSet = try await makeAnimatedCollageVariantFrameSet(
+                descriptor: descriptor,
+                previewAssets: previewAssets,
+                renderSize: renderSize,
+                colorSpace: titleCardColorSpace,
+                recipe: collageRecipe
+            )
+            return try await makeVideoClip(
+                duration: duration,
+                renderSize: renderSize,
+                frameRate: frameRate,
+                colorConfiguration: titleCardColorConfiguration
+            ) { [animatedFrameSet] frameIndex, totalFrames in
+                let denominator = max(totalFrames - 1, 1)
+                let progress = CGFloat(frameIndex) / CGFloat(denominator)
+                return try self.makeAnimatedCollageVariantFrame(
+                    frameSet: animatedFrameSet,
+                    progress: progress,
+                    renderSize: renderSize,
+                    colorSpace: titleCardColorSpace
+                )
+            }
+
         default:
             let frameSet = try await makeConceptTitleCardFrameSet(
                 descriptor: descriptor,
@@ -463,7 +647,23 @@ public final class StillImageClipFactory: @unchecked Sendable {
                     // Fall back to the static card if previews fail to load or animate.
                 }
             }
-            fallthrough
+            let titleImage: CGImage
+            do {
+                titleImage = try await Self.makeStaticTitleCardRasterizedImage(
+                    title: resolvedTitle,
+                    contextLine: displayContextLine,
+                    renderSize: renderSize,
+                    colorSpace: titleCardColorSpace
+                )
+            } catch {
+                titleImage = try makeFallbackTitleCardImage(
+                    renderSize: renderSize,
+                    title: resolvedTitle,
+                    contextLine: displayContextLine,
+                    colorSpace: titleCardColorSpace
+                )
+            }
+            return TitleCardPreviewRenderer { _ in titleImage }
 
         case .legacyStatic:
             let titleImage: CGImage
@@ -483,6 +683,24 @@ public final class StillImageClipFactory: @unchecked Sendable {
                 )
             }
             return TitleCardPreviewRenderer { _ in titleImage }
+
+        case _ where animatedCollageRecipe(for: treatment) != nil:
+            let collageRecipe = animatedCollageRecipe(for: treatment)!
+            let animatedFrameSet = try await makeAnimatedCollageVariantFrameSet(
+                descriptor: descriptor,
+                previewAssets: previewAssets,
+                renderSize: renderSize,
+                colorSpace: titleCardColorSpace,
+                recipe: collageRecipe
+            )
+            return TitleCardPreviewRenderer { progress in
+                try self.makeAnimatedCollageVariantFrameImage(
+                    frameSet: animatedFrameSet,
+                    progress: progress,
+                    renderSize: renderSize,
+                    colorSpace: titleCardColorSpace
+                )
+            }
 
         default:
             let frameSet = try await makeConceptTitleCardFrameSet(
@@ -817,6 +1035,7 @@ public final class StillImageClipFactory: @unchecked Sendable {
         }
 
         return AnimatedTitleCardFrameSet(
+            recipe: currentCollageControlRecipe(),
             backgroundImage: backgroundImage,
             backgroundBaseRect: backgroundBaseRect,
             gradientImage: makeAnimatedTitleCardGradientImage(
@@ -1021,7 +1240,8 @@ public final class StillImageClipFactory: @unchecked Sendable {
                 scaleAmplitude: CGFloat.random(in: 0.02...0.05, using: &generator),
                 opacity: CGFloat.random(in: 0.78...0.95, using: &generator),
                 delay: CGFloat(index) * 0.06,
-                phase: phase
+                phase: phase,
+                depth: CGFloat(maxTiles - index) / CGFloat(max(maxTiles, 1))
             )
         }
     }
@@ -1337,6 +1557,1618 @@ public final class StillImageClipFactory: @unchecked Sendable {
         return context.makeImage()
     }
 
+    private func currentCollageControlRecipe() -> AnimatedCollageRecipe {
+        AnimatedCollageRecipe(
+            paletteOptions: currentCollagePaletteOptions(),
+            layout: currentCollageLayoutTemplate(),
+            motion: currentCollageMotionProfile(),
+            overlay: lowerLeftOverlayStyle(),
+            lighting: currentCollageLightingStyle(),
+            maxTileCount: 6,
+            tileOpacityRange: 0.78...0.95,
+            tileRotationRange: -7...7,
+            tileScaleRange: 0.02...0.05
+        )
+    }
+
+    private func animatedCollageRecipe(for treatment: OpeningTitleTreatment) -> AnimatedCollageRecipe? {
+        switch treatment {
+        case .collageSunriseGlow:
+            return AnimatedCollageRecipe(
+                paletteOptions: sunriseCollagePaletteOptions(),
+                layout: currentCollageLayoutTemplate(),
+                motion: gentleCollageMotionProfile(),
+                overlay: lowerLeftOverlayStyle(strokeAlpha: 0.08, glowAlpha: 0.14),
+                lighting: sunriseCollageLightingStyle(),
+                maxTileCount: 6,
+                tileOpacityRange: 0.82...0.96,
+                tileRotationRange: -5...5,
+                tileScaleRange: 0.018...0.04
+            )
+        case .collageMidnightNeon:
+            return AnimatedCollageRecipe(
+                paletteOptions: midnightNeonPaletteOptions(),
+                layout: currentCollageLayoutTemplate(),
+                motion: currentCollageMotionProfile().with(parallaxX: 0.01),
+                overlay: lowerLeftOverlayStyle(strokeAlpha: 0.14, glowAlpha: 0.12),
+                lighting: neonCollageLightingStyle(),
+                maxTileCount: 6,
+                tileOpacityRange: 0.84...0.98,
+                tileRotationRange: -8...8,
+                tileScaleRange: 0.022...0.055
+            )
+        case .collageSoftFilm:
+            return AnimatedCollageRecipe(
+                paletteOptions: softFilmPaletteOptions(),
+                layout: currentCollageLayoutTemplate(),
+                motion: gentleCollageMotionProfile(),
+                overlay: lowerLeftOverlayStyle(strokeAlpha: 0.04, glowAlpha: 0.02),
+                lighting: softFilmCollageLightingStyle(),
+                maxTileCount: 6,
+                tileOpacityRange: 0.80...0.92,
+                tileRotationRange: -4...4,
+                tileScaleRange: 0.012...0.03
+            )
+        case .collageDenseMosaic:
+            return AnimatedCollageRecipe(
+                paletteOptions: currentCollagePaletteOptions(),
+                layout: denseMosaicLayoutTemplate(),
+                motion: currentCollageMotionProfile(),
+                overlay: lowerLeftOverlayStyle(titleFontScale: 0.057),
+                lighting: currentCollageLightingStyle(),
+                maxTileCount: 10,
+                tileOpacityRange: 0.80...0.94,
+                tileRotationRange: -8...8,
+                tileScaleRange: 0.014...0.03
+            )
+        case .collageAiryHero:
+            return AnimatedCollageRecipe(
+                paletteOptions: currentCollagePaletteOptions(),
+                layout: airyHeroLayoutTemplate(),
+                motion: gentleCollageMotionProfile(),
+                overlay: lowerLeftOverlayStyle(titleFontScale: 0.062, contextFontScale: 0.021),
+                lighting: currentCollageLightingStyle().with(bloomAlpha: 0.08),
+                maxTileCount: 4,
+                tileOpacityRange: 0.84...0.98,
+                tileRotationRange: -5...5,
+                tileScaleRange: 0.02...0.04
+            )
+        case .collageGentleFloat:
+            return AnimatedCollageRecipe(
+                paletteOptions: currentCollagePaletteOptions(),
+                layout: currentCollageLayoutTemplate(),
+                motion: gentleCollageMotionProfile(),
+                overlay: lowerLeftOverlayStyle(),
+                lighting: currentCollageLightingStyle(),
+                maxTileCount: 6,
+                tileOpacityRange: 0.82...0.96,
+                tileRotationRange: -4...4,
+                tileScaleRange: 0.012...0.03
+            )
+        case .collageParallaxSweep:
+            return AnimatedCollageRecipe(
+                paletteOptions: currentCollagePaletteOptions(),
+                layout: currentCollageLayoutTemplate(),
+                motion: parallaxCollageMotionProfile(),
+                overlay: lowerLeftOverlayStyle(strokeAlpha: 0.08),
+                lighting: currentCollageLightingStyle().with(overlayGradientAlpha: 0.08),
+                maxTileCount: 6,
+                tileOpacityRange: 0.82...0.96,
+                tileRotationRange: -6...6,
+                tileScaleRange: 0.02...0.05
+            )
+        case .collageKineticBounce:
+            return AnimatedCollageRecipe(
+                paletteOptions: currentCollagePaletteOptions(),
+                layout: currentCollageLayoutTemplate(),
+                motion: kineticCollageMotionProfile(),
+                overlay: lowerLeftOverlayStyle(strokeAlpha: 0.10, glowAlpha: 0.06),
+                lighting: currentCollageLightingStyle().with(bloomAlpha: 0.06),
+                maxTileCount: 6,
+                tileOpacityRange: 0.84...0.98,
+                tileRotationRange: -9...9,
+                tileScaleRange: 0.024...0.06
+            )
+        case .collageGlassTitle:
+            return AnimatedCollageRecipe(
+                paletteOptions: glassCollagePaletteOptions(),
+                layout: currentCollageLayoutTemplate(),
+                motion: currentCollageMotionProfile(),
+                overlay: lowerLeftOverlayStyle(strokeAlpha: 0.18, glowAlpha: 0.14),
+                lighting: currentCollageLightingStyle().with(edgeGlowAlpha: 0.08),
+                maxTileCount: 6,
+                tileOpacityRange: 0.84...0.98,
+                tileRotationRange: -6...6,
+                tileScaleRange: 0.02...0.05
+            )
+        case .collageEdgeLit:
+            return AnimatedCollageRecipe(
+                paletteOptions: edgeLitPaletteOptions(),
+                layout: currentCollageLayoutTemplate(),
+                motion: currentCollageMotionProfile(),
+                overlay: lowerLeftOverlayStyle(strokeAlpha: 0.16, glowAlpha: 0.10),
+                lighting: edgeLitCollageLightingStyle(),
+                maxTileCount: 6,
+                tileOpacityRange: 0.84...0.98,
+                tileRotationRange: -7...7,
+                tileScaleRange: 0.02...0.05
+            )
+        case .collageRibbonArc:
+            return AnimatedCollageRecipe(
+                paletteOptions: sunriseCollagePaletteOptions(),
+                layout: ribbonArcLayoutTemplate(),
+                motion: parallaxCollageMotionProfile().with(orbitDegrees: 4),
+                overlay: centeredOverlayStyle(),
+                lighting: sunriseCollageLightingStyle().with(bloomAlpha: 0.12),
+                maxTileCount: 7,
+                tileOpacityRange: 0.82...0.96,
+                tileRotationRange: -10...10,
+                tileScaleRange: 0.018...0.04
+            )
+        case .collageCenterBurst:
+            return AnimatedCollageRecipe(
+                paletteOptions: currentCollagePaletteOptions(),
+                layout: centerBurstLayoutTemplate(),
+                motion: burstCollageMotionProfile(),
+                overlay: centeredOverlayStyle(glowAlpha: 0.06),
+                lighting: currentCollageLightingStyle().with(overlayGradientAlpha: 0.10, bloomAlpha: 0.08),
+                maxTileCount: 8,
+                tileOpacityRange: 0.82...0.96,
+                tileRotationRange: -12...12,
+                tileScaleRange: 0.02...0.06
+            )
+        case .collageGalleryWall:
+            return AnimatedCollageRecipe(
+                paletteOptions: galleryWallPaletteOptions(),
+                layout: galleryWallLayoutTemplate(),
+                motion: gentleCollageMotionProfile(),
+                overlay: lowerLeftOverlayStyle(titleFontScale: 0.052, contextFontScale: 0.019),
+                lighting: galleryWallLightingStyle(),
+                maxTileCount: 7,
+                tileOpacityRange: 0.88...1.0,
+                tileRotationRange: -3...3,
+                tileScaleRange: 0.01...0.025
+            )
+        case .collageFilmBurn:
+            return AnimatedCollageRecipe(
+                paletteOptions: filmBurnPaletteOptions(),
+                layout: currentCollageLayoutTemplate(),
+                motion: gentleCollageMotionProfile().with(backgroundCycles: 0.75),
+                overlay: lowerLeftOverlayStyle(strokeAlpha: 0.06),
+                lighting: filmBurnLightingStyle(),
+                maxTileCount: 6,
+                tileOpacityRange: 0.80...0.94,
+                tileRotationRange: -6...6,
+                tileScaleRange: 0.018...0.04
+            )
+        case .collageLightbox:
+            return AnimatedCollageRecipe(
+                paletteOptions: lightboxPaletteOptions(),
+                layout: lightboxLayoutTemplate(),
+                motion: gentleCollageMotionProfile().with(driftX: 0.45, driftY: 0.35),
+                overlay: centeredOverlayStyle(
+                    cornerRadius: 30,
+                    titleFontScale: 0.058,
+                    contextFontScale: 0.020,
+                    strokeAlpha: 0.10,
+                    glowAlpha: 0.0
+                ),
+                lighting: lightboxLightingStyle(),
+                maxTileCount: 6,
+                tileOpacityRange: 0.92...1.0,
+                tileRotationRange: -3...3,
+                tileScaleRange: 0.01...0.024
+            )
+        case .collageCutoutChaos:
+            return AnimatedCollageRecipe(
+                paletteOptions: scrapbookCutoutPaletteOptions(),
+                layout: cutoutChaosLayoutTemplate(),
+                motion: kineticCollageMotionProfile().with(centerAttraction: 0.25),
+                overlay: centeredOverlayStyle(glowAlpha: 0.08),
+                lighting: currentCollageLightingStyle().with(overlayGradientAlpha: 0.12, bloomAlpha: 0.10),
+                maxTileCount: 9,
+                tileOpacityRange: 0.82...0.98,
+                tileRotationRange: -14...14,
+                tileScaleRange: 0.02...0.06
+            )
+        case .collageReflectionPool:
+            return AnimatedCollageRecipe(
+                paletteOptions: glassCollagePaletteOptions(),
+                layout: reflectionPoolLayoutTemplate(),
+                motion: gentleCollageMotionProfile(),
+                overlay: centeredOverlayStyle(strokeAlpha: 0.16, glowAlpha: 0.10),
+                lighting: reflectionPoolLightingStyle(),
+                maxTileCount: 5,
+                tileOpacityRange: 0.88...1.0,
+                tileRotationRange: -5...5,
+                tileScaleRange: 0.012...0.028
+            )
+        case .collageCascadeColumns:
+            return AnimatedCollageRecipe(
+                paletteOptions: midnightNeonPaletteOptions(),
+                layout: cascadeColumnsLayoutTemplate(),
+                motion: cascadeCollageMotionProfile(),
+                overlay: centeredOverlayStyle(titleFontScale: 0.060, contextFontScale: 0.020, glowAlpha: 0.06),
+                lighting: edgeLitCollageLightingStyle().with(overlayGradientAlpha: 0.08),
+                maxTileCount: 8,
+                tileOpacityRange: 0.84...0.98,
+                tileRotationRange: -5...5,
+                tileScaleRange: 0.014...0.03
+            )
+        case .collageOrbitRing:
+            return AnimatedCollageRecipe(
+                paletteOptions: currentCollagePaletteOptions(),
+                layout: orbitRingLayoutTemplate(),
+                motion: orbitCollageMotionProfile(),
+                overlay: centeredOverlayStyle(glowAlpha: 0.08),
+                lighting: currentCollageLightingStyle().with(bloomAlpha: 0.08),
+                maxTileCount: 8,
+                tileOpacityRange: 0.84...0.98,
+                tileRotationRange: -8...8,
+                tileScaleRange: 0.016...0.04
+            )
+        case .collagePrismShift:
+            return AnimatedCollageRecipe(
+                paletteOptions: prismShiftPaletteOptions(),
+                layout: prismShiftLayoutTemplate(),
+                motion: parallaxCollageMotionProfile().with(orbitDegrees: 3),
+                overlay: centeredOverlayStyle(strokeAlpha: 0.18, glowAlpha: 0.14),
+                lighting: prismShiftLightingStyle(),
+                maxTileCount: 6,
+                tileOpacityRange: 0.84...0.98,
+                tileRotationRange: -7...7,
+                tileScaleRange: 0.018...0.045
+            )
+        default:
+            return nil
+        }
+    }
+
+    private func makeAnimatedCollageVariantFrameSet(
+        descriptor: OpeningTitleCardDescriptor,
+        previewAssets: [TitleCardPreviewAsset],
+        renderSize: CGSize,
+        colorSpace: CGColorSpace,
+        recipe: AnimatedCollageRecipe
+    ) async throws -> AnimatedTitleCardFrameSet {
+        let previewImages = try await loadAnimatedPreviewImages(
+            from: previewAssets,
+            targetDimension: Int(max(renderSize.width, renderSize.height).rounded())
+        )
+        guard !previewImages.isEmpty else {
+            throw RenderError.exportFailed("Animated collage previews unavailable")
+        }
+
+        var generator = SeededRandomNumberGenerator(seed: descriptor.variationSeed ^ 0xD1B54A32D192ED03)
+        var shuffledPreviews = previewImages
+        shuffledPreviews.shuffle(using: &generator)
+        let palette = animatedPalette(for: recipe, using: &generator)
+        let backgroundImage = makeBlurredBackgroundImage(
+            from: shuffledPreviews[0].image,
+            renderSize: renderSize,
+            colorSpace: colorSpace
+        )
+        let backgroundBaseRect = backgroundImage.map {
+            Self.aspectFillRect(
+                imageSize: CGSize(width: $0.width, height: $0.height),
+                into: renderSize
+            )
+        }
+
+        return AnimatedTitleCardFrameSet(
+            recipe: recipe,
+            backgroundImage: backgroundImage,
+            backgroundBaseRect: backgroundBaseRect,
+            gradientImage: makeAnimatedCollageGradientImage(
+                palette: palette,
+                recipe: recipe,
+                renderSize: renderSize,
+                colorSpace: colorSpace
+            ),
+            palette: palette,
+            tiles: makeAnimatedCollageVariantTiles(
+                previews: shuffledPreviews,
+                renderSize: renderSize,
+                generator: &generator,
+                recipe: recipe
+            ),
+            titleOverlayImage: makeAnimatedCollageOverlayImage(
+                title: descriptor.resolvedTitle,
+                contextLine: descriptor.displayContextLine,
+                palette: palette,
+                recipe: recipe,
+                renderSize: renderSize,
+                colorSpace: colorSpace
+            ),
+            title: descriptor.resolvedTitle,
+            contextLine: descriptor.displayContextLine
+        )
+    }
+
+    private func makeAnimatedCollageVariantFrame(
+        frameSet: AnimatedTitleCardFrameSet,
+        progress: CGFloat,
+        renderSize: CGSize,
+        colorSpace: CGColorSpace
+    ) throws -> CIImage {
+        CIImage(cgImage: try makeAnimatedCollageVariantFrameImage(
+            frameSet: frameSet,
+            progress: progress,
+            renderSize: renderSize,
+            colorSpace: colorSpace
+        ))
+    }
+
+    private func makeAnimatedCollageVariantFrameImage(
+        frameSet: AnimatedTitleCardFrameSet,
+        progress: CGFloat,
+        renderSize: CGSize,
+        colorSpace: CGColorSpace
+    ) throws -> CGImage {
+        let width = max(1, Int(renderSize.width.rounded()))
+        let height = max(1, Int(renderSize.height.rounded()))
+
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
+        ) else {
+            throw RenderError.exportFailed("Unable to allocate animated collage frame")
+        }
+
+        let recipe = frameSet.recipe
+        let fullRect = CGRect(origin: .zero, size: renderSize)
+        context.setFillColor(frameSet.palette.start)
+        context.fill(fullRect)
+
+        if let backgroundImage = frameSet.backgroundImage,
+           let baseRect = frameSet.backgroundBaseRect {
+            let oscillation = sin(progress * .pi * 2 * recipe.motion.backgroundCycles)
+            let zoom = recipe.motion.backgroundZoomBase + recipe.motion.backgroundZoomAmplitude * oscillation
+            let backgroundRect = scaled(rect: baseRect, scale: zoom).offsetBy(
+                dx: renderSize.width * recipe.motion.parallaxOffsetX * oscillation,
+                dy: renderSize.height * recipe.motion.parallaxOffsetY * cos(progress * .pi * 2 * recipe.motion.backgroundCycles)
+            )
+
+            context.saveGState()
+            context.setAlpha(recipe.lighting.backgroundAlpha)
+            context.draw(backgroundImage, in: backgroundRect)
+            context.restoreGState()
+        }
+
+        if let gradientImage = frameSet.gradientImage {
+            context.draw(gradientImage, in: fullRect)
+        }
+
+        drawAnimatedCollageLighting(
+            progress: progress,
+            renderSize: renderSize,
+            palette: frameSet.palette,
+            recipe: recipe,
+            colorSpace: colorSpace,
+            context: context
+        )
+
+        for tile in frameSet.tiles {
+            drawAnimatedCollageTile(
+                tile,
+                progress: progress,
+                renderSize: renderSize,
+                palette: frameSet.palette,
+                recipe: recipe,
+                context: context
+            )
+        }
+
+        if let titleOverlayImage = frameSet.titleOverlayImage {
+            context.draw(titleOverlayImage, in: fullRect)
+        }
+
+        guard let image = context.makeImage() else {
+            throw RenderError.exportFailed("Unable to create animated collage frame")
+        }
+        return image
+    }
+
+    private func animatedPalette(
+        for recipe: AnimatedCollageRecipe,
+        using generator: inout SeededRandomNumberGenerator
+    ) -> AnimatedTitleCardPalette {
+        recipe.paletteOptions[Int.random(in: 0..<recipe.paletteOptions.count, using: &generator)]
+    }
+
+    private func makeAnimatedCollageVariantTiles(
+        previews: [TitleCardPreviewImage],
+        renderSize: CGSize,
+        generator: inout SeededRandomNumberGenerator,
+        recipe: AnimatedCollageRecipe
+    ) -> [AnimatedTitleCardTile] {
+        var rects = recipe.layout.normalizedRects
+        if recipe.layout.shuffleRects {
+            rects.shuffle(using: &generator)
+        }
+
+        let maxTiles = min(previews.count, rects.count, recipe.maxTileCount)
+        return Array(previews.prefix(maxTiles).enumerated()).map { index, preview in
+            let xDrift = CGFloat.random(
+                in: -(renderSize.width * 0.03 * recipe.motion.driftScaleX)...(renderSize.width * 0.03 * recipe.motion.driftScaleX),
+                using: &generator
+            )
+            let yDrift = CGFloat.random(
+                in: -(renderSize.height * 0.025 * recipe.motion.driftScaleY)...(renderSize.height * 0.025 * recipe.motion.driftScaleY),
+                using: &generator
+            )
+            return AnimatedTitleCardTile(
+                preview: preview,
+                normalizedRect: rects[index],
+                baseRotation: CGFloat.random(in: recipe.tileRotationRange, using: &generator) * recipe.motion.rotationMultiplier,
+                drift: CGPoint(x: xDrift, y: yDrift),
+                scaleAmplitude: CGFloat.random(in: recipe.tileScaleRange, using: &generator) * recipe.motion.scaleAmplitudeMultiplier,
+                opacity: CGFloat.random(in: recipe.tileOpacityRange, using: &generator),
+                delay: CGFloat(index) * recipe.motion.staggerStep,
+                phase: CGFloat.random(in: 0...(CGFloat.pi * 2), using: &generator),
+                depth: CGFloat(maxTiles - index) / CGFloat(max(maxTiles, 1))
+            )
+        }
+    }
+
+    private func drawAnimatedCollageTile(
+        _ tile: AnimatedTitleCardTile,
+        progress: CGFloat,
+        renderSize: CGSize,
+        palette: AnimatedTitleCardPalette,
+        recipe: AnimatedCollageRecipe,
+        context: CGContext
+    ) {
+        var rect = CGRect(
+            x: tile.normalizedRect.minX * renderSize.width,
+            y: tile.normalizedRect.minY * renderSize.height,
+            width: tile.normalizedRect.width * renderSize.width,
+            height: tile.normalizedRect.height * renderSize.height
+        )
+
+        let easedProgress = max(0, min(1, (progress - tile.delay) / max(1 - tile.delay, 0.2)))
+        let oscillation = sin((progress + tile.phase) * .pi * 2 * recipe.motion.backgroundCycles)
+        rect.origin.x += tile.drift.x * oscillation
+        rect.origin.y += tile.drift.y * cos((progress + tile.phase) * .pi * 2 * recipe.motion.backgroundCycles)
+
+        if recipe.motion.centerAttraction > 0 {
+            let centerRect = CGRect(
+                x: renderSize.width * 0.5 - rect.width * 0.38,
+                y: renderSize.height * 0.5 - rect.height * 0.38,
+                width: rect.width * 0.76,
+                height: rect.height * 0.76
+            )
+            rect = interpolatedRect(
+                from: centerRect,
+                to: rect,
+                progress: pow(easedProgress, max(0.6, 1 - recipe.motion.centerAttraction * 0.4))
+            )
+        }
+
+        if recipe.motion.orbitDegrees != 0 {
+            let center = CGPoint(x: renderSize.width * 0.5, y: renderSize.height * 0.5)
+            let rectCenter = CGPoint(x: rect.midX, y: rect.midY)
+            let angle = recipe.motion.orbitDegrees * (.pi / 180) * sin((progress + tile.phase) * .pi * 2) * (0.35 + tile.depth * 0.65)
+            let rotatedCenter = rotated(point: rectCenter, around: center, by: angle)
+            rect.origin.x += rotatedCenter.x - rectCenter.x
+            rect.origin.y += rotatedCenter.y - rectCenter.y
+        }
+
+        let bounce = 1 + recipe.motion.bounceStrength * sin(easedProgress * .pi) * (1 - easedProgress)
+        rect = scaled(rect: rect, scale: (1.0 + (tile.scaleAmplitude * easedProgress)) * bounce)
+        let alpha = tile.opacity * min(max(easedProgress * 1.3, recipe.motion.entranceFloor), 1)
+
+        if recipe.lighting.ghostOffset > 0 {
+            let ghostOffset = renderSize.width * recipe.lighting.ghostOffset
+            drawGhostTile(tile.preview.image, rect: rect.offsetBy(dx: ghostOffset, dy: ghostOffset * 0.16), color: palette.accent, alpha: alpha * 0.12, shape: recipe.layout.tileShape, cornerRadius: rect.width * recipe.layout.cornerRadiusRatio, frameInsetRatio: recipe.layout.frameInsetRatio, context: context)
+            drawGhostTile(tile.preview.image, rect: rect.offsetBy(dx: -ghostOffset * 0.7, dy: ghostOffset * 0.10), color: palette.secondaryAccent, alpha: alpha * 0.10, shape: recipe.layout.tileShape, cornerRadius: rect.width * recipe.layout.cornerRadiusRatio, frameInsetRatio: recipe.layout.frameInsetRatio, context: context)
+        }
+
+        context.saveGState()
+        context.translateBy(x: rect.midX, y: rect.midY)
+        context.rotate(by: tile.baseRotation * (.pi / 180))
+        context.translateBy(x: -rect.midX, y: -rect.midY)
+        context.setAlpha(alpha)
+        context.setShadow(offset: CGSize(width: 0, height: -10), blur: max(rect.width * 0.035, 12), color: CGColor(gray: 0, alpha: 0.35 + (tile.depth * 0.12)))
+
+        switch recipe.layout.tileShape {
+        case .rounded:
+            let clipPath = CGPath(roundedRect: rect, cornerWidth: rect.width * recipe.layout.cornerRadiusRatio, cornerHeight: rect.width * recipe.layout.cornerRadiusRatio, transform: nil)
+            context.addPath(clipPath)
+            context.clip()
+            let imageRect = Self.aspectFillRect(
+                imageSize: CGSize(width: tile.preview.image.width, height: tile.preview.image.height),
+                into: rect.size
+            ).offsetBy(dx: rect.minX, dy: rect.minY)
+            context.draw(tile.preview.image, in: imageRect)
+        case .framed:
+            let outerPath = CGPath(roundedRect: rect, cornerWidth: rect.width * recipe.layout.cornerRadiusRatio, cornerHeight: rect.width * recipe.layout.cornerRadiusRatio, transform: nil)
+            context.setFillColor(palette.panel.copy(alpha: 0.94) ?? palette.panel)
+            context.addPath(outerPath)
+            context.fillPath()
+            let inset = rect.width * recipe.layout.frameInsetRatio
+            let imageRect = rect.insetBy(dx: inset, dy: inset)
+            let innerPath = CGPath(roundedRect: imageRect, cornerWidth: imageRect.width * max(recipe.layout.cornerRadiusRatio - 0.02, 0.01), cornerHeight: imageRect.width * max(recipe.layout.cornerRadiusRatio - 0.02, 0.01), transform: nil)
+            context.addPath(innerPath)
+            context.clip()
+            let fillRect = Self.aspectFillRect(
+                imageSize: CGSize(width: tile.preview.image.width, height: tile.preview.image.height),
+                into: imageRect.size
+            ).offsetBy(dx: imageRect.minX, dy: imageRect.minY)
+            context.draw(tile.preview.image, in: fillRect)
+        case .cutout:
+            let clipPath = makeCutoutPath(rect: rect, phase: tile.phase)
+            context.addPath(clipPath)
+            context.clip()
+            let imageRect = Self.aspectFillRect(
+                imageSize: CGSize(width: tile.preview.image.width, height: tile.preview.image.height),
+                into: rect.size
+            ).offsetBy(dx: rect.minX, dy: rect.minY)
+            context.draw(tile.preview.image, in: imageRect)
+        }
+        context.restoreGState()
+
+        if recipe.lighting.reflectionAlpha > 0 {
+            drawReflectedTile(
+                tile.preview.image,
+                rect: rect,
+                alpha: alpha * recipe.lighting.reflectionAlpha,
+                shape: recipe.layout.tileShape,
+                cornerRadius: rect.width * recipe.layout.cornerRadiusRatio,
+                frameInsetRatio: recipe.layout.frameInsetRatio,
+                context: context
+            )
+        }
+
+        context.saveGState()
+        let path: CGPath
+        switch recipe.layout.tileShape {
+        case .rounded:
+            path = CGPath(roundedRect: rect, cornerWidth: rect.width * recipe.layout.cornerRadiusRatio, cornerHeight: rect.width * recipe.layout.cornerRadiusRatio, transform: nil)
+        case .framed:
+            path = CGPath(roundedRect: rect, cornerWidth: rect.width * recipe.layout.cornerRadiusRatio, cornerHeight: rect.width * recipe.layout.cornerRadiusRatio, transform: nil)
+        case .cutout:
+            path = makeCutoutPath(rect: rect, phase: tile.phase)
+        }
+        context.addPath(path)
+        context.setStrokeColor((recipe.layout.tileShape == .framed ? palette.highlight : palette.accent).copy(alpha: 0.30) ?? palette.accent)
+        context.setLineWidth(max(rect.width * 0.006, 2))
+        context.strokePath()
+        context.restoreGState()
+
+        if recipe.lighting.edgeGlowAlpha > 0 {
+            context.saveGState()
+            context.addPath(path)
+            context.setStrokeColor((palette.secondaryAccent.copy(alpha: recipe.lighting.edgeGlowAlpha) ?? palette.secondaryAccent))
+            context.setLineWidth(max(rect.width * 0.012, 4))
+            context.setShadow(offset: .zero, blur: max(rect.width * 0.05, 16), color: palette.secondaryAccent.copy(alpha: recipe.lighting.edgeGlowAlpha * 0.8))
+            context.strokePath()
+            context.restoreGState()
+        }
+    }
+
+    private func drawAnimatedCollageLighting(
+        progress: CGFloat,
+        renderSize: CGSize,
+        palette: AnimatedTitleCardPalette,
+        recipe: AnimatedCollageRecipe,
+        colorSpace: CGColorSpace,
+        context: CGContext
+    ) {
+        let fullRect = CGRect(origin: .zero, size: renderSize)
+        if recipe.lighting.overlayGradientAlpha > 0 {
+            drawFullCanvasGradient(
+                colors: [
+                    palette.accent.copy(alpha: recipe.lighting.overlayGradientAlpha) ?? palette.accent,
+                    palette.end.copy(alpha: 0) ?? palette.end
+                ],
+                start: CGPoint(x: 0, y: renderSize.height),
+                end: CGPoint(x: renderSize.width, y: 0),
+                colorSpace: colorSpace,
+                context: context,
+                rect: fullRect
+            )
+        }
+
+        if recipe.lighting.bloomAlpha > 0 {
+            drawRadialGlow(
+                center: CGPoint(x: renderSize.width * (0.18 + 0.04 * sin(progress * .pi * 2)), y: renderSize.height * 0.82),
+                radius: renderSize.width * 0.38,
+                color: palette.accent.copy(alpha: recipe.lighting.bloomAlpha) ?? palette.accent,
+                colorSpace: colorSpace,
+                context: context
+            )
+            drawRadialGlow(
+                center: CGPoint(x: renderSize.width * 0.78, y: renderSize.height * (0.24 + 0.03 * cos(progress * .pi * 2))),
+                radius: renderSize.width * 0.28,
+                color: palette.secondaryAccent.copy(alpha: recipe.lighting.bloomAlpha * 0.75) ?? palette.secondaryAccent,
+                colorSpace: colorSpace,
+                context: context
+            )
+        }
+
+        if recipe.lighting.lightLeakAlpha > 0 {
+            let leakRect = CGRect(
+                x: renderSize.width * (0.02 + 0.06 * sin(progress * .pi * 2)),
+                y: renderSize.height * 0.10,
+                width: renderSize.width * 0.22,
+                height: renderSize.height * 0.95
+            )
+            drawLinearLeak(in: leakRect, color: palette.accent.copy(alpha: recipe.lighting.lightLeakAlpha) ?? palette.accent, colorSpace: colorSpace, context: context)
+        }
+
+        if recipe.lighting.vignetteAlpha > 0 {
+            drawVignette(in: fullRect, alpha: recipe.lighting.vignetteAlpha, colorSpace: colorSpace, context: context)
+        }
+
+        if recipe.lighting.dustAlpha > 0 {
+            drawDust(
+                in: fullRect,
+                alpha: recipe.lighting.dustAlpha,
+                context: context
+            )
+        }
+    }
+
+    private func makeAnimatedCollageGradientImage(
+        palette: AnimatedTitleCardPalette,
+        recipe: AnimatedCollageRecipe,
+        renderSize: CGSize,
+        colorSpace: CGColorSpace
+    ) -> CGImage? {
+        guard let context = bitmapContext(renderSize: renderSize, colorSpace: colorSpace) else {
+            return nil
+        }
+
+        drawFullCanvasGradient(
+            colors: [
+                palette.start.copy(alpha: 0.12) ?? palette.start,
+                palette.end.copy(alpha: 0.82) ?? palette.end
+            ],
+            start: CGPoint(x: 0, y: renderSize.height),
+            end: CGPoint(x: renderSize.width, y: 0),
+            colorSpace: colorSpace,
+            context: context,
+            rect: CGRect(origin: .zero, size: renderSize)
+        )
+        if recipe.lighting.overlayGradientAlpha > 0 {
+            drawFullCanvasGradient(
+                colors: [
+                    palette.secondaryAccent.copy(alpha: recipe.lighting.overlayGradientAlpha * 0.8) ?? palette.secondaryAccent,
+                    palette.start.copy(alpha: 0) ?? palette.start
+                ],
+                start: CGPoint(x: renderSize.width, y: renderSize.height * 0.9),
+                end: CGPoint(x: 0, y: 0),
+                colorSpace: colorSpace,
+                context: context,
+                rect: CGRect(origin: .zero, size: renderSize)
+            )
+        }
+        return context.makeImage()
+    }
+
+    private func makeAnimatedCollageOverlayImage(
+        title: String,
+        contextLine: String?,
+        palette: AnimatedTitleCardPalette,
+        recipe: AnimatedCollageRecipe,
+        renderSize: CGSize,
+        colorSpace: CGColorSpace
+    ) -> CGImage? {
+        guard let context = bitmapContext(renderSize: renderSize, colorSpace: colorSpace) else {
+            return nil
+        }
+        drawAnimatedCollageOverlay(
+            title: title,
+            contextLine: contextLine,
+            palette: palette,
+            recipe: recipe,
+            renderSize: renderSize,
+            context: context
+        )
+        return context.makeImage()
+    }
+
+    private func drawAnimatedCollageOverlay(
+        title: String,
+        contextLine: String?,
+        palette: AnimatedTitleCardPalette,
+        recipe: AnimatedCollageRecipe,
+        renderSize: CGSize,
+        context: CGContext
+    ) {
+        let overlay = recipe.overlay
+        let backdropRect = resolvedRect(from: overlay.backdropRect, in: renderSize)
+        let titleRect = resolvedRect(from: overlay.titleRect, in: renderSize)
+        let contextRect = resolvedRect(from: overlay.contextRect, in: renderSize)
+        let accentRect = CGRect(
+            x: renderSize.width * overlay.accentRect.minX,
+            y: renderSize.height * overlay.accentRect.minY,
+            width: max(renderSize.width * overlay.accentRect.width, 96),
+            height: max(renderSize.height * overlay.accentRect.height, 6)
+        )
+        let accentColor = overlay.accentColorUsesSecondary ? palette.secondaryAccent : palette.accent
+
+        if overlay.showBackdrop {
+            let backdropPath = CGPath(roundedRect: backdropRect, cornerWidth: overlay.cornerRadius, cornerHeight: overlay.cornerRadius, transform: nil)
+            context.saveGState()
+            context.setFillColor(palette.panel)
+            context.addPath(backdropPath)
+            context.fillPath()
+            context.restoreGState()
+
+            if overlay.strokeAlpha > 0 {
+                context.saveGState()
+                context.addPath(backdropPath)
+                context.setStrokeColor((palette.highlight.copy(alpha: overlay.strokeAlpha) ?? palette.highlight))
+                context.setLineWidth(2)
+                context.strokePath()
+                context.restoreGState()
+            }
+
+            if overlay.glowAlpha > 0 {
+                context.saveGState()
+                context.addPath(backdropPath)
+                context.setStrokeColor((accentColor.copy(alpha: overlay.glowAlpha) ?? accentColor))
+                context.setLineWidth(5)
+                context.setShadow(offset: .zero, blur: 24, color: accentColor.copy(alpha: overlay.glowAlpha * 0.75))
+                context.strokePath()
+                context.restoreGState()
+            }
+        }
+
+        if overlay.showAccentRule {
+            context.saveGState()
+            context.setFillColor(accentColor)
+            context.fill(accentRect)
+            context.restoreGState()
+        }
+
+        if let contextLine, !contextLine.isEmpty {
+            let contextStyle = paragraphStyle(alignment: overlay.alignment, lineBreakMode: .byTruncatingTail)
+            let contextAttributes: [NSAttributedString.Key: Any] = [
+                NSAttributedString.Key(rawValue: kCTFontAttributeName as String): CTFontCreateWithName(overlay.contextFontName as CFString, max(renderSize.width * overlay.contextFontScale, 18), nil),
+                NSAttributedString.Key(rawValue: kCTForegroundColorAttributeName as String): palette.text.copy(alpha: 0.85) ?? palette.text,
+                NSAttributedString.Key(rawValue: kCTParagraphStyleAttributeName as String): contextStyle,
+                NSAttributedString.Key(rawValue: kCTKernAttributeName as String): 1.6
+            ]
+            drawAttributedString(
+                NSAttributedString(string: contextLine, attributes: contextAttributes),
+                in: contextRect,
+                context: context
+            )
+        }
+
+        let titleStyle = paragraphStyle(alignment: overlay.alignment, lineBreakMode: .byWordWrapping)
+        let titleAttributes: [NSAttributedString.Key: Any] = [
+            NSAttributedString.Key(rawValue: kCTFontAttributeName as String): CTFontCreateWithName(overlay.titleFontName as CFString, max(renderSize.width * overlay.titleFontScale, 40), nil),
+            NSAttributedString.Key(rawValue: kCTForegroundColorAttributeName as String): palette.text,
+            NSAttributedString.Key(rawValue: kCTParagraphStyleAttributeName as String): titleStyle
+        ]
+        drawAttributedString(
+            NSAttributedString(string: title, attributes: titleAttributes),
+            in: titleRect,
+            context: context
+        )
+    }
+
+    private func drawGhostTile(
+        _ image: CGImage,
+        rect: CGRect,
+        color: CGColor,
+        alpha: CGFloat,
+        shape: AnimatedCollageTileShape,
+        cornerRadius: CGFloat,
+        frameInsetRatio: CGFloat,
+        context: CGContext
+    ) {
+        context.saveGState()
+        context.setAlpha(alpha)
+        switch shape {
+        case .rounded:
+            let path = CGPath(roundedRect: rect, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
+            context.addPath(path)
+            context.clip()
+            context.setFillColor(color)
+            context.fill(rect)
+        case .framed:
+            let outer = CGPath(roundedRect: rect, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
+            context.addPath(outer)
+            context.clip()
+            context.setFillColor(color)
+            context.fill(rect)
+        case .cutout:
+            let path = makeCutoutPath(rect: rect, phase: 0.3)
+            context.addPath(path)
+            context.clip()
+            context.setFillColor(color)
+            context.fill(rect)
+        }
+        context.restoreGState()
+    }
+
+    private func drawReflectedTile(
+        _ image: CGImage,
+        rect: CGRect,
+        alpha: CGFloat,
+        shape: AnimatedCollageTileShape,
+        cornerRadius: CGFloat,
+        frameInsetRatio: CGFloat,
+        context: CGContext
+    ) {
+        let reflectionRect = CGRect(
+            x: rect.minX,
+            y: rect.minY - rect.height * 0.92,
+            width: rect.width,
+            height: rect.height
+        )
+        context.saveGState()
+        context.setAlpha(alpha)
+        let clipPath: CGPath
+        switch shape {
+        case .rounded, .framed:
+            clipPath = CGPath(roundedRect: reflectionRect, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
+        case .cutout:
+            clipPath = makeCutoutPath(rect: reflectionRect, phase: 0.6)
+        }
+        context.addPath(clipPath)
+        context.clip()
+        context.translateBy(x: reflectionRect.midX, y: reflectionRect.midY)
+        context.scaleBy(x: 1, y: -1)
+        context.translateBy(x: -reflectionRect.midX, y: -reflectionRect.midY)
+        let imageRect = Self.aspectFillRect(
+            imageSize: CGSize(width: image.width, height: image.height),
+            into: reflectionRect.size
+        ).offsetBy(dx: reflectionRect.minX, dy: reflectionRect.minY)
+        context.draw(image, in: imageRect)
+        context.restoreGState()
+    }
+
+    private func drawRadialGlow(
+        center: CGPoint,
+        radius: CGFloat,
+        color: CGColor,
+        colorSpace: CGColorSpace,
+        context: CGContext
+    ) {
+        guard let gradient = CGGradient(
+            colorsSpace: colorSpace,
+            colors: [
+                color,
+                color.copy(alpha: 0) ?? color
+            ] as CFArray,
+            locations: [0, 1]
+        ) else {
+            return
+        }
+        context.saveGState()
+        context.setBlendMode(.screen)
+        context.drawRadialGradient(gradient, startCenter: center, startRadius: 0, endCenter: center, endRadius: radius, options: [])
+        context.restoreGState()
+    }
+
+    private func drawLinearLeak(
+        in rect: CGRect,
+        color: CGColor,
+        colorSpace: CGColorSpace,
+        context: CGContext
+    ) {
+        guard let gradient = CGGradient(
+            colorsSpace: colorSpace,
+            colors: [
+                color.copy(alpha: 0) ?? color,
+                color,
+                color.copy(alpha: 0) ?? color
+            ] as CFArray,
+            locations: [0, 0.5, 1]
+        ) else {
+            return
+        }
+        context.saveGState()
+        context.setBlendMode(.screen)
+        context.addRect(rect)
+        context.clip()
+        context.drawLinearGradient(gradient, start: CGPoint(x: rect.minX, y: rect.minY), end: CGPoint(x: rect.maxX, y: rect.maxY), options: [])
+        context.restoreGState()
+    }
+
+    private func drawVignette(
+        in rect: CGRect,
+        alpha: CGFloat,
+        colorSpace: CGColorSpace,
+        context: CGContext
+    ) {
+        let color = CGColor(gray: 0, alpha: alpha)
+        guard let gradient = CGGradient(
+            colorsSpace: colorSpace,
+            colors: [
+                color.copy(alpha: 0) ?? color,
+                color
+            ] as CFArray,
+            locations: [0.25, 1]
+        ) else {
+            return
+        }
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        context.saveGState()
+        context.drawRadialGradient(
+            gradient,
+            startCenter: center,
+            startRadius: min(rect.width, rect.height) * 0.18,
+            endCenter: center,
+            endRadius: max(rect.width, rect.height) * 0.72,
+            options: []
+        )
+        context.restoreGState()
+    }
+
+    private func drawDust(
+        in rect: CGRect,
+        alpha: CGFloat,
+        context: CGContext
+    ) {
+        context.saveGState()
+        context.setFillColor(CGColor(gray: 1, alpha: alpha))
+        for index in 0..<24 {
+            let x = rect.width * (0.08 + 0.84 * abs(sin(CGFloat(index) * 13.17)))
+            let y = rect.height * (0.10 + 0.80 * abs(cos(CGFloat(index) * 7.41)))
+            let size = max(1.2, rect.width * 0.0016 * (0.6 + abs(sin(CGFloat(index) * 2.91))))
+            context.fillEllipse(in: CGRect(x: x, y: y, width: size, height: size))
+        }
+        context.restoreGState()
+    }
+
+    private func resolvedRect(from normalizedRect: CGRect, in renderSize: CGSize) -> CGRect {
+        CGRect(
+            x: normalizedRect.minX * renderSize.width,
+            y: normalizedRect.minY * renderSize.height,
+            width: normalizedRect.width * renderSize.width,
+            height: normalizedRect.height * renderSize.height
+        )
+    }
+
+    private func interpolatedRect(from start: CGRect, to end: CGRect, progress: CGFloat) -> CGRect {
+        CGRect(
+            x: start.minX + (end.minX - start.minX) * progress,
+            y: start.minY + (end.minY - start.minY) * progress,
+            width: start.width + (end.width - start.width) * progress,
+            height: start.height + (end.height - start.height) * progress
+        )
+    }
+
+    private func rotated(point: CGPoint, around center: CGPoint, by angle: CGFloat) -> CGPoint {
+        let dx = point.x - center.x
+        let dy = point.y - center.y
+        return CGPoint(
+            x: center.x + (dx * cos(angle)) - (dy * sin(angle)),
+            y: center.y + (dx * sin(angle)) + (dy * cos(angle))
+        )
+    }
+
+    private func makeCutoutPath(rect: CGRect, phase: CGFloat) -> CGPath {
+        let inset = rect.width * 0.06
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: rect.minX + inset * 0.3, y: rect.minY + inset * 0.9))
+        path.addLine(to: CGPoint(x: rect.minX + rect.width * 0.42, y: rect.minY + inset * 0.15))
+        path.addLine(to: CGPoint(x: rect.maxX - inset * 0.7, y: rect.minY + rect.height * 0.12))
+        path.addLine(to: CGPoint(x: rect.maxX - inset * 0.2, y: rect.minY + rect.height * 0.46))
+        path.addLine(to: CGPoint(x: rect.maxX - inset * 0.8, y: rect.maxY - inset * 0.3))
+        path.addLine(to: CGPoint(x: rect.minX + rect.width * 0.55, y: rect.maxY - inset * 0.2))
+        path.addLine(to: CGPoint(x: rect.minX + inset * 0.1, y: rect.maxY - rect.height * 0.18))
+        path.addLine(to: CGPoint(x: rect.minX + inset * 0.5, y: rect.minY + rect.height * 0.28))
+        path.closeSubpath()
+        return path
+    }
+
+    private func currentCollagePaletteOptions() -> [AnimatedTitleCardPalette] {
+        [
+            AnimatedTitleCardPalette(
+                start: CGColor(red: 0.05, green: 0.11, blue: 0.19, alpha: 1.0),
+                end: CGColor(red: 0.07, green: 0.05, blue: 0.16, alpha: 1.0),
+                accent: CGColor(red: 0.25, green: 0.83, blue: 0.78, alpha: 1.0)
+            ),
+            AnimatedTitleCardPalette(
+                start: CGColor(red: 0.12, green: 0.08, blue: 0.05, alpha: 1.0),
+                end: CGColor(red: 0.07, green: 0.06, blue: 0.16, alpha: 1.0),
+                accent: CGColor(red: 0.97, green: 0.69, blue: 0.28, alpha: 1.0)
+            ),
+            AnimatedTitleCardPalette(
+                start: CGColor(red: 0.08, green: 0.05, blue: 0.11, alpha: 1.0),
+                end: CGColor(red: 0.04, green: 0.10, blue: 0.14, alpha: 1.0),
+                accent: CGColor(red: 0.94, green: 0.52, blue: 0.62, alpha: 1.0)
+            ),
+            AnimatedTitleCardPalette(
+                start: CGColor(red: 0.06, green: 0.10, blue: 0.08, alpha: 1.0),
+                end: CGColor(red: 0.04, green: 0.06, blue: 0.12, alpha: 1.0),
+                accent: CGColor(red: 0.53, green: 0.88, blue: 0.43, alpha: 1.0)
+            )
+        ]
+    }
+
+    private func sunriseCollagePaletteOptions() -> [AnimatedTitleCardPalette] {
+        [
+            AnimatedTitleCardPalette(
+                start: CGColor(red: 0.28, green: 0.12, blue: 0.11, alpha: 1),
+                end: CGColor(red: 0.10, green: 0.09, blue: 0.17, alpha: 1),
+                accent: CGColor(red: 0.98, green: 0.74, blue: 0.43, alpha: 1),
+                secondaryAccent: CGColor(red: 0.98, green: 0.44, blue: 0.35, alpha: 1),
+                panel: CGColor(red: 0.05, green: 0.04, blue: 0.06, alpha: 0.26)
+            ),
+            AnimatedTitleCardPalette(
+                start: CGColor(red: 0.24, green: 0.10, blue: 0.08, alpha: 1),
+                end: CGColor(red: 0.09, green: 0.07, blue: 0.16, alpha: 1),
+                accent: CGColor(red: 1.0, green: 0.82, blue: 0.49, alpha: 1),
+                secondaryAccent: CGColor(red: 0.93, green: 0.47, blue: 0.31, alpha: 1),
+                panel: CGColor(red: 0.08, green: 0.05, blue: 0.06, alpha: 0.24)
+            )
+        ]
+    }
+
+    private func midnightNeonPaletteOptions() -> [AnimatedTitleCardPalette] {
+        [
+            AnimatedTitleCardPalette(
+                start: CGColor(red: 0.03, green: 0.05, blue: 0.12, alpha: 1),
+                end: CGColor(red: 0.08, green: 0.02, blue: 0.14, alpha: 1),
+                accent: CGColor(red: 0.20, green: 0.92, blue: 0.98, alpha: 1),
+                secondaryAccent: CGColor(red: 0.93, green: 0.24, blue: 0.76, alpha: 1),
+                panel: CGColor(red: 0.03, green: 0.04, blue: 0.08, alpha: 0.30),
+                highlight: CGColor(red: 0.74, green: 0.86, blue: 1, alpha: 0.30)
+            )
+        ]
+    }
+
+    private func softFilmPaletteOptions() -> [AnimatedTitleCardPalette] {
+        [
+            AnimatedTitleCardPalette(
+                start: CGColor(red: 0.26, green: 0.24, blue: 0.18, alpha: 1),
+                end: CGColor(red: 0.12, green: 0.13, blue: 0.15, alpha: 1),
+                accent: CGColor(red: 0.87, green: 0.74, blue: 0.52, alpha: 1),
+                secondaryAccent: CGColor(red: 0.54, green: 0.63, blue: 0.44, alpha: 1),
+                panel: CGColor(red: 0.10, green: 0.11, blue: 0.10, alpha: 0.24),
+                highlight: CGColor(red: 0.98, green: 0.94, blue: 0.86, alpha: 0.18)
+            )
+        ]
+    }
+
+    private func glassCollagePaletteOptions() -> [AnimatedTitleCardPalette] {
+        [
+            AnimatedTitleCardPalette(
+                start: CGColor(red: 0.05, green: 0.09, blue: 0.16, alpha: 1),
+                end: CGColor(red: 0.04, green: 0.05, blue: 0.10, alpha: 1),
+                accent: CGColor(red: 0.64, green: 0.87, blue: 1.0, alpha: 1),
+                secondaryAccent: CGColor(red: 0.34, green: 0.79, blue: 0.88, alpha: 1),
+                panel: CGColor(red: 0.82, green: 0.90, blue: 1.0, alpha: 0.16),
+                highlight: CGColor(red: 0.98, green: 1.0, blue: 1.0, alpha: 0.34)
+            )
+        ]
+    }
+
+    private func edgeLitPaletteOptions() -> [AnimatedTitleCardPalette] {
+        [
+            AnimatedTitleCardPalette(
+                start: CGColor(red: 0.03, green: 0.05, blue: 0.09, alpha: 1),
+                end: CGColor(red: 0.02, green: 0.03, blue: 0.06, alpha: 1),
+                accent: CGColor(red: 0.40, green: 0.86, blue: 0.98, alpha: 1),
+                secondaryAccent: CGColor(red: 0.86, green: 0.96, blue: 1.0, alpha: 1),
+                panel: CGColor(red: 0.03, green: 0.05, blue: 0.08, alpha: 0.30),
+                highlight: CGColor(red: 0.72, green: 0.92, blue: 1.0, alpha: 0.34)
+            )
+        ]
+    }
+
+    private func galleryWallPaletteOptions() -> [AnimatedTitleCardPalette] {
+        [
+            AnimatedTitleCardPalette(
+                start: CGColor(red: 0.11, green: 0.10, blue: 0.09, alpha: 1),
+                end: CGColor(red: 0.06, green: 0.06, blue: 0.06, alpha: 1),
+                accent: CGColor(red: 0.90, green: 0.72, blue: 0.48, alpha: 1),
+                secondaryAccent: CGColor(red: 0.82, green: 0.79, blue: 0.72, alpha: 1),
+                panel: CGColor(red: 0.08, green: 0.08, blue: 0.08, alpha: 0.62),
+                highlight: CGColor(red: 0.96, green: 0.93, blue: 0.86, alpha: 0.24)
+            )
+        ]
+    }
+
+    private func filmBurnPaletteOptions() -> [AnimatedTitleCardPalette] {
+        [
+            AnimatedTitleCardPalette(
+                start: CGColor(red: 0.16, green: 0.08, blue: 0.04, alpha: 1),
+                end: CGColor(red: 0.05, green: 0.03, blue: 0.04, alpha: 1),
+                accent: CGColor(red: 1.0, green: 0.75, blue: 0.36, alpha: 1),
+                secondaryAccent: CGColor(red: 0.93, green: 0.35, blue: 0.18, alpha: 1),
+                panel: CGColor(red: 0.06, green: 0.04, blue: 0.03, alpha: 0.26)
+            )
+        ]
+    }
+
+    private func lightboxPaletteOptions() -> [AnimatedTitleCardPalette] {
+        [
+            AnimatedTitleCardPalette(
+                start: CGColor(red: 0.95, green: 0.94, blue: 0.91, alpha: 1),
+                end: CGColor(red: 0.88, green: 0.86, blue: 0.82, alpha: 1),
+                accent: CGColor(red: 0.18, green: 0.56, blue: 0.78, alpha: 1),
+                secondaryAccent: CGColor(red: 0.88, green: 0.48, blue: 0.26, alpha: 1),
+                text: CGColor(red: 0.12, green: 0.14, blue: 0.18, alpha: 1),
+                panel: CGColor(red: 0.98, green: 0.98, blue: 0.97, alpha: 0.84),
+                highlight: CGColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 0.52)
+            )
+        ]
+    }
+
+    private func scrapbookCutoutPaletteOptions() -> [AnimatedTitleCardPalette] {
+        [
+            AnimatedTitleCardPalette(
+                start: CGColor(red: 0.34, green: 0.27, blue: 0.18, alpha: 1),
+                end: CGColor(red: 0.18, green: 0.14, blue: 0.11, alpha: 1),
+                accent: CGColor(red: 0.92, green: 0.32, blue: 0.24, alpha: 1),
+                secondaryAccent: CGColor(red: 0.24, green: 0.68, blue: 0.84, alpha: 1),
+                panel: CGColor(red: 0.95, green: 0.92, blue: 0.86, alpha: 0.88),
+                highlight: CGColor(red: 0.98, green: 0.96, blue: 0.90, alpha: 0.28)
+            )
+        ]
+    }
+
+    private func prismShiftPaletteOptions() -> [AnimatedTitleCardPalette] {
+        [
+            AnimatedTitleCardPalette(
+                start: CGColor(red: 0.07, green: 0.08, blue: 0.14, alpha: 1),
+                end: CGColor(red: 0.03, green: 0.04, blue: 0.09, alpha: 1),
+                accent: CGColor(red: 0.56, green: 0.89, blue: 0.98, alpha: 1),
+                secondaryAccent: CGColor(red: 0.98, green: 0.56, blue: 0.88, alpha: 1),
+                panel: CGColor(red: 0.74, green: 0.82, blue: 0.94, alpha: 0.16),
+                highlight: CGColor(red: 0.98, green: 1.0, blue: 1.0, alpha: 0.40)
+            )
+        ]
+    }
+
+    private func currentCollageLayoutTemplate() -> AnimatedCollageLayoutTemplate {
+        AnimatedCollageLayoutTemplate(
+            normalizedRects: [
+                CGRect(x: 0.06, y: 0.60, width: 0.24, height: 0.22),
+                CGRect(x: 0.30, y: 0.64, width: 0.20, height: 0.18),
+                CGRect(x: 0.56, y: 0.58, width: 0.28, height: 0.24),
+                CGRect(x: 0.72, y: 0.30, width: 0.18, height: 0.18),
+                CGRect(x: 0.50, y: 0.28, width: 0.18, height: 0.16),
+                CGRect(x: 0.16, y: 0.26, width: 0.22, height: 0.20)
+            ],
+            tileShape: .rounded,
+            frameInsetRatio: 0.0,
+            cornerRadiusRatio: 0.06,
+            shuffleRects: true
+        )
+    }
+
+    private func denseMosaicLayoutTemplate() -> AnimatedCollageLayoutTemplate {
+        AnimatedCollageLayoutTemplate(
+            normalizedRects: [
+                CGRect(x: 0.05, y: 0.68, width: 0.18, height: 0.16),
+                CGRect(x: 0.22, y: 0.70, width: 0.16, height: 0.15),
+                CGRect(x: 0.40, y: 0.67, width: 0.15, height: 0.14),
+                CGRect(x: 0.56, y: 0.66, width: 0.16, height: 0.15),
+                CGRect(x: 0.73, y: 0.64, width: 0.18, height: 0.17),
+                CGRect(x: 0.12, y: 0.46, width: 0.18, height: 0.16),
+                CGRect(x: 0.33, y: 0.45, width: 0.16, height: 0.15),
+                CGRect(x: 0.54, y: 0.43, width: 0.18, height: 0.16),
+                CGRect(x: 0.72, y: 0.39, width: 0.16, height: 0.15),
+                CGRect(x: 0.20, y: 0.25, width: 0.18, height: 0.17)
+            ],
+            tileShape: .rounded,
+            frameInsetRatio: 0.0,
+            cornerRadiusRatio: 0.05,
+            shuffleRects: true
+        )
+    }
+
+    private func airyHeroLayoutTemplate() -> AnimatedCollageLayoutTemplate {
+        AnimatedCollageLayoutTemplate(
+            normalizedRects: [
+                CGRect(x: 0.10, y: 0.57, width: 0.24, height: 0.24),
+                CGRect(x: 0.58, y: 0.56, width: 0.24, height: 0.24),
+                CGRect(x: 0.62, y: 0.24, width: 0.18, height: 0.18),
+                CGRect(x: 0.18, y: 0.23, width: 0.20, height: 0.18)
+            ],
+            tileShape: .rounded,
+            frameInsetRatio: 0.0,
+            cornerRadiusRatio: 0.06,
+            shuffleRects: false
+        )
+    }
+
+    private func ribbonArcLayoutTemplate() -> AnimatedCollageLayoutTemplate {
+        AnimatedCollageLayoutTemplate(
+            normalizedRects: [
+                CGRect(x: 0.04, y: 0.54, width: 0.18, height: 0.18),
+                CGRect(x: 0.18, y: 0.66, width: 0.16, height: 0.16),
+                CGRect(x: 0.34, y: 0.73, width: 0.16, height: 0.16),
+                CGRect(x: 0.51, y: 0.74, width: 0.16, height: 0.16),
+                CGRect(x: 0.67, y: 0.67, width: 0.16, height: 0.16),
+                CGRect(x: 0.80, y: 0.54, width: 0.16, height: 0.16),
+                CGRect(x: 0.72, y: 0.30, width: 0.16, height: 0.16)
+            ],
+            tileShape: .rounded,
+            frameInsetRatio: 0.0,
+            cornerRadiusRatio: 0.06,
+            shuffleRects: false
+        )
+    }
+
+    private func centerBurstLayoutTemplate() -> AnimatedCollageLayoutTemplate {
+        AnimatedCollageLayoutTemplate(
+            normalizedRects: [
+                CGRect(x: 0.18, y: 0.62, width: 0.17, height: 0.17),
+                CGRect(x: 0.37, y: 0.72, width: 0.15, height: 0.15),
+                CGRect(x: 0.58, y: 0.68, width: 0.16, height: 0.16),
+                CGRect(x: 0.72, y: 0.51, width: 0.16, height: 0.16),
+                CGRect(x: 0.67, y: 0.30, width: 0.16, height: 0.16),
+                CGRect(x: 0.49, y: 0.19, width: 0.16, height: 0.16),
+                CGRect(x: 0.28, y: 0.23, width: 0.16, height: 0.16),
+                CGRect(x: 0.14, y: 0.42, width: 0.16, height: 0.16)
+            ],
+            tileShape: .rounded,
+            frameInsetRatio: 0.0,
+            cornerRadiusRatio: 0.06,
+            shuffleRects: false
+        )
+    }
+
+    private func galleryWallLayoutTemplate() -> AnimatedCollageLayoutTemplate {
+        AnimatedCollageLayoutTemplate(
+            normalizedRects: [
+                CGRect(x: 0.08, y: 0.58, width: 0.20, height: 0.22),
+                CGRect(x: 0.31, y: 0.60, width: 0.18, height: 0.20),
+                CGRect(x: 0.54, y: 0.56, width: 0.20, height: 0.24),
+                CGRect(x: 0.76, y: 0.55, width: 0.14, height: 0.18),
+                CGRect(x: 0.18, y: 0.28, width: 0.18, height: 0.20),
+                CGRect(x: 0.42, y: 0.26, width: 0.18, height: 0.18),
+                CGRect(x: 0.67, y: 0.24, width: 0.16, height: 0.18)
+            ],
+            tileShape: .framed,
+            frameInsetRatio: 0.06,
+            cornerRadiusRatio: 0.05,
+            shuffleRects: false
+        )
+    }
+
+    private func lightboxLayoutTemplate() -> AnimatedCollageLayoutTemplate {
+        AnimatedCollageLayoutTemplate(
+            normalizedRects: [
+                CGRect(x: 0.10, y: 0.60, width: 0.18, height: 0.18),
+                CGRect(x: 0.31, y: 0.60, width: 0.18, height: 0.18),
+                CGRect(x: 0.52, y: 0.60, width: 0.18, height: 0.18),
+                CGRect(x: 0.18, y: 0.36, width: 0.18, height: 0.18),
+                CGRect(x: 0.40, y: 0.36, width: 0.18, height: 0.18),
+                CGRect(x: 0.62, y: 0.36, width: 0.18, height: 0.18)
+            ],
+            tileShape: .rounded,
+            frameInsetRatio: 0.0,
+            cornerRadiusRatio: 0.04,
+            shuffleRects: false
+        )
+    }
+
+    private func cutoutChaosLayoutTemplate() -> AnimatedCollageLayoutTemplate {
+        AnimatedCollageLayoutTemplate(
+            normalizedRects: [
+                CGRect(x: 0.06, y: 0.59, width: 0.21, height: 0.21),
+                CGRect(x: 0.20, y: 0.68, width: 0.17, height: 0.17),
+                CGRect(x: 0.38, y: 0.61, width: 0.20, height: 0.20),
+                CGRect(x: 0.60, y: 0.64, width: 0.17, height: 0.17),
+                CGRect(x: 0.75, y: 0.52, width: 0.17, height: 0.17),
+                CGRect(x: 0.66, y: 0.28, width: 0.18, height: 0.18),
+                CGRect(x: 0.46, y: 0.20, width: 0.18, height: 0.18),
+                CGRect(x: 0.25, y: 0.24, width: 0.18, height: 0.18),
+                CGRect(x: 0.12, y: 0.39, width: 0.18, height: 0.18)
+            ],
+            tileShape: .cutout,
+            frameInsetRatio: 0.0,
+            cornerRadiusRatio: 0.02,
+            shuffleRects: false
+        )
+    }
+
+    private func reflectionPoolLayoutTemplate() -> AnimatedCollageLayoutTemplate {
+        AnimatedCollageLayoutTemplate(
+            normalizedRects: [
+                CGRect(x: 0.12, y: 0.60, width: 0.18, height: 0.18),
+                CGRect(x: 0.31, y: 0.66, width: 0.16, height: 0.16),
+                CGRect(x: 0.50, y: 0.62, width: 0.18, height: 0.18),
+                CGRect(x: 0.68, y: 0.64, width: 0.16, height: 0.16),
+                CGRect(x: 0.78, y: 0.46, width: 0.14, height: 0.14)
+            ],
+            tileShape: .rounded,
+            frameInsetRatio: 0.0,
+            cornerRadiusRatio: 0.05,
+            shuffleRects: false
+        )
+    }
+
+    private func cascadeColumnsLayoutTemplate() -> AnimatedCollageLayoutTemplate {
+        AnimatedCollageLayoutTemplate(
+            normalizedRects: [
+                CGRect(x: 0.06, y: 0.24, width: 0.14, height: 0.42),
+                CGRect(x: 0.21, y: 0.34, width: 0.14, height: 0.38),
+                CGRect(x: 0.36, y: 0.20, width: 0.14, height: 0.44),
+                CGRect(x: 0.51, y: 0.32, width: 0.14, height: 0.36),
+                CGRect(x: 0.66, y: 0.24, width: 0.14, height: 0.42),
+                CGRect(x: 0.81, y: 0.35, width: 0.12, height: 0.34),
+                CGRect(x: 0.18, y: 0.72, width: 0.14, height: 0.16),
+                CGRect(x: 0.62, y: 0.72, width: 0.14, height: 0.16)
+            ],
+            tileShape: .rounded,
+            frameInsetRatio: 0.0,
+            cornerRadiusRatio: 0.045,
+            shuffleRects: false
+        )
+    }
+
+    private func orbitRingLayoutTemplate() -> AnimatedCollageLayoutTemplate {
+        AnimatedCollageLayoutTemplate(
+            normalizedRects: [
+                CGRect(x: 0.15, y: 0.58, width: 0.15, height: 0.15),
+                CGRect(x: 0.29, y: 0.73, width: 0.14, height: 0.14),
+                CGRect(x: 0.50, y: 0.77, width: 0.14, height: 0.14),
+                CGRect(x: 0.69, y: 0.69, width: 0.14, height: 0.14),
+                CGRect(x: 0.78, y: 0.49, width: 0.14, height: 0.14),
+                CGRect(x: 0.69, y: 0.28, width: 0.14, height: 0.14),
+                CGRect(x: 0.47, y: 0.18, width: 0.14, height: 0.14),
+                CGRect(x: 0.24, y: 0.27, width: 0.14, height: 0.14)
+            ],
+            tileShape: .rounded,
+            frameInsetRatio: 0.0,
+            cornerRadiusRatio: 0.05,
+            shuffleRects: false
+        )
+    }
+
+    private func prismShiftLayoutTemplate() -> AnimatedCollageLayoutTemplate {
+        AnimatedCollageLayoutTemplate(
+            normalizedRects: [
+                CGRect(x: 0.08, y: 0.60, width: 0.22, height: 0.20),
+                CGRect(x: 0.28, y: 0.66, width: 0.18, height: 0.16),
+                CGRect(x: 0.52, y: 0.60, width: 0.24, height: 0.22),
+                CGRect(x: 0.72, y: 0.34, width: 0.18, height: 0.18),
+                CGRect(x: 0.48, y: 0.26, width: 0.18, height: 0.16),
+                CGRect(x: 0.18, y: 0.26, width: 0.20, height: 0.18)
+            ],
+            tileShape: .rounded,
+            frameInsetRatio: 0.0,
+            cornerRadiusRatio: 0.06,
+            shuffleRects: false
+        )
+    }
+
+    private func currentCollageMotionProfile() -> AnimatedCollageMotionProfile {
+        AnimatedCollageMotionProfile(
+            backgroundZoomBase: 1.04,
+            backgroundZoomAmplitude: 0.03,
+            backgroundCycles: 1.0,
+            driftScaleX: 1.0,
+            driftScaleY: 1.0,
+            rotationMultiplier: 1.0,
+            scaleAmplitudeMultiplier: 1.0,
+            staggerStep: 0.06,
+            entranceFloor: 0.15,
+            parallaxOffsetX: 0,
+            parallaxOffsetY: 0,
+            centerAttraction: 0,
+            orbitDegrees: 0,
+            bounceStrength: 0
+        )
+    }
+
+    private func gentleCollageMotionProfile() -> AnimatedCollageMotionProfile {
+        currentCollageMotionProfile().with(
+            driftX: 0.55,
+            driftY: 0.45,
+            rotationMultiplier: 0.55,
+            scaleAmplitudeMultiplier: 0.55,
+            backgroundZoomAmplitude: 0.018,
+            backgroundCycles: 0.75
+        )
+    }
+
+    private func parallaxCollageMotionProfile() -> AnimatedCollageMotionProfile {
+        currentCollageMotionProfile().with(
+            driftX: 1.1,
+            driftY: 0.9,
+            parallaxX: 0.018,
+            parallaxY: 0.008,
+            backgroundZoomAmplitude: 0.038
+        )
+    }
+
+    private func kineticCollageMotionProfile() -> AnimatedCollageMotionProfile {
+        currentCollageMotionProfile().with(
+            driftX: 1.25,
+            driftY: 1.10,
+            rotationMultiplier: 1.2,
+            scaleAmplitudeMultiplier: 1.25,
+            staggerStep: 0.045,
+            bounceStrength: 0.14
+        )
+    }
+
+    private func burstCollageMotionProfile() -> AnimatedCollageMotionProfile {
+        currentCollageMotionProfile().with(
+            rotationMultiplier: 1.25,
+            scaleAmplitudeMultiplier: 1.1,
+            staggerStep: 0.035,
+            centerAttraction: 1.0,
+            bounceStrength: 0.10
+        )
+    }
+
+    private func orbitCollageMotionProfile() -> AnimatedCollageMotionProfile {
+        currentCollageMotionProfile().with(
+            driftX: 0.45,
+            driftY: 0.45,
+            backgroundZoomAmplitude: 0.02,
+            backgroundCycles: 0.85,
+            orbitDegrees: 10
+        )
+    }
+
+    private func cascadeCollageMotionProfile() -> AnimatedCollageMotionProfile {
+        currentCollageMotionProfile().with(
+            driftX: 0.35,
+            driftY: 1.35,
+            rotationMultiplier: 0.4,
+            scaleAmplitudeMultiplier: 0.45,
+            backgroundZoomAmplitude: 0.02
+        )
+    }
+
+    private func lowerLeftOverlayStyle(
+        cornerRadius: CGFloat = 28,
+        titleFontScale: CGFloat = 0.055,
+        contextFontScale: CGFloat = 0.020,
+        strokeAlpha: CGFloat = 0,
+        glowAlpha: CGFloat = 0
+    ) -> AnimatedCollageOverlayStyle {
+        AnimatedCollageOverlayStyle(
+            backdropRect: CGRect(x: 0.04, y: 0.07, width: 0.54, height: 0.30),
+            titleRect: CGRect(x: 0.08, y: 0.12, width: 0.48, height: 0.18),
+            contextRect: CGRect(x: 0.08, y: 0.31, width: 0.44, height: 0.05),
+            accentRect: CGRect(x: 0.08, y: 0.30, width: 0.11, height: 0.008),
+            cornerRadius: cornerRadius,
+            alignment: .left,
+            titleFontName: "AvenirNext-Bold",
+            titleFontScale: titleFontScale,
+            contextFontName: "AvenirNext-DemiBold",
+            contextFontScale: contextFontScale,
+            accentColorUsesSecondary: false,
+            showBackdrop: true,
+            showAccentRule: true,
+            strokeAlpha: strokeAlpha,
+            glowAlpha: glowAlpha
+        )
+    }
+
+    private func centeredOverlayStyle(
+        cornerRadius: CGFloat = 34,
+        titleFontScale: CGFloat = 0.062,
+        contextFontScale: CGFloat = 0.021,
+        strokeAlpha: CGFloat = 0.10,
+        glowAlpha: CGFloat = 0
+    ) -> AnimatedCollageOverlayStyle {
+        AnimatedCollageOverlayStyle(
+            backdropRect: CGRect(x: 0.23, y: 0.10, width: 0.54, height: 0.24),
+            titleRect: CGRect(x: 0.28, y: 0.14, width: 0.44, height: 0.12),
+            contextRect: CGRect(x: 0.30, y: 0.28, width: 0.40, height: 0.04),
+            accentRect: CGRect(x: 0.36, y: 0.125, width: 0.28, height: 0.006),
+            cornerRadius: cornerRadius,
+            alignment: .center,
+            titleFontName: "AvenirNext-Bold",
+            titleFontScale: titleFontScale,
+            contextFontName: "AvenirNext-DemiBold",
+            contextFontScale: contextFontScale,
+            accentColorUsesSecondary: true,
+            showBackdrop: true,
+            showAccentRule: false,
+            strokeAlpha: strokeAlpha,
+            glowAlpha: glowAlpha
+        )
+    }
+
+    private func currentCollageLightingStyle() -> AnimatedCollageLightingStyle {
+        AnimatedCollageLightingStyle(
+            backgroundAlpha: 0.36,
+            vignetteAlpha: 0.0,
+            overlayGradientAlpha: 0.0,
+            bloomAlpha: 0.0,
+            edgeGlowAlpha: 0.0,
+            lightLeakAlpha: 0.0,
+            reflectionAlpha: 0.0,
+            ghostOffset: 0.0,
+            dustAlpha: 0.0
+        )
+    }
+
+    private func sunriseCollageLightingStyle() -> AnimatedCollageLightingStyle {
+        currentCollageLightingStyle().with(
+            vignetteAlpha: 0.08,
+            overlayGradientAlpha: 0.10,
+            bloomAlpha: 0.16,
+        )
+    }
+
+    private func neonCollageLightingStyle() -> AnimatedCollageLightingStyle {
+        currentCollageLightingStyle().with(
+            vignetteAlpha: 0.10,
+            overlayGradientAlpha: 0.08,
+            bloomAlpha: 0.10,
+            edgeGlowAlpha: 0.10,
+        )
+    }
+
+    private func softFilmCollageLightingStyle() -> AnimatedCollageLightingStyle {
+        currentCollageLightingStyle().with(
+            vignetteAlpha: 0.10,
+            lightLeakAlpha: 0.04,
+            dustAlpha: 0.08
+        )
+    }
+
+    private func edgeLitCollageLightingStyle() -> AnimatedCollageLightingStyle {
+        currentCollageLightingStyle().with(
+            vignetteAlpha: 0.10,
+            overlayGradientAlpha: 0.06,
+            bloomAlpha: 0.06,
+            edgeGlowAlpha: 0.14,
+        )
+    }
+
+    private func galleryWallLightingStyle() -> AnimatedCollageLightingStyle {
+        currentCollageLightingStyle().with(
+            backgroundAlpha: 0.28,
+            vignetteAlpha: 0.10,
+            overlayGradientAlpha: 0.05,
+            bloomAlpha: 0.06,
+        )
+    }
+
+    private func filmBurnLightingStyle() -> AnimatedCollageLightingStyle {
+        currentCollageLightingStyle().with(
+            vignetteAlpha: 0.08,
+            overlayGradientAlpha: 0.06,
+            bloomAlpha: 0.08,
+            lightLeakAlpha: 0.16,
+            dustAlpha: 0.10
+        )
+    }
+
+    private func lightboxLightingStyle() -> AnimatedCollageLightingStyle {
+        currentCollageLightingStyle().with(
+            backgroundAlpha: 0.18,
+            overlayGradientAlpha: 0.03,
+            bloomAlpha: 0.04
+        )
+    }
+
+    private func reflectionPoolLightingStyle() -> AnimatedCollageLightingStyle {
+        currentCollageLightingStyle().with(
+            backgroundAlpha: 0.30,
+            vignetteAlpha: 0.12,
+            bloomAlpha: 0.08,
+            reflectionAlpha: 0.18
+        )
+    }
+
+    private func prismShiftLightingStyle() -> AnimatedCollageLightingStyle {
+        currentCollageLightingStyle().with(
+            vignetteAlpha: 0.08,
+            overlayGradientAlpha: 0.10,
+            bloomAlpha: 0.10,
+            edgeGlowAlpha: 0.08,
+            ghostOffset: 0.010
+        )
+    }
+
     private func bitmapContext(
         renderSize: CGSize,
         colorSpace: CGColorSpace
@@ -1611,6 +3443,35 @@ public final class StillImageClipFactory: @unchecked Sendable {
 
     private func conceptPalette(for treatment: OpeningTitleTreatment) -> ConceptTitleCardPalette {
         switch treatment {
+        case .collageSunriseGlow,
+             .collageMidnightNeon,
+             .collageSoftFilm,
+             .collageDenseMosaic,
+             .collageAiryHero,
+             .collageGentleFloat,
+             .collageParallaxSweep,
+             .collageKineticBounce,
+             .collageGlassTitle,
+             .collageEdgeLit,
+             .collageRibbonArc,
+             .collageCenterBurst,
+             .collageGalleryWall,
+             .collageFilmBurn,
+             .collageLightbox,
+             .collageCutoutChaos,
+             .collageReflectionPool,
+             .collageCascadeColumns,
+             .collageOrbitRing,
+             .collagePrismShift:
+            return ConceptTitleCardPalette(
+                start: CGColor(red: 0.05, green: 0.08, blue: 0.12, alpha: 1),
+                end: CGColor(red: 0.03, green: 0.04, blue: 0.08, alpha: 1),
+                accent: CGColor(red: 0.30, green: 0.82, blue: 0.86, alpha: 1),
+                secondaryAccent: CGColor(red: 0.94, green: 0.68, blue: 0.30, alpha: 1),
+                text: CGColor(red: 0.98, green: 0.98, blue: 0.97, alpha: 1),
+                panel: CGColor(red: 0.03, green: 0.04, blue: 0.06, alpha: 0.62),
+                paper: CGColor(red: 0.96, green: 0.95, blue: 0.92, alpha: 1)
+            )
         case .heroLowerThird:
             return ConceptTitleCardPalette(
                 start: CGColor(red: 0.04, green: 0.08, blue: 0.12, alpha: 1),
@@ -1771,6 +3632,27 @@ public final class StillImageClipFactory: @unchecked Sendable {
         drawConceptBackdrop(frameSet: frameSet, progress: progress, renderSize: renderSize, colorSpace: colorSpace, context: context)
 
         switch frameSet.treatment {
+        case .collageSunriseGlow,
+             .collageMidnightNeon,
+             .collageSoftFilm,
+             .collageDenseMosaic,
+             .collageAiryHero,
+             .collageGentleFloat,
+             .collageParallaxSweep,
+             .collageKineticBounce,
+             .collageGlassTitle,
+             .collageEdgeLit,
+             .collageRibbonArc,
+             .collageCenterBurst,
+             .collageGalleryWall,
+             .collageFilmBurn,
+             .collageLightbox,
+             .collageCutoutChaos,
+             .collageReflectionPool,
+             .collageCascadeColumns,
+             .collageOrbitRing,
+             .collagePrismShift:
+            drawHeroLowerThird(frameSet: frameSet, progress: progress, renderSize: renderSize, context: context)
         case .heroLowerThird:
             drawHeroLowerThird(frameSet: frameSet, progress: progress, renderSize: renderSize, context: context)
         case .splitEditorial:

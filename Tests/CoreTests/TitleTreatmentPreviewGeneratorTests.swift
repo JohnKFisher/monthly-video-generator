@@ -7,6 +7,20 @@ import XCTest
 @testable import Core
 
 final class TitleTreatmentPreviewGeneratorTests: XCTestCase {
+    func testClassicAndFamilyCollectionsResolveExpectedEntries() {
+        let classicEntries = TitleTreatmentPreviewCollection.classicExplorer.entries
+        XCTAssertEqual(classicEntries.count, 17)
+        XCTAssertEqual(classicEntries.filter { $0.section == .standard }.count, 12)
+        XCTAssertEqual(classicEntries.filter { $0.section == .wild }.count, 5)
+
+        let familyEntries = TitleTreatmentPreviewCollection.currentCollageFamily.entries
+        XCTAssertEqual(familyEntries.count, 21)
+        XCTAssertEqual(familyEntries.first?.treatment, .currentCollage)
+        XCTAssertEqual(familyEntries.first?.badge, "Control")
+        XCTAssertEqual(familyEntries.filter { $0.section == .close }.count, 11)
+        XCTAssertEqual(familyEntries.filter { $0.section == .wide }.count, 10)
+    }
+
     func testAllTitleTreatmentsRenderValidClipAtRequestedSizeAndDuration() async throws {
         let factory = StillImageClipFactory()
         let previewAssets = try makePreviewAssets(count: 4)
@@ -86,7 +100,7 @@ final class TitleTreatmentPreviewGeneratorTests: XCTestCase {
         XCTAssertEqual(pixelChecksum(defaultFrame), pixelChecksum(explicitFrame))
     }
 
-    func testPreviewGeneratorWritesFullArtifactSetForAllTreatments() async throws {
+    func testPreviewGeneratorWritesFullArtifactSetForClassicExplorer() async throws {
         let sourceFolderURL = try makeFixtureSourceFolder(imageCount: 6)
         let outputRootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("TitleTreatmentPreviewGeneratorTests-output-root-\(UUID().uuidString)", isDirectory: true)
@@ -111,17 +125,71 @@ final class TitleTreatmentPreviewGeneratorTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(result.artifacts.count, OpeningTitleTreatment.allCases.count)
+        XCTAssertEqual(result.artifacts.count, TitleTreatmentPreviewCollection.classicExplorer.entries.count)
         XCTAssertTrue(FileManager.default.fileExists(atPath: result.manifestURL.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: result.indexURL.path))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: result.standardContactSheetURL.path))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: result.wildContactSheetURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(result.standardContactSheetURL).path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(result.wildContactSheetURL).path))
 
         let manifestData = try Data(contentsOf: result.manifestURL)
         let manifest = try JSONDecoder().decode(TitleTreatmentPreviewManifest.self, from: manifestData)
+        XCTAssertEqual(manifest.collection, TitleTreatmentPreviewCollection.classicExplorer.rawValue)
         XCTAssertEqual(manifest.treatmentCount, 17)
-        XCTAssertEqual(manifest.artifacts.filter { $0.category == OpeningTitleTreatmentCategory.standard.rawValue }.count, 12)
-        XCTAssertEqual(manifest.artifacts.filter { $0.category == OpeningTitleTreatmentCategory.wild.rawValue }.count, 5)
+        XCTAssertEqual(manifest.sections, [OpeningTitleTreatmentCategory.standard.rawValue, OpeningTitleTreatmentCategory.wild.rawValue])
+        XCTAssertEqual(manifest.artifacts.filter { $0.section == OpeningTitleTreatmentCategory.standard.rawValue }.count, 12)
+        XCTAssertEqual(manifest.artifacts.filter { $0.section == OpeningTitleTreatmentCategory.wild.rawValue }.count, 5)
+
+        for artifact in manifest.artifacts {
+            XCTAssertNotNil(artifact.clipFilename)
+            if let clipFilename = artifact.clipFilename {
+                XCTAssertTrue(FileManager.default.fileExists(atPath: result.outputDirectory.appendingPathComponent(clipFilename).path))
+            }
+            XCTAssertTrue(FileManager.default.fileExists(atPath: result.outputDirectory.appendingPathComponent(artifact.earlyStillFilename).path))
+            XCTAssertTrue(FileManager.default.fileExists(atPath: result.outputDirectory.appendingPathComponent(artifact.lateStillFilename).path))
+        }
+    }
+
+    func testPreviewGeneratorWritesFullArtifactSetForCurrentCollageFamily() async throws {
+        let sourceFolderURL = try makeFixtureSourceFolder(imageCount: 10)
+        let outputRootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TitleTreatmentPreviewGeneratorTests-family-output-root-\(UUID().uuidString)", isDirectory: true)
+        let outputDirectory = outputRootURL.appendingPathComponent("preview-set", isDirectory: true)
+        let service = TitleTreatmentPreviewGeneratorService()
+
+        defer {
+            try? FileManager.default.removeItem(at: sourceFolderURL)
+            try? FileManager.default.removeItem(at: outputRootURL)
+        }
+
+        let result = try await service.generate(
+            config: TitleTreatmentPreviewConfiguration(
+                inputFolderURL: sourceFolderURL,
+                title: "March 2026",
+                caption: "Fisher Family Videos",
+                outputRootDirectory: outputRootURL,
+                outputDirectoryOverride: outputDirectory,
+                durationSeconds: 0.16,
+                renderSize: CGSize(width: 480, height: 270),
+                frameRate: 8,
+                collection: .currentCollageFamily
+            )
+        )
+
+        XCTAssertEqual(result.artifacts.count, 21)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: result.manifestURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: result.indexURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(result.closeContactSheetURL).path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(result.wideContactSheetURL).path))
+
+        let manifestData = try Data(contentsOf: result.manifestURL)
+        let manifest = try JSONDecoder().decode(TitleTreatmentPreviewManifest.self, from: manifestData)
+        XCTAssertEqual(manifest.collection, TitleTreatmentPreviewCollection.currentCollageFamily.rawValue)
+        XCTAssertEqual(manifest.treatmentCount, 21)
+        XCTAssertEqual(manifest.sections, [OpeningTitleTreatmentCategory.close.rawValue, OpeningTitleTreatmentCategory.wide.rawValue])
+        XCTAssertEqual(manifest.artifacts.filter { $0.section == OpeningTitleTreatmentCategory.close.rawValue }.count, 11)
+        XCTAssertEqual(manifest.artifacts.filter { $0.section == OpeningTitleTreatmentCategory.wide.rawValue }.count, 10)
+        XCTAssertEqual(manifest.artifacts.first?.treatment, OpeningTitleTreatment.currentCollage.rawValue)
+        XCTAssertEqual(manifest.artifacts.first?.badge, "Control")
 
         for artifact in manifest.artifacts {
             XCTAssertNotNil(artifact.clipFilename)
@@ -164,7 +232,7 @@ final class TitleTreatmentPreviewGeneratorTests: XCTestCase {
         if let clipFilename = result.artifacts[0].clipFilename {
             XCTAssertTrue(FileManager.default.fileExists(atPath: result.outputDirectory.appendingPathComponent(clipFilename).path))
         }
-        XCTAssertTrue(FileManager.default.fileExists(atPath: result.standardContactSheetURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(result.standardContactSheetURL).path))
     }
 
     func testManualGenerateMarch2026PreviewArtifacts() async throws {
@@ -180,12 +248,13 @@ final class TitleTreatmentPreviewGeneratorTests: XCTestCase {
                 inputFolderURL: URL(fileURLWithPath: "/Users/jkfisher/Desktop/VideoTestFolder", isDirectory: true),
                 title: "March 2026",
                 caption: "Fisher Family Videos",
-                outputRootDirectory: outputRootURL
+                outputRootDirectory: outputRootURL,
+                collection: .currentCollageFamily
             )
         )
 
         print("manual_title_treatment_preview_output=\(result.outputDirectory.path)")
-        XCTAssertEqual(result.artifacts.count, OpeningTitleTreatment.allCases.count)
+        XCTAssertEqual(result.artifacts.count, TitleTreatmentPreviewCollection.currentCollageFamily.entries.count)
     }
 
     private func makePreviewAssets(count: Int) throws -> [StillImageClipFactory.TitleCardPreviewAsset] {

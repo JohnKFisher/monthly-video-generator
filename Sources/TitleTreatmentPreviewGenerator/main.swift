@@ -10,7 +10,8 @@ private struct Options {
     var outputDirectoryOverride: URL?
     var durationSeconds = 7.5
     var renderSize = CGSize(width: 1920, height: 1080)
-    var treatments = OpeningTitleTreatment.allCases
+    var collection = TitleTreatmentPreviewCollection.default
+    var treatments: [OpeningTitleTreatment]?
 }
 
 @main
@@ -28,6 +29,7 @@ struct TitleTreatmentPreviewGeneratorMain {
                     outputDirectoryOverride: options.outputDirectoryOverride,
                     durationSeconds: options.durationSeconds,
                     renderSize: options.renderSize,
+                    collection: options.collection,
                     treatments: options.treatments
                 )
             )
@@ -60,6 +62,17 @@ private func parseOptions(arguments: [String]) throws -> Options {
         case "--caption":
             index += 1
             options.caption = try requireValue(arguments, index: index, for: argument)
+        case "--collection":
+            index += 1
+            let rawCollection = try requireValue(arguments, index: index, for: argument)
+            guard let collection = TitleTreatmentPreviewCollection(rawValue: rawCollection) else {
+                throw NSError(
+                    domain: "TitleTreatmentPreviewGenerator",
+                    code: 3,
+                    userInfo: [NSLocalizedDescriptionKey: "Unknown collection: \(rawCollection)"]
+                )
+            }
+            options.collection = collection
         case "--output-root":
             index += 1
             options.outputRootURL = URL(fileURLWithPath: try requireValue(arguments, index: index, for: argument), isDirectory: true)
@@ -118,6 +131,7 @@ private func printUsageAndExit() -> Never {
           --input <folder>          Source folder. Default: /Users/jkfisher/Desktop/VideoTestFolder
           --title <text>            Title text. Default: March 2026
           --caption <text>          Small caption. Default: Fisher Family Videos
+          --collection <slug>       Preview collection. Default: classic-explorer
           --output-root <folder>    Root folder for timestamped preview sets. Default: tmp/title-treatment-previews
           --output-dir <folder>     Exact output directory override.
           --duration <seconds>      Clip duration. Default: 7.5

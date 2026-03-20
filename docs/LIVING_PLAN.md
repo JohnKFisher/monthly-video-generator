@@ -44,6 +44,7 @@ Implemented now:
 - Plex/Infuse-oriented default export preset for Apple TV 4K (`MP4 + HEVC + HDR + Smart Audio + Balanced + HDR Auto + HDR HEVC Encoder Default`), plus explicit UI reset action.
 - Plex TV episode naming + embedded MP4 metadata for the `Family Videos` library workflow, plus mega-test batch UI for exercising Resolution/FPS/Range/Audio combinations.
 - Offline title-treatment preview generation that can render a one-off concept gallery of opening-title styles into playable review movies, stills, grouped contact sheets, `manifest.json`, and `index.html` without changing the shipping app UI or defaults; when AVFoundation title-card clip writing is unavailable, the preview workflow now falls back to local ffmpeg movie export for these review artifacts only.
+- Added a second offline title-treatment preview collection, `current-collage-family`, centered on the winning `current-collage` opener: `21` playable collage-focused variants (`1` control + `20` new variations) grouped into `close` and `wide` contact sheets, with deterministic larger preview pools and `--collection` CLI selection.
 
 Open for S4 completion:
 - Migrate renderer to newer non-deprecated AVFoundation export APIs.
@@ -188,6 +189,7 @@ Operational updates after first packaged run:
 
 ## Changes Since Last Update
 
+- 2026-03-20: Added a new offline `current-collage-family` preview collection to `TitleTreatmentPreviewGenerator`, including `21` collage-focused review movies, `close`/`wide` grouped contact sheets, a deterministic `10`-preview-item collage pool for offline review only, collection-aware HTML/JSON artifacts, and focused tests for both the classic explorer and the new collage-family explorer; generated the first real review pack at `tmp/title-treatment-previews/20260320-192430-march-2026`.
 - 2026-03-20: Added an offline `TitleTreatmentPreviewGenerator` workflow for March-2026-style title exploration, including 17 procedural opener treatments, grouped contact sheets, HTML/JSON review artifacts, focused regression tests, and a local ffmpeg movie-export fallback so each treatment can still be reviewed as a playable clip when AVFoundation preview-clip writing fails on a real sample month; the normal app render path remains unchanged.
 - 2026-03-03: Initialized git repository, created baseline commit, and created checkpoint branch with pre-change snapshot commit.
 - 2026-03-03: Added Swift package scaffold and desktop app shell (`MonthlyVideoGeneratorApp`).
@@ -340,4 +342,4 @@ Durable `known-good/*` tags are not pruned by the routine checkpoint-retention p
 
 ## Last Updated
 
-2026-03-20 16:39 America/New_York by Codex
+2026-03-20 19:35 America/New_York by Codex

@@ -19,7 +19,8 @@ package struct TitleTreatmentPreviewConfiguration: Sendable {
     package let durationSeconds: Double
     package let renderSize: CGSize
     package let frameRate: Int
-    package let treatments: [OpeningTitleTreatment]
+    package let collection: TitleTreatmentPreviewCollection
+    package let treatments: [OpeningTitleTreatment]?
     package let variationSeed: UInt64
 
     package init(
@@ -33,7 +34,8 @@ package struct TitleTreatmentPreviewConfiguration: Sendable {
         durationSeconds: Double = 7.5,
         renderSize: CGSize = CGSize(width: 1920, height: 1080),
         frameRate: Int = 30,
-        treatments: [OpeningTitleTreatment] = OpeningTitleTreatment.allCases,
+        collection: TitleTreatmentPreviewCollection = .default,
+        treatments: [OpeningTitleTreatment]? = nil,
         variationSeed: UInt64 = 0x2026032001
     ) {
         self.inputFolderURL = inputFolderURL
@@ -46,6 +48,7 @@ package struct TitleTreatmentPreviewConfiguration: Sendable {
         self.durationSeconds = durationSeconds
         self.renderSize = renderSize
         self.frameRate = frameRate
+        self.collection = collection
         self.treatments = treatments
         self.variationSeed = variationSeed
     }
@@ -55,7 +58,8 @@ package struct TitleTreatmentPreviewArtifact: Codable, Equatable, Sendable {
     package let index: Int
     package let treatment: String
     package let displayName: String
-    package let category: String
+    package let section: String
+    package let badge: String?
     package let description: String
     package let clipFilename: String?
     package let earlyStillFilename: String
@@ -68,11 +72,13 @@ package struct TitleTreatmentPreviewManifest: Codable, Equatable, Sendable {
     package let inputFolder: String
     package let title: String
     package let caption: String
+    package let collection: String
     package let durationSeconds: Double
     package let width: Int
     package let height: Int
     package let frameRate: Int
     package let treatmentCount: Int
+    package let sections: [String]
     package let artifacts: [TitleTreatmentPreviewArtifact]
 }
 
@@ -80,9 +86,24 @@ package struct TitleTreatmentPreviewResult: Sendable {
     package let outputDirectory: URL
     package let manifestURL: URL
     package let indexURL: URL
-    package let standardContactSheetURL: URL
-    package let wildContactSheetURL: URL
+    package let contactSheetURLsBySection: [OpeningTitleTreatmentCategory: URL]
     package let artifacts: [TitleTreatmentPreviewArtifact]
+
+    package var standardContactSheetURL: URL? {
+        contactSheetURLsBySection[.standard]
+    }
+
+    package var wildContactSheetURL: URL? {
+        contactSheetURLsBySection[.wild]
+    }
+
+    package var closeContactSheetURL: URL? {
+        contactSheetURLsBySection[.close]
+    }
+
+    package var wideContactSheetURL: URL? {
+        contactSheetURLsBySection[.wide]
+    }
 }
 
 private struct TitleTreatmentBoardEntry {
@@ -104,8 +125,13 @@ package final class TitleTreatmentPreviewGeneratorService: @unchecked Sendable {
         guard !items.isEmpty else {
             throw RenderError.noRenderableMedia
         }
+        let entries = config.collection.resolveEntries(requestedTreatments: config.treatments)
+        guard !entries.isEmpty else {
+            throw RenderError.exportFailed("No title treatments matched collection \(config.collection.rawValue)")
+        }
 
         let descriptor = try makeDescriptor(items: items, config: config)
+        let orderedItems = MediaSorting.sort(items, by: .captureDateAscendingStable)
         let outputDirectory = try makeOutputDirectory(for: config)
         let normalizedPreviewDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("TitleTreatmentPreviewGenerator-previews-\(UUID().uuidString)", isDirectory: true)
@@ -113,7 +139,11 @@ package final class TitleTreatmentPreviewGeneratorService: @unchecked Sendable {
         defer { try? FileManager.default.removeItem(at: normalizedPreviewDirectory) }
 
         let previewAssets = try await materializePreviewAssets(
-            from: descriptor.previewItems,
+            from: OpeningTitlePreviewSelector.selectPreviewItems(
+                from: orderedItems,
+                variationSeed: descriptor.variationSeed,
+                count: config.collection.previewSelectionCount
+            ),
             targetDimension: normalizedPreviewDimension(for: config.renderSize),
             outputDirectory: normalizedPreviewDirectory
         )
@@ -121,10 +151,11 @@ package final class TitleTreatmentPreviewGeneratorService: @unchecked Sendable {
 
         var artifacts: [TitleTreatmentPreviewArtifact] = []
         var boardEntries: [TitleTreatmentBoardEntry] = []
-        artifacts.reserveCapacity(config.treatments.count)
-        boardEntries.reserveCapacity(config.treatments.count)
+        artifacts.reserveCapacity(entries.count)
+        boardEntries.reserveCapacity(entries.count)
 
-        for (offset, treatment) in config.treatments.enumerated() {
+        for (offset, entry) in entries.enumerated() {
+            let treatment = entry.treatment
             let index = offset + 1
             let filePrefix = String(format: "%02d-%@", index, treatment.rawValue)
             let clipURL = outputDirectory.appendingPathComponent(filePrefix).appendingPathExtension("mov")
@@ -185,7 +216,8 @@ package final class TitleTreatmentPreviewGeneratorService: @unchecked Sendable {
                 index: index,
                 treatment: treatment.rawValue,
                 displayName: treatment.displayName,
-                category: treatment.category.rawValue,
+                section: entry.section.rawValue,
+                badge: entry.badge,
                 description: treatment.shortDescription,
                 clipFilename: clipFilename,
                 earlyStillFilename: earlyStillURL.lastPathComponent,
@@ -202,31 +234,34 @@ package final class TitleTreatmentPreviewGeneratorService: @unchecked Sendable {
             )
         }
 
-        let standardEntries = boardEntries.filter { $0.artifact.category == OpeningTitleTreatmentCategory.standard.rawValue }
-        let wildEntries = boardEntries.filter { $0.artifact.category == OpeningTitleTreatmentCategory.wild.rawValue }
-        let standardContactSheetURL = outputDirectory.appendingPathComponent("contact-sheet-standard.png")
-        let wildContactSheetURL = outputDirectory.appendingPathComponent("contact-sheet-wild.png")
-        try writeContactSheet(
-            entries: standardEntries,
-            heading: "Standard Treatments",
-            outputURL: standardContactSheetURL
-        )
-        try writeContactSheet(
-            entries: wildEntries,
-            heading: "Wild Treatments",
-            outputURL: wildContactSheetURL
-        )
+        var contactSheetURLsBySection: [OpeningTitleTreatmentCategory: URL] = [:]
+        for section in config.collection.sections {
+            let sectionEntries = boardEntries.filter { $0.artifact.section == section.rawValue }
+            guard !sectionEntries.isEmpty else {
+                continue
+            }
+
+            let contactSheetURL = outputDirectory.appendingPathComponent(section.boardFilename)
+            try writeContactSheet(
+                entries: sectionEntries,
+                heading: section.displayName,
+                outputURL: contactSheetURL
+            )
+            contactSheetURLsBySection[section] = contactSheetURL
+        }
 
         let manifest = TitleTreatmentPreviewManifest(
             generatedAt: ISO8601DateFormatter().string(from: Date()),
             inputFolder: config.inputFolderURL.path,
             title: config.title,
             caption: config.caption,
+            collection: config.collection.rawValue,
             durationSeconds: config.durationSeconds,
             width: Int(config.renderSize.width.rounded()),
             height: Int(config.renderSize.height.rounded()),
             frameRate: config.frameRate,
             treatmentCount: artifacts.count,
+            sections: config.collection.sections.map(\.rawValue),
             artifacts: artifacts
         )
         let manifestURL = outputDirectory.appendingPathComponent("manifest.json")
@@ -235,8 +270,9 @@ package final class TitleTreatmentPreviewGeneratorService: @unchecked Sendable {
         let indexURL = outputDirectory.appendingPathComponent("index.html")
         try writeHTMLIndex(
             manifest: manifest,
-            standardBoardFilename: standardContactSheetURL.lastPathComponent,
-            wildBoardFilename: wildContactSheetURL.lastPathComponent,
+            boardFilenamesBySection: contactSheetURLsBySection.reduce(into: [:]) { partialResult, entry in
+                partialResult[entry.key] = entry.value.lastPathComponent
+            },
             outputURL: indexURL
         )
 
@@ -244,8 +280,7 @@ package final class TitleTreatmentPreviewGeneratorService: @unchecked Sendable {
             outputDirectory: outputDirectory,
             manifestURL: manifestURL,
             indexURL: indexURL,
-            standardContactSheetURL: standardContactSheetURL,
-            wildContactSheetURL: wildContactSheetURL,
+            contactSheetURLsBySection: contactSheetURLsBySection,
             artifacts: artifacts
         )
         #else
@@ -565,6 +600,11 @@ package final class TitleTreatmentPreviewGeneratorService: @unchecked Sendable {
             context: context
         )
 
+        if let badge = entry.artifact.badge?.trimmingCharacters(in: .whitespacesAndNewlines), !badge.isEmpty {
+            let badgeRect = CGRect(x: rect.maxX - 164, y: rect.maxY - 70, width: 136, height: 34)
+            drawBoardBadge(badge, in: badgeRect, context: context)
+        }
+
         let descriptionRect = CGRect(x: rect.minX + 28, y: rect.maxY - 104, width: rect.width - 56, height: 28)
         drawBoardText(
             entry.artifact.description,
@@ -602,6 +642,28 @@ package final class TitleTreatmentPreviewGeneratorService: @unchecked Sendable {
         context.restoreGState()
     }
 
+    private func drawBoardBadge(
+        _ badge: String,
+        in rect: CGRect,
+        context: CGContext
+    ) {
+        let badgePath = CGPath(roundedRect: rect, cornerWidth: 16, cornerHeight: 16, transform: nil)
+        context.saveGState()
+        context.addPath(badgePath)
+        context.setFillColor(CGColor(red: 0.17, green: 0.44, blue: 0.94, alpha: 0.92))
+        context.fillPath()
+        context.restoreGState()
+
+        drawBoardText(
+            badge.uppercased(),
+            in: CGRect(x: rect.minX + 14, y: rect.minY + 7, width: rect.width - 28, height: rect.height - 14),
+            fontName: "AvenirNext-DemiBold",
+            fontSize: 15,
+            color: CGColor(red: 1, green: 1, blue: 1, alpha: 1),
+            context: context
+        )
+    }
+
     private func drawBoardText(
         _ text: String,
         in rect: CGRect,
@@ -630,12 +692,18 @@ package final class TitleTreatmentPreviewGeneratorService: @unchecked Sendable {
 
     private func writeHTMLIndex(
         manifest: TitleTreatmentPreviewManifest,
-        standardBoardFilename: String,
-        wildBoardFilename: String,
+        boardFilenamesBySection: [OpeningTitleTreatmentCategory: String],
         outputURL: URL
     ) throws {
-        let standardArtifacts = manifest.artifacts.filter { $0.category == OpeningTitleTreatmentCategory.standard.rawValue }
-        let wildArtifacts = manifest.artifacts.filter { $0.category == OpeningTitleTreatmentCategory.wild.rawValue }
+        let groupedArtifacts = Dictionary(grouping: manifest.artifacts, by: \.section)
+        let renderedSections = manifest.sections.compactMap { rawSection -> (OpeningTitleTreatmentCategory, [TitleTreatmentPreviewArtifact])? in
+            guard let section = OpeningTitleTreatmentCategory(rawValue: rawSection),
+                  let artifacts = groupedArtifacts[rawSection],
+                  !artifacts.isEmpty else {
+                return nil
+            }
+            return (section, artifacts)
+        }
         let html = """
         <!doctype html>
         <html lang="en">
@@ -652,8 +720,10 @@ package final class TitleTreatmentPreviewGeneratorService: @unchecked Sendable {
             .board { width: 100%; border-radius: 24px; border: 1px solid rgba(255,255,255,0.12); display: block; margin: 20px 0 32px; }
             .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 20px; }
             .card { background: #11151c; border: 1px solid rgba(255,255,255,0.10); border-radius: 22px; padding: 18px; box-shadow: 0 18px 44px rgba(0,0,0,0.24); }
+            .eyebrow { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
             .card h3 { margin: 0 0 6px; font-size: 24px; }
             .card small { color: #8fd3ff; letter-spacing: 0.08em; text-transform: uppercase; }
+            .pill { display: inline-flex; align-items: center; border-radius: 999px; padding: 5px 10px; background: rgba(93,151,255,0.18); border: 1px solid rgba(129,177,255,0.28); color: #dbe7ff; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
             video { width: 100%; border-radius: 16px; margin: 14px 0 12px; background: #000; }
             .clip-note { margin: 14px 0 12px; padding: 14px 16px; border-radius: 14px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); color: #d6dbe6; }
             .stills { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
@@ -663,22 +733,37 @@ package final class TitleTreatmentPreviewGeneratorService: @unchecked Sendable {
         <body>
           <main>
             <h1>Title Treatment Explorer</h1>
-            <p>\(escapeHTML(manifest.title)) • \(escapeHTML(manifest.caption)) • \(manifest.treatmentCount) treatments • \(manifest.width)x\(manifest.height) • \(manifest.frameRate) fps • \(manifest.durationSeconds)s</p>
-            <h2>Standard Treatments</h2>
-            <img class="board" src="\(escapeHTML(standardBoardFilename))" alt="Standard treatment board">
-            <div class="grid">
-              \(htmlCards(for: standardArtifacts))
-            </div>
-            <h2 style="margin-top:40px;">Wild Treatments</h2>
-            <img class="board" src="\(escapeHTML(wildBoardFilename))" alt="Wild treatment board">
-            <div class="grid">
-              \(htmlCards(for: wildArtifacts))
-            </div>
+            <p>\(escapeHTML(manifest.title)) • \(escapeHTML(manifest.caption)) • \(escapeHTML(manifest.collection)) • \(manifest.treatmentCount) treatments • \(manifest.width)x\(manifest.height) • \(manifest.frameRate) fps • \(manifest.durationSeconds)s</p>
+            \(htmlSections(renderedSections, boardFilenamesBySection: boardFilenamesBySection))
           </main>
         </body>
         </html>
         """
         try html.write(to: outputURL, atomically: true, encoding: .utf8)
+    }
+
+    private func htmlSections(
+        _ renderedSections: [(OpeningTitleTreatmentCategory, [TitleTreatmentPreviewArtifact])],
+        boardFilenamesBySection: [OpeningTitleTreatmentCategory: String]
+    ) -> String {
+        renderedSections.enumerated().map { offset, entry in
+            let section = entry.0
+            let artifacts = entry.1
+            let boardHTML: String
+            if let filename = boardFilenamesBySection[section] {
+                boardHTML = "<img class=\"board\" src=\"\(escapeHTML(filename))\" alt=\"\(escapeHTML(section.displayName)) board\">"
+            } else {
+                boardHTML = ""
+            }
+            let topMargin = offset == 0 ? "" : " style=\"margin-top:40px;\""
+            return """
+            <h2\(topMargin)>\(escapeHTML(section.displayName))</h2>
+            \(boardHTML)
+            <div class="grid">
+              \(htmlCards(for: artifacts))
+            </div>
+            """
+        }.joined(separator: "\n")
     }
 
     private func htmlCards(for artifacts: [TitleTreatmentPreviewArtifact]) -> String {
@@ -691,9 +776,13 @@ package final class TitleTreatmentPreviewGeneratorService: @unchecked Sendable {
                 let note = artifact.clipNote ?? "Video preview unavailable."
                 mediaBlock = "<p class=\"clip-note\">\(escapeHTML(note))</p>"
             }
+            let badgeHTML = artifact.badge.map { "<span class=\"pill\">\(escapeHTML($0))</span>" } ?? ""
             return """
             <article class="card">
-              <small>\(escapeHTML(artifact.category))</small>
+              <div class="eyebrow">
+                <small>\(escapeHTML(artifact.section))</small>
+                \(badgeHTML)
+              </div>
               <h3>\(escapeHTML(artifact.index.description)). \(escapeHTML(artifact.displayName))</h3>
               <p>\(escapeHTML(artifact.description))</p>
               \(mediaBlock)
