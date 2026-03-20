@@ -152,6 +152,29 @@ public final class StillImageClipFactory: @unchecked Sendable {
         let contextLine: String?
     }
 
+    private struct ConceptTitleCardPalette {
+        let start: CGColor
+        let end: CGColor
+        let accent: CGColor
+        let secondaryAccent: CGColor
+        let text: CGColor
+        let panel: CGColor
+        let paper: CGColor
+    }
+
+    private struct ConceptTitleCardFrameSet {
+        let treatment: OpeningTitleTreatment
+        let title: String
+        let contextLine: String?
+        let dateSpanText: String?
+        let metaLine: String?
+        let previewImages: [TitleCardPreviewImage]
+        let heroImage: CGImage?
+        let blurredBackgroundImage: CGImage?
+        let palette: ConceptTitleCardPalette
+        let seed: UInt64
+    }
+
     private struct SeededRandomNumberGenerator: RandomNumberGenerator {
         private var state: UInt64
 
@@ -263,63 +286,190 @@ public final class StillImageClipFactory: @unchecked Sendable {
         frameRate: Int = 30,
         dynamicRange: DynamicRange = .sdr
     ) async throws -> URL {
+        try await makeTitleCardClip(
+            descriptor: descriptor,
+            previewAssets: previewAssets,
+            duration: duration,
+            renderSize: renderSize,
+            frameRate: frameRate,
+            dynamicRange: dynamicRange,
+            treatment: .shippingDefault
+        )
+    }
+
+    package func makeTitleCardClip(
+        descriptor: OpeningTitleCardDescriptor,
+        previewAssets: [TitleCardPreviewAsset],
+        duration: CMTime,
+        renderSize: CGSize,
+        frameRate: Int = 30,
+        dynamicRange: DynamicRange = .sdr,
+        treatment: OpeningTitleTreatment
+    ) async throws -> URL {
         #if canImport(AppKit)
         let resolvedTitle = descriptor.resolvedTitle
         let displayContextLine = descriptor.displayContextLine
         let titleCardColorConfiguration = titleCardColorConfiguration(for: dynamicRange)
         let titleCardColorSpace = titleCardColorConfiguration.cgColorSpace
 
-        if !previewAssets.isEmpty {
-            do {
-                let animatedFrameSet = try await makeAnimatedTitleCardFrameSet(
-                    descriptor: descriptor,
-                    previewAssets: previewAssets,
-                    renderSize: renderSize,
-                    colorSpace: titleCardColorSpace
-                )
-                return try await makeVideoClip(
-                    duration: duration,
-                    renderSize: renderSize,
-                    frameRate: frameRate,
-                    colorConfiguration: titleCardColorConfiguration
-                ) { [animatedFrameSet] frameIndex, totalFrames in
-                    let denominator = max(totalFrames - 1, 1)
-                    let progress = CGFloat(frameIndex) / CGFloat(denominator)
-                    return try self.makeAnimatedTitleCardFrame(
-                        frameSet: animatedFrameSet,
-                        progress: progress,
+        switch treatment {
+        case .currentCollage:
+            if !previewAssets.isEmpty {
+                do {
+                    let animatedFrameSet = try await makeAnimatedTitleCardFrameSet(
+                        descriptor: descriptor,
+                        previewAssets: previewAssets,
                         renderSize: renderSize,
                         colorSpace: titleCardColorSpace
                     )
+                    return try await makeVideoClip(
+                        duration: duration,
+                        renderSize: renderSize,
+                        frameRate: frameRate,
+                        colorConfiguration: titleCardColorConfiguration
+                    ) { [animatedFrameSet] frameIndex, totalFrames in
+                        let denominator = max(totalFrames - 1, 1)
+                        let progress = CGFloat(frameIndex) / CGFloat(denominator)
+                        return try self.makeAnimatedTitleCardFrame(
+                            frameSet: animatedFrameSet,
+                            progress: progress,
+                            renderSize: renderSize,
+                            colorSpace: titleCardColorSpace
+                        )
+                    }
+                } catch {
+                    // Fall back to the static card if previews fail to load or animate.
                 }
-            } catch {
-                // Fall back to the static card if previews fail to load or animate.
+            }
+            return try await makeLegacyStaticTitleCardClip(
+                title: resolvedTitle,
+                contextLine: displayContextLine,
+                duration: duration,
+                renderSize: renderSize,
+                frameRate: frameRate,
+                colorConfiguration: titleCardColorConfiguration,
+                colorSpace: titleCardColorSpace
+            )
+
+        case .legacyStatic:
+            return try await makeLegacyStaticTitleCardClip(
+                title: resolvedTitle,
+                contextLine: displayContextLine,
+                duration: duration,
+                renderSize: renderSize,
+                frameRate: frameRate,
+                colorConfiguration: titleCardColorConfiguration,
+                colorSpace: titleCardColorSpace
+            )
+
+        default:
+            let frameSet = try await makeConceptTitleCardFrameSet(
+                descriptor: descriptor,
+                previewAssets: previewAssets,
+                treatment: treatment,
+                renderSize: renderSize,
+                colorSpace: titleCardColorSpace
+            )
+            return try await makeVideoClip(
+                duration: duration,
+                renderSize: renderSize,
+                frameRate: frameRate,
+                colorConfiguration: titleCardColorConfiguration
+            ) { [frameSet] frameIndex, totalFrames in
+                let denominator = max(totalFrames - 1, 1)
+                let progress = CGFloat(frameIndex) / CGFloat(denominator)
+                return try self.makeConceptTitleCardFrame(
+                    frameSet: frameSet,
+                    progress: progress,
+                    renderSize: renderSize,
+                    colorSpace: titleCardColorSpace
+                )
             }
         }
+        #else
+        throw RenderError.exportFailed("Title card rendering requires AppKit support")
+        #endif
+    }
 
-        let titleImage: CGImage
-        do {
-            titleImage = try await Self.makeStaticTitleCardRasterizedImage(
-                title: resolvedTitle,
-                contextLine: displayContextLine,
-                renderSize: renderSize,
-                colorSpace: titleCardColorSpace
-            )
-        } catch {
-            titleImage = try makeFallbackTitleCardImage(
-                renderSize: renderSize,
-                title: resolvedTitle,
-                contextLine: displayContextLine,
-                colorSpace: titleCardColorSpace
-            )
+    package func makeTitleCardPreviewImages(
+        descriptor: OpeningTitleCardDescriptor,
+        previewAssets: [TitleCardPreviewAsset],
+        renderSize: CGSize,
+        dynamicRange: DynamicRange = .sdr,
+        treatment: OpeningTitleTreatment,
+        progressValues: [CGFloat]
+    ) async throws -> [CGImage] {
+        #if canImport(AppKit)
+        guard !progressValues.isEmpty else {
+            return []
         }
-        return try await makeVideoClip(
-            fromRasterizedImage: CIImage(cgImage: titleImage),
-            duration: duration,
-            renderSize: renderSize,
-            frameRate: frameRate,
-            colorConfiguration: titleCardColorConfiguration
-        )
+
+        let resolvedTitle = descriptor.resolvedTitle
+        let displayContextLine = descriptor.displayContextLine
+        let titleCardColorConfiguration = titleCardColorConfiguration(for: dynamicRange)
+        let titleCardColorSpace = titleCardColorConfiguration.cgColorSpace
+        let clampedProgressValues = progressValues.map { min(max($0, 0), 1) }
+
+        switch treatment {
+        case .currentCollage:
+            if !previewAssets.isEmpty {
+                do {
+                    let animatedFrameSet = try await makeAnimatedTitleCardFrameSet(
+                        descriptor: descriptor,
+                        previewAssets: previewAssets,
+                        renderSize: renderSize,
+                        colorSpace: titleCardColorSpace
+                    )
+                    return try clampedProgressValues.map { progress in
+                        try self.makeAnimatedTitleCardFrameImage(
+                            frameSet: animatedFrameSet,
+                            progress: progress,
+                            renderSize: renderSize,
+                            colorSpace: titleCardColorSpace
+                        )
+                    }
+                } catch {
+                    // Fall back to the static card if previews fail to load or animate.
+                }
+            }
+            fallthrough
+
+        case .legacyStatic:
+            let titleImage: CGImage
+            do {
+                titleImage = try await Self.makeStaticTitleCardRasterizedImage(
+                    title: resolvedTitle,
+                    contextLine: displayContextLine,
+                    renderSize: renderSize,
+                    colorSpace: titleCardColorSpace
+                )
+            } catch {
+                titleImage = try makeFallbackTitleCardImage(
+                    renderSize: renderSize,
+                    title: resolvedTitle,
+                    contextLine: displayContextLine,
+                    colorSpace: titleCardColorSpace
+                )
+            }
+            return Array(repeating: titleImage, count: clampedProgressValues.count)
+
+        default:
+            let frameSet = try await makeConceptTitleCardFrameSet(
+                descriptor: descriptor,
+                previewAssets: previewAssets,
+                treatment: treatment,
+                renderSize: renderSize,
+                colorSpace: titleCardColorSpace
+            )
+            return try clampedProgressValues.map { progress in
+                try self.makeConceptTitleCardFrameImage(
+                    frameSet: frameSet,
+                    progress: progress,
+                    renderSize: renderSize,
+                    colorSpace: titleCardColorSpace
+                )
+            }
+        }
         #else
         throw RenderError.exportFailed("Title card rendering requires AppKit support")
         #endif
@@ -350,16 +500,55 @@ public final class StillImageClipFactory: @unchecked Sendable {
         colorConfiguration: IntermediateColorConfiguration,
         imageProvider: (Int, Int) throws -> CIImage
     ) async throws -> URL {
+        let candidateCodecs = preferredIntermediateCodecs(
+            for: renderSize,
+            colorConfiguration: colorConfiguration
+        )
+        var lastError: Error?
+        var failureDetails: [String] = []
+
+        for codec in candidateCodecs {
+            do {
+                return try await makeVideoClip(
+                    duration: duration,
+                    renderSize: renderSize,
+                    frameRate: frameRate,
+                    colorConfiguration: colorConfiguration,
+                    codec: codec,
+                    imageProvider: imageProvider
+                )
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                lastError = error
+                failureDetails.append("\(codecName(codec)): \(describe(error))")
+            }
+        }
+
+        if lastError != nil {
+            throw RenderError.exportFailed(
+                """
+                Unable to encode still image clip with compatible codecs [\(candidateCodecs.map(\.rawValue).joined(separator: ", "))]. \
+                Failures: \(failureDetails.joined(separator: " | "))
+                """
+            )
+        }
+        throw RenderError.exportFailed("Unable to encode still image clip with any compatible codec")
+    }
+
+    private func makeVideoClip(
+        duration: CMTime,
+        renderSize: CGSize,
+        frameRate: Int,
+        colorConfiguration: IntermediateColorConfiguration,
+        codec: AVVideoCodecType,
+        imageProvider: (Int, Int) throws -> CIImage
+    ) async throws -> URL {
         let totalFrames = max(Int(ceil(duration.seconds * Double(frameRate))), 1)
         let frameDuration = CMTime(value: 1, timescale: CMTimeScale(frameRate))
         let outputURL = temporaryClipURL()
 
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
-        let codec = preferredIntermediateCodec(
-            for: renderSize,
-            writer: writer,
-            colorConfiguration: colorConfiguration
-        )
         let settings = writerVideoSettings(
             codec: codec,
             renderSize: renderSize,
@@ -381,12 +570,21 @@ public final class StillImageClipFactory: @unchecked Sendable {
 
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: attributes)
         guard writer.canAdd(input) else {
-            throw RenderError.exportFailed("Failed to add writer input for still image clip")
+            throw RenderError.exportFailed(
+                "Failed to add writer input for still image clip with codec \(codecName(codec))"
+            )
         }
         writer.add(input)
 
         guard writer.startWriting() else {
-            throw RenderError.exportFailed(writer.error?.localizedDescription ?? "Unable to start writing")
+            if let writerError = writer.error {
+                throw RenderError.exportFailed(
+                    "Unable to start writing still image clip with codec \(codecName(codec)). \(describe(writerError))"
+                )
+            }
+            throw RenderError.exportFailed(
+                "Unable to start writing still image clip with codec \(codecName(codec)). Settings: \(settings)"
+            )
         }
         writer.startSession(atSourceTime: .zero)
 
@@ -414,7 +612,14 @@ public final class StillImageClipFactory: @unchecked Sendable {
 
             let time = CMTimeMultiply(frameDuration, multiplier: Int32(frame))
             guard adaptor.append(destinationBuffer, withPresentationTime: time) else {
-                throw RenderError.exportFailed(writer.error?.localizedDescription ?? "Failed to append image frame")
+                if let writerError = writer.error {
+                    throw RenderError.exportFailed(
+                        "Failed to append image frame with codec \(codecName(codec)). \(describe(writerError))"
+                    )
+                }
+                throw RenderError.exportFailed(
+                    "Failed to append image frame with codec \(codecName(codec))"
+                )
             }
         }
 
@@ -424,11 +629,10 @@ public final class StillImageClipFactory: @unchecked Sendable {
         return outputURL
     }
 
-    private func preferredIntermediateCodec(
+    private func preferredIntermediateCodecs(
         for renderSize: CGSize,
-        writer: AVAssetWriter,
         colorConfiguration: IntermediateColorConfiguration
-    ) -> AVVideoCodecType {
+    ) -> [AVVideoCodecType] {
         let width = Int(renderSize.width.rounded())
         let height = Int(renderSize.height.rounded())
         let largeFrame = width > 4096 || height > 2304
@@ -439,21 +643,39 @@ public final class StillImageClipFactory: @unchecked Sendable {
             candidates = largeFrame ? [.proRes422, .hevc, .h264] : [.h264, .hevc, .proRes422]
         }
 
-        for candidate in candidates {
+        let validationWriterURL = temporaryClipURL()
+        defer { try? FileManager.default.removeItem(at: validationWriterURL) }
+
+        guard let validationWriter = try? AVAssetWriter(outputURL: validationWriterURL, fileType: .mov) else {
+            return candidates
+        }
+
+        let filtered = candidates.filter { candidate in
             let settings = writerVideoSettings(
                 codec: candidate,
                 renderSize: CGSize(width: width, height: height),
                 colorConfiguration: colorConfiguration
             )
-            if writer.canApply(outputSettings: settings, forMediaType: .video) {
-                return candidate
-            }
+            return validationWriter.canApply(outputSettings: settings, forMediaType: .video)
         }
+        return filtered.isEmpty ? candidates : filtered
+    }
 
-        if colorConfiguration.requiresMain10Profile {
-            return largeFrame ? .proRes422 : .hevc
+    private func codecName(_ codec: AVVideoCodecType) -> String {
+        codec.rawValue
+    }
+
+    private func describe(_ error: Error) -> String {
+        let nsError = error as NSError
+        let reason = nsError.localizedFailureReason ?? nsError.localizedRecoverySuggestion ?? "No additional details."
+        let userInfoSummary = nsError.userInfo
+            .map { key, value in "\(key)=\(value)" }
+            .sorted()
+            .joined(separator: ", ")
+        if userInfoSummary.isEmpty {
+            return "\(nsError.domain) code \(nsError.code): \(nsError.localizedDescription). \(reason)"
         }
-        return largeFrame ? .proRes422 : .h264
+        return "\(nsError.domain) code \(nsError.code): \(nsError.localizedDescription). \(reason). userInfo{\(userInfoSummary)}"
     }
 
     private func writerVideoSettings(
@@ -674,23 +896,25 @@ public final class StillImageClipFactory: @unchecked Sendable {
     }
 
     private func loadImageThumbnail(from url: URL, targetDimension: Int) throws -> CGImage {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
-            throw RenderError.exportFailed("Unable to load title preview image at \(url.path)")
+        return try autoreleasepool {
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+                throw RenderError.exportFailed("Unable to load title preview image at \(url.path)")
+            }
+
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceThumbnailMaxPixelSize: max(targetDimension, 1)
+            ]
+
+            guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+                ?? CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary) else {
+                throw RenderError.exportFailed("Unable to decode title preview image at \(url.path)")
+            }
+
+            return image
         }
-
-        let options: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceShouldCacheImmediately: true,
-            kCGImageSourceThumbnailMaxPixelSize: max(targetDimension, 1)
-        ]
-
-        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
-            ?? CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary) else {
-            throw RenderError.exportFailed("Unable to decode title preview image at \(url.path)")
-        }
-
-        return image
     }
 
     private func loadVideoPosterFrame(from url: URL, targetDimension: Int) async throws -> CGImage {
@@ -777,6 +1001,20 @@ public final class StillImageClipFactory: @unchecked Sendable {
         renderSize: CGSize,
         colorSpace: CGColorSpace
     ) throws -> CIImage {
+        CIImage(cgImage: try makeAnimatedTitleCardFrameImage(
+            frameSet: frameSet,
+            progress: progress,
+            renderSize: renderSize,
+            colorSpace: colorSpace
+        ))
+    }
+
+    private func makeAnimatedTitleCardFrameImage(
+        frameSet: AnimatedTitleCardFrameSet,
+        progress: CGFloat,
+        renderSize: CGSize,
+        colorSpace: CGColorSpace
+    ) throws -> CGImage {
         let width = max(1, Int(renderSize.width.rounded()))
         let height = max(1, Int(renderSize.height.rounded()))
 
@@ -844,7 +1082,7 @@ public final class StillImageClipFactory: @unchecked Sendable {
             throw RenderError.exportFailed("Unable to create animated title card frame")
         }
 
-        return CIImage(cgImage: image)
+        return image
     }
 
     private func drawAnimatedTile(
@@ -1255,6 +1493,1115 @@ public final class StillImageClipFactory: @unchecked Sendable {
         context.textMatrix = .identity
         context.textPosition = textPosition
         CTLineDraw(line, context)
+        context.restoreGState()
+    }
+
+    private func makeLegacyStaticTitleCardClip(
+        title: String,
+        contextLine: String?,
+        duration: CMTime,
+        renderSize: CGSize,
+        frameRate: Int,
+        colorConfiguration: IntermediateColorConfiguration,
+        colorSpace: CGColorSpace
+    ) async throws -> URL {
+        let titleImage: CGImage
+        do {
+            titleImage = try await Self.makeStaticTitleCardRasterizedImage(
+                title: title,
+                contextLine: contextLine,
+                renderSize: renderSize,
+                colorSpace: colorSpace
+            )
+        } catch {
+            titleImage = try makeFallbackTitleCardImage(
+                renderSize: renderSize,
+                title: title,
+                contextLine: contextLine,
+                colorSpace: colorSpace
+            )
+        }
+        return try await makeVideoClip(
+            fromRasterizedImage: CIImage(cgImage: titleImage),
+            duration: duration,
+            renderSize: renderSize,
+            frameRate: frameRate,
+            colorConfiguration: colorConfiguration
+        )
+    }
+
+    private func makeConceptTitleCardFrameSet(
+        descriptor: OpeningTitleCardDescriptor,
+        previewAssets: [TitleCardPreviewAsset],
+        treatment: OpeningTitleTreatment,
+        renderSize: CGSize,
+        colorSpace: CGColorSpace
+    ) async throws -> ConceptTitleCardFrameSet {
+        let previewImages: [TitleCardPreviewImage]
+        do {
+            previewImages = try await loadAnimatedPreviewImages(
+                from: previewAssets,
+                targetDimension: Int(max(renderSize.width, renderSize.height).rounded())
+            )
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            previewImages = []
+        }
+
+        let heroImage = previewImages.first?.image
+        let blurredBackgroundImage = heroImage.flatMap {
+            makeBlurredBackgroundImage(from: $0, renderSize: renderSize, colorSpace: colorSpace)
+        }
+
+        return ConceptTitleCardFrameSet(
+            treatment: treatment,
+            title: descriptor.resolvedTitle,
+            contextLine: descriptor.displayContextLine,
+            dateSpanText: descriptor.dateSpanText,
+            metaLine: combinedMetaLine(contextLine: descriptor.displayContextLine, dateSpanText: descriptor.dateSpanText),
+            previewImages: previewImages,
+            heroImage: heroImage,
+            blurredBackgroundImage: blurredBackgroundImage,
+            palette: conceptPalette(for: treatment),
+            seed: descriptor.variationSeed
+        )
+    }
+
+    private func combinedMetaLine(contextLine: String?, dateSpanText: String?) -> String? {
+        let parts = [contextLine, dateSpanText]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !parts.isEmpty else {
+            return nil
+        }
+        return Array(NSOrderedSet(array: parts)).compactMap { $0 as? String }.joined(separator: " • ")
+    }
+
+    private func conceptPalette(for treatment: OpeningTitleTreatment) -> ConceptTitleCardPalette {
+        switch treatment {
+        case .heroLowerThird:
+            return ConceptTitleCardPalette(
+                start: CGColor(red: 0.04, green: 0.08, blue: 0.12, alpha: 1),
+                end: CGColor(red: 0.02, green: 0.03, blue: 0.08, alpha: 1),
+                accent: CGColor(red: 0.98, green: 0.72, blue: 0.29, alpha: 1),
+                secondaryAccent: CGColor(red: 0.38, green: 0.86, blue: 0.80, alpha: 1),
+                text: CGColor(red: 1, green: 1, blue: 1, alpha: 1),
+                panel: CGColor(gray: 0, alpha: 0.38),
+                paper: CGColor(red: 0.94, green: 0.92, blue: 0.88, alpha: 1)
+            )
+        case .splitEditorial:
+            return ConceptTitleCardPalette(
+                start: CGColor(red: 0.11, green: 0.08, blue: 0.07, alpha: 1),
+                end: CGColor(red: 0.06, green: 0.05, blue: 0.10, alpha: 1),
+                accent: CGColor(red: 0.93, green: 0.46, blue: 0.28, alpha: 1),
+                secondaryAccent: CGColor(red: 0.91, green: 0.85, blue: 0.78, alpha: 1),
+                text: CGColor(red: 0.99, green: 0.97, blue: 0.94, alpha: 1),
+                panel: CGColor(red: 0.04, green: 0.04, blue: 0.05, alpha: 0.72),
+                paper: CGColor(red: 0.95, green: 0.90, blue: 0.84, alpha: 1)
+            )
+        case .contactSheetStamp:
+            return ConceptTitleCardPalette(
+                start: CGColor(red: 0.10, green: 0.11, blue: 0.14, alpha: 1),
+                end: CGColor(red: 0.03, green: 0.04, blue: 0.07, alpha: 1),
+                accent: CGColor(red: 0.96, green: 0.41, blue: 0.34, alpha: 1),
+                secondaryAccent: CGColor(red: 0.95, green: 0.82, blue: 0.42, alpha: 1),
+                text: CGColor(red: 1, green: 1, blue: 1, alpha: 1),
+                panel: CGColor(red: 0.08, green: 0.09, blue: 0.12, alpha: 0.84),
+                paper: CGColor(red: 0.96, green: 0.95, blue: 0.92, alpha: 1)
+            )
+        case .polaroidStack, .scrapbookExplosion:
+            return ConceptTitleCardPalette(
+                start: CGColor(red: 0.68, green: 0.57, blue: 0.42, alpha: 1),
+                end: CGColor(red: 0.45, green: 0.35, blue: 0.26, alpha: 1),
+                accent: CGColor(red: 0.80, green: 0.18, blue: 0.24, alpha: 1),
+                secondaryAccent: CGColor(red: 0.18, green: 0.43, blue: 0.68, alpha: 1),
+                text: CGColor(red: 0.12, green: 0.10, blue: 0.09, alpha: 1),
+                panel: CGColor(red: 0.98, green: 0.97, blue: 0.94, alpha: 0.92),
+                paper: CGColor(red: 0.94, green: 0.88, blue: 0.78, alpha: 1)
+            )
+        case .filmstripMarquee, .broadcastMeltdown:
+            return ConceptTitleCardPalette(
+                start: CGColor(red: 0.03, green: 0.03, blue: 0.04, alpha: 1),
+                end: CGColor(red: 0.08, green: 0.08, blue: 0.10, alpha: 1),
+                accent: CGColor(red: 1.0, green: 0.27, blue: 0.31, alpha: 1),
+                secondaryAccent: CGColor(red: 0.20, green: 0.86, blue: 0.97, alpha: 1),
+                text: CGColor(red: 0.98, green: 0.98, blue: 0.96, alpha: 1),
+                panel: CGColor(red: 0.02, green: 0.02, blue: 0.03, alpha: 0.84),
+                paper: CGColor(red: 0.95, green: 0.95, blue: 0.94, alpha: 1)
+            )
+        case .minimalDateSpotlight, .centeredCinematic:
+            return ConceptTitleCardPalette(
+                start: CGColor(red: 0.05, green: 0.08, blue: 0.12, alpha: 1),
+                end: CGColor(red: 0.02, green: 0.03, blue: 0.05, alpha: 1),
+                accent: CGColor(red: 0.90, green: 0.84, blue: 0.68, alpha: 1),
+                secondaryAccent: CGColor(red: 0.47, green: 0.64, blue: 0.94, alpha: 1),
+                text: CGColor(red: 0.98, green: 0.98, blue: 0.97, alpha: 1),
+                panel: CGColor(red: 0.03, green: 0.04, blue: 0.06, alpha: 0.60),
+                paper: CGColor(red: 0.97, green: 0.96, blue: 0.93, alpha: 1)
+            )
+        case .triptychParallax:
+            return ConceptTitleCardPalette(
+                start: CGColor(red: 0.06, green: 0.07, blue: 0.09, alpha: 1),
+                end: CGColor(red: 0.03, green: 0.05, blue: 0.10, alpha: 1),
+                accent: CGColor(red: 0.94, green: 0.68, blue: 0.30, alpha: 1),
+                secondaryAccent: CGColor(red: 0.36, green: 0.77, blue: 0.86, alpha: 1),
+                text: CGColor(red: 1, green: 1, blue: 1, alpha: 1),
+                panel: CGColor(red: 0.02, green: 0.03, blue: 0.05, alpha: 0.68),
+                paper: CGColor(red: 0.95, green: 0.94, blue: 0.92, alpha: 1)
+            )
+        case .photoBookCover:
+            return ConceptTitleCardPalette(
+                start: CGColor(red: 0.94, green: 0.92, blue: 0.88, alpha: 1),
+                end: CGColor(red: 0.86, green: 0.82, blue: 0.74, alpha: 1),
+                accent: CGColor(red: 0.45, green: 0.32, blue: 0.19, alpha: 1),
+                secondaryAccent: CGColor(red: 0.77, green: 0.60, blue: 0.38, alpha: 1),
+                text: CGColor(red: 0.18, green: 0.15, blue: 0.12, alpha: 1),
+                panel: CGColor(red: 0.98, green: 0.97, blue: 0.95, alpha: 0.94),
+                paper: CGColor(red: 0.97, green: 0.95, blue: 0.91, alpha: 1)
+            )
+        case .museumPlaque:
+            return ConceptTitleCardPalette(
+                start: CGColor(red: 0.07, green: 0.06, blue: 0.05, alpha: 1),
+                end: CGColor(red: 0.14, green: 0.12, blue: 0.10, alpha: 1),
+                accent: CGColor(red: 0.84, green: 0.66, blue: 0.39, alpha: 1),
+                secondaryAccent: CGColor(red: 0.74, green: 0.73, blue: 0.70, alpha: 1),
+                text: CGColor(red: 0.97, green: 0.95, blue: 0.91, alpha: 1),
+                panel: CGColor(red: 0.08, green: 0.07, blue: 0.06, alpha: 0.86),
+                paper: CGColor(red: 0.88, green: 0.81, blue: 0.70, alpha: 1)
+            )
+        case .kaleidoscopeBloom:
+            return ConceptTitleCardPalette(
+                start: CGColor(red: 0.16, green: 0.05, blue: 0.18, alpha: 1),
+                end: CGColor(red: 0.02, green: 0.08, blue: 0.14, alpha: 1),
+                accent: CGColor(red: 1.0, green: 0.49, blue: 0.67, alpha: 1),
+                secondaryAccent: CGColor(red: 0.43, green: 0.89, blue: 0.90, alpha: 1),
+                text: CGColor(red: 1, green: 1, blue: 1, alpha: 1),
+                panel: CGColor(red: 0.05, green: 0.03, blue: 0.08, alpha: 0.72),
+                paper: CGColor(red: 0.97, green: 0.95, blue: 0.99, alpha: 1)
+            )
+        case .cosmicOrbitarium:
+            return ConceptTitleCardPalette(
+                start: CGColor(red: 0.01, green: 0.03, blue: 0.08, alpha: 1),
+                end: CGColor(red: 0.08, green: 0.02, blue: 0.12, alpha: 1),
+                accent: CGColor(red: 0.97, green: 0.76, blue: 0.35, alpha: 1),
+                secondaryAccent: CGColor(red: 0.41, green: 0.66, blue: 1.0, alpha: 1),
+                text: CGColor(red: 0.97, green: 0.98, blue: 1.0, alpha: 1),
+                panel: CGColor(red: 0.03, green: 0.05, blue: 0.10, alpha: 0.70),
+                paper: CGColor(red: 0.95, green: 0.95, blue: 0.98, alpha: 1)
+            )
+        case .liquidChrome:
+            return ConceptTitleCardPalette(
+                start: CGColor(red: 0.04, green: 0.05, blue: 0.08, alpha: 1),
+                end: CGColor(red: 0.09, green: 0.03, blue: 0.13, alpha: 1),
+                accent: CGColor(red: 0.79, green: 0.88, blue: 1.0, alpha: 1),
+                secondaryAccent: CGColor(red: 0.54, green: 0.97, blue: 0.86, alpha: 1),
+                text: CGColor(red: 0.98, green: 0.99, blue: 1.0, alpha: 1),
+                panel: CGColor(red: 0.08, green: 0.08, blue: 0.12, alpha: 0.62),
+                paper: CGColor(red: 0.96, green: 0.96, blue: 0.98, alpha: 1)
+            )
+        case .currentCollage, .legacyStatic:
+            return ConceptTitleCardPalette(
+                start: CGColor(red: 0.06, green: 0.08, blue: 0.12, alpha: 1),
+                end: CGColor(red: 0.02, green: 0.04, blue: 0.08, alpha: 1),
+                accent: CGColor(red: 0.93, green: 0.72, blue: 0.29, alpha: 1),
+                secondaryAccent: CGColor(red: 0.36, green: 0.80, blue: 0.86, alpha: 1),
+                text: CGColor(red: 1, green: 1, blue: 1, alpha: 1),
+                panel: CGColor(gray: 0, alpha: 0.52),
+                paper: CGColor(red: 0.96, green: 0.96, blue: 0.96, alpha: 1)
+            )
+        }
+    }
+
+    private func makeConceptTitleCardFrame(
+        frameSet: ConceptTitleCardFrameSet,
+        progress: CGFloat,
+        renderSize: CGSize,
+        colorSpace: CGColorSpace
+    ) throws -> CIImage {
+        CIImage(cgImage: try makeConceptTitleCardFrameImage(
+            frameSet: frameSet,
+            progress: progress,
+            renderSize: renderSize,
+            colorSpace: colorSpace
+        ))
+    }
+
+    private func makeConceptTitleCardFrameImage(
+        frameSet: ConceptTitleCardFrameSet,
+        progress: CGFloat,
+        renderSize: CGSize,
+        colorSpace: CGColorSpace
+    ) throws -> CGImage {
+        guard let context = bitmapContext(renderSize: renderSize, colorSpace: colorSpace) else {
+            throw RenderError.exportFailed("Unable to allocate title treatment frame")
+        }
+
+        drawConceptBackdrop(frameSet: frameSet, progress: progress, renderSize: renderSize, colorSpace: colorSpace, context: context)
+
+        switch frameSet.treatment {
+        case .heroLowerThird:
+            drawHeroLowerThird(frameSet: frameSet, progress: progress, renderSize: renderSize, context: context)
+        case .splitEditorial:
+            drawSplitEditorial(frameSet: frameSet, progress: progress, renderSize: renderSize, context: context)
+        case .contactSheetStamp:
+            drawContactSheetStamp(frameSet: frameSet, progress: progress, renderSize: renderSize, context: context)
+        case .polaroidStack:
+            drawPolaroidStack(frameSet: frameSet, progress: progress, renderSize: renderSize, context: context)
+        case .filmstripMarquee:
+            drawFilmstripMarquee(frameSet: frameSet, progress: progress, renderSize: renderSize, context: context)
+        case .minimalDateSpotlight:
+            drawMinimalDateSpotlight(frameSet: frameSet, progress: progress, renderSize: renderSize, context: context)
+        case .centeredCinematic:
+            drawCenteredCinematic(frameSet: frameSet, progress: progress, renderSize: renderSize, context: context)
+        case .triptychParallax:
+            drawTriptychParallax(frameSet: frameSet, progress: progress, renderSize: renderSize, context: context)
+        case .photoBookCover:
+            drawPhotoBookCover(frameSet: frameSet, progress: progress, renderSize: renderSize, context: context)
+        case .museumPlaque:
+            drawMuseumPlaque(frameSet: frameSet, progress: progress, renderSize: renderSize, context: context)
+        case .kaleidoscopeBloom:
+            drawKaleidoscopeBloom(frameSet: frameSet, progress: progress, renderSize: renderSize, context: context)
+        case .broadcastMeltdown:
+            drawBroadcastMeltdown(frameSet: frameSet, progress: progress, renderSize: renderSize, context: context)
+        case .cosmicOrbitarium:
+            drawCosmicOrbitarium(frameSet: frameSet, progress: progress, renderSize: renderSize, context: context)
+        case .scrapbookExplosion:
+            drawScrapbookExplosion(frameSet: frameSet, progress: progress, renderSize: renderSize, context: context)
+        case .liquidChrome:
+            drawLiquidChrome(frameSet: frameSet, progress: progress, renderSize: renderSize, context: context)
+        case .currentCollage, .legacyStatic:
+            drawMinimalDateSpotlight(frameSet: frameSet, progress: progress, renderSize: renderSize, context: context)
+        }
+
+        guard let image = context.makeImage() else {
+            throw RenderError.exportFailed("Unable to create title treatment frame")
+        }
+        return image
+    }
+
+    private func drawConceptBackdrop(
+        frameSet: ConceptTitleCardFrameSet,
+        progress: CGFloat,
+        renderSize: CGSize,
+        colorSpace: CGColorSpace,
+        context: CGContext
+    ) {
+        let palette = frameSet.palette
+        let fullRect = CGRect(origin: .zero, size: renderSize)
+        context.setFillColor(palette.start)
+        context.fill(fullRect)
+
+        if let backgroundImage = frameSet.blurredBackgroundImage {
+            let baseRect = Self.aspectFillRect(
+                imageSize: CGSize(width: backgroundImage.width, height: backgroundImage.height),
+                into: renderSize
+            )
+            let zoom = 1.03 + 0.03 * sin(progress * .pi * 2)
+            let shiftedRect = scaled(rect: baseRect, scale: zoom).offsetBy(
+                dx: sin(progress * .pi * 2) * renderSize.width * 0.015,
+                dy: cos(progress * .pi * 2) * renderSize.height * 0.012
+            )
+            context.saveGState()
+            context.setAlpha(0.34)
+            context.draw(backgroundImage, in: shiftedRect)
+            context.restoreGState()
+        }
+
+        drawFullCanvasGradient(
+            colors: [
+                palette.start.copy(alpha: 0.20) ?? palette.start,
+                palette.end.copy(alpha: 0.92) ?? palette.end
+            ],
+            start: CGPoint(x: 0, y: renderSize.height),
+            end: CGPoint(x: renderSize.width, y: 0),
+            colorSpace: colorSpace,
+            context: context,
+            rect: fullRect
+        )
+
+        drawVignette(renderSize: renderSize, context: context, colorSpace: colorSpace)
+    }
+
+    private func drawHeroLowerThird(
+        frameSet: ConceptTitleCardFrameSet,
+        progress: CGFloat,
+        renderSize: CGSize,
+        context: CGContext
+    ) {
+        let fullRect = CGRect(origin: .zero, size: renderSize)
+        if let heroImage = frameSet.heroImage {
+            drawImageCard(
+                heroImage,
+                in: scaled(rect: fullRect, scale: 1.03 + (0.03 * progress)),
+                context: context,
+                alpha: 0.85
+            )
+        }
+        drawSoftPanel(rect: CGRect(x: 0, y: 0, width: renderSize.width, height: renderSize.height * 0.36), fill: frameSet.palette.panel, context: context)
+        drawAccentRule(rect: CGRect(x: renderSize.width * 0.08, y: renderSize.height * 0.21, width: renderSize.width * 0.16, height: 8), color: frameSet.palette.accent, context: context)
+        drawStyledText(frameSet.metaLine, in: CGRect(x: renderSize.width * 0.08, y: renderSize.height * 0.25, width: renderSize.width * 0.44, height: renderSize.height * 0.05), fontName: "AvenirNext-DemiBold", fontSize: max(renderSize.width * 0.018, 20), color: frameSet.palette.secondaryAccent, alignment: .left, lineBreakMode: .byTruncatingTail, kern: 2.2, context: context)
+        context.saveGState()
+        context.setShadow(offset: CGSize(width: 0, height: 8), blur: 24, color: CGColor(gray: 0, alpha: 0.35))
+        drawStyledText(frameSet.title, in: CGRect(x: renderSize.width * 0.08, y: renderSize.height * 0.08, width: renderSize.width * 0.56, height: renderSize.height * 0.16), fontName: "AvenirNext-Bold", fontSize: max(renderSize.width * 0.064, 58), color: frameSet.palette.text, alignment: .left, context: context)
+        context.restoreGState()
+
+        let tileWidth = renderSize.width * 0.16
+        for index in 0..<3 {
+            guard let image = previewImage(at: index + 1, from: frameSet) else { continue }
+            let rect = CGRect(
+                x: renderSize.width * (0.70 + (CGFloat(index) * 0.08)),
+                y: renderSize.height * (0.50 + sin((progress + CGFloat(index) * 0.17) * .pi * 2) * 0.025),
+                width: tileWidth,
+                height: renderSize.height * 0.20
+            )
+            drawImageCard(
+                image,
+                in: rect,
+                context: context,
+                cornerRadius: 24,
+                rotationDegrees: CGFloat(index - 1) * 6,
+                alpha: 0.92,
+                strokeColor: frameSet.palette.secondaryAccent.copy(alpha: 0.36),
+                shadowOpacity: 0.28
+            )
+        }
+    }
+
+    private func drawSplitEditorial(
+        frameSet: ConceptTitleCardFrameSet,
+        progress: CGFloat,
+        renderSize: CGSize,
+        context: CGContext
+    ) {
+        let leftPanel = CGRect(x: 0, y: 0, width: renderSize.width * 0.42, height: renderSize.height)
+        drawSoftPanel(rect: leftPanel, fill: frameSet.palette.panel, context: context)
+        drawAccentRule(rect: CGRect(x: renderSize.width * 0.08, y: renderSize.height * 0.74, width: renderSize.width * 0.14, height: 7), color: frameSet.palette.accent, context: context)
+        drawStyledText(frameSet.metaLine, in: CGRect(x: renderSize.width * 0.08, y: renderSize.height * 0.78, width: renderSize.width * 0.26, height: renderSize.height * 0.05), fontName: "AvenirNext-DemiBold", fontSize: max(renderSize.width * 0.018, 18), color: frameSet.palette.secondaryAccent, alignment: .left, lineBreakMode: .byTruncatingTail, kern: 2, context: context)
+        drawStyledText(frameSet.title, in: CGRect(x: renderSize.width * 0.08, y: renderSize.height * 0.40, width: renderSize.width * 0.28, height: renderSize.height * 0.28), fontName: "AvenirNext-Bold", fontSize: max(renderSize.width * 0.060, 52), color: frameSet.palette.text, alignment: .left, context: context)
+
+        let cards: [CGRect] = [
+            CGRect(x: renderSize.width * 0.52, y: renderSize.height * 0.56, width: renderSize.width * 0.22, height: renderSize.height * 0.24),
+            CGRect(x: renderSize.width * 0.69, y: renderSize.height * 0.34, width: renderSize.width * 0.20, height: renderSize.height * 0.22),
+            CGRect(x: renderSize.width * 0.46, y: renderSize.height * 0.18, width: renderSize.width * 0.24, height: renderSize.height * 0.20)
+        ]
+
+        for (index, rect) in cards.enumerated() {
+            guard let image = previewImage(at: index, from: frameSet) else { continue }
+            let animatedRect = rect.offsetBy(
+                dx: sin((progress + CGFloat(index) * 0.11) * .pi * 2) * renderSize.width * 0.01,
+                dy: cos((progress + CGFloat(index) * 0.14) * .pi * 2) * renderSize.height * 0.012
+            )
+            drawImageCard(
+                image,
+                in: animatedRect,
+                context: context,
+                cornerRadius: 28,
+                rotationDegrees: CGFloat(index == 1 ? 4 : -5),
+                alpha: 0.96,
+                strokeColor: frameSet.palette.paper.copy(alpha: 0.42),
+                shadowOpacity: 0.30
+            )
+        }
+    }
+
+    private func drawContactSheetStamp(
+        frameSet: ConceptTitleCardFrameSet,
+        progress: CGFloat,
+        renderSize: CGSize,
+        context: CGContext
+    ) {
+        let columns = 3
+        let rows = 2
+        let cellWidth = renderSize.width * 0.25
+        let cellHeight = renderSize.height * 0.24
+        let startX = renderSize.width * 0.08
+        let startY = renderSize.height * 0.22
+
+        for row in 0..<rows {
+            for column in 0..<columns {
+                let index = row * columns + column
+                guard let image = previewImage(at: index, from: frameSet) else { continue }
+                let rect = CGRect(
+                    x: startX + CGFloat(column) * (cellWidth + renderSize.width * 0.03),
+                    y: startY + CGFloat(rows - 1 - row) * (cellHeight + renderSize.height * 0.04),
+                    width: cellWidth,
+                    height: cellHeight
+                )
+                drawImageCard(
+                    image,
+                    in: rect,
+                    context: context,
+                    cornerRadius: 18,
+                    alpha: 0.94,
+                    strokeColor: frameSet.palette.paper.copy(alpha: 0.28),
+                    shadowOpacity: 0.20
+                )
+            }
+        }
+
+        let stampRect = CGRect(
+            x: renderSize.width * 0.30,
+            y: renderSize.height * 0.32 + sin(progress * .pi * 2) * renderSize.height * 0.01,
+            width: renderSize.width * 0.40,
+            height: renderSize.height * 0.22
+        )
+        drawSoftPanel(rect: stampRect, fill: frameSet.palette.paper.copy(alpha: 0.95) ?? frameSet.palette.paper, stroke: frameSet.palette.accent, lineWidth: 5, cornerRadius: 20, rotationDegrees: -5, context: context)
+        drawStyledText(frameSet.metaLine, in: CGRect(x: stampRect.minX + stampRect.width * 0.12, y: stampRect.minY + stampRect.height * 0.66, width: stampRect.width * 0.76, height: stampRect.height * 0.14), fontName: "AvenirNext-DemiBold", fontSize: max(renderSize.width * 0.015, 16), color: frameSet.palette.accent, alignment: .center, lineBreakMode: .byTruncatingTail, kern: 2.4, context: context)
+        drawStyledText(frameSet.title, in: CGRect(x: stampRect.minX + stampRect.width * 0.08, y: stampRect.minY + stampRect.height * 0.18, width: stampRect.width * 0.84, height: stampRect.height * 0.40), fontName: "AvenirNext-Bold", fontSize: max(renderSize.width * 0.050, 48), color: CGColor(gray: 0.10, alpha: 1), alignment: .center, context: context)
+    }
+
+    private func drawPolaroidStack(
+        frameSet: ConceptTitleCardFrameSet,
+        progress: CGFloat,
+        renderSize: CGSize,
+        context: CGContext
+    ) {
+        for index in 0..<4 {
+            guard let image = previewImage(at: index, from: frameSet) else { continue }
+            let rect = CGRect(
+                x: renderSize.width * (0.14 + CGFloat(index) * 0.17),
+                y: renderSize.height * (0.34 + sin((progress + CGFloat(index) * 0.12) * .pi * 2) * 0.04),
+                width: renderSize.width * 0.22,
+                height: renderSize.height * 0.30
+            )
+            drawPolaroidCard(
+                image: image,
+                rect: rect,
+                rotationDegrees: [-10, -3, 5, 12][index],
+                context: context
+            )
+        }
+
+        let labelRect = CGRect(x: renderSize.width * 0.18, y: renderSize.height * 0.08, width: renderSize.width * 0.64, height: renderSize.height * 0.16)
+        drawSoftPanel(rect: labelRect, fill: frameSet.palette.paper.copy(alpha: 0.94) ?? frameSet.palette.paper, context: context)
+        drawStyledText(frameSet.title, in: CGRect(x: labelRect.minX + labelRect.width * 0.06, y: labelRect.minY + labelRect.height * 0.42, width: labelRect.width * 0.88, height: labelRect.height * 0.34), fontName: "AvenirNext-Bold", fontSize: max(renderSize.width * 0.048, 46), color: CGColor(gray: 0.14, alpha: 1), alignment: .center, context: context)
+        drawStyledText(frameSet.metaLine, in: CGRect(x: labelRect.minX + labelRect.width * 0.06, y: labelRect.minY + labelRect.height * 0.12, width: labelRect.width * 0.88, height: labelRect.height * 0.20), fontName: "AvenirNext-DemiBold", fontSize: max(renderSize.width * 0.015, 15), color: frameSet.palette.accent, alignment: .center, lineBreakMode: .byTruncatingTail, kern: 1.8, context: context)
+    }
+
+    private func drawFilmstripMarquee(
+        frameSet: ConceptTitleCardFrameSet,
+        progress: CGFloat,
+        renderSize: CGSize,
+        context: CGContext
+    ) {
+        let stripRect = CGRect(x: 0, y: renderSize.height * 0.28, width: renderSize.width, height: renderSize.height * 0.34)
+        drawSoftPanel(rect: stripRect, fill: frameSet.palette.panel, context: context)
+        drawFilmPerforations(in: stripRect, renderSize: renderSize, context: context)
+
+        let tileWidth = renderSize.width * 0.24
+        let baseOffset = progress * tileWidth * 0.8
+        for index in 0..<(max(frameSet.previewImages.count, 5)) {
+            guard let image = previewImage(at: index, from: frameSet) else { continue }
+            let x = -tileWidth * 0.5 + CGFloat(index) * (tileWidth * 0.82) - baseOffset
+            let rect = CGRect(x: x, y: stripRect.minY + stripRect.height * 0.16, width: tileWidth, height: stripRect.height * 0.68)
+            drawImageCard(image, in: rect, context: context, cornerRadius: 12, alpha: 0.96, strokeColor: frameSet.palette.secondaryAccent.copy(alpha: 0.22), shadowOpacity: 0.15)
+        }
+
+        drawAccentRule(rect: CGRect(x: renderSize.width * 0.36, y: renderSize.height * 0.71, width: renderSize.width * 0.28, height: 6), color: frameSet.palette.accent, context: context)
+        drawStyledText(frameSet.title, in: CGRect(x: renderSize.width * 0.18, y: renderSize.height * 0.73, width: renderSize.width * 0.64, height: renderSize.height * 0.12), fontName: "AvenirNext-Bold", fontSize: max(renderSize.width * 0.055, 50), color: frameSet.palette.text, alignment: .center, context: context)
+        drawStyledText(frameSet.metaLine, in: CGRect(x: renderSize.width * 0.18, y: renderSize.height * 0.18, width: renderSize.width * 0.64, height: renderSize.height * 0.05), fontName: "AvenirNext-DemiBold", fontSize: max(renderSize.width * 0.016, 16), color: frameSet.palette.secondaryAccent, alignment: .center, lineBreakMode: .byTruncatingTail, kern: 2.2, context: context)
+    }
+
+    private func drawMinimalDateSpotlight(
+        frameSet: ConceptTitleCardFrameSet,
+        progress: CGFloat,
+        renderSize: CGSize,
+        context: CGContext
+    ) {
+        drawRadialGlow(center: CGPoint(x: renderSize.width * 0.5, y: renderSize.height * (0.56 + (sin(progress * .pi * 2) * 0.015))), radius: renderSize.width * 0.20, color: frameSet.palette.accent.copy(alpha: 0.32) ?? frameSet.palette.accent, context: context, colorSpace: frameSet.palette.text.colorSpace ?? CGColorSpaceCreateDeviceRGB())
+        drawStyledText(frameSet.title, in: CGRect(x: renderSize.width * 0.12, y: renderSize.height * 0.44, width: renderSize.width * 0.76, height: renderSize.height * 0.18), fontName: "AvenirNext-Bold", fontSize: max(renderSize.width * 0.080, 72), color: frameSet.palette.text, alignment: .center, context: context)
+        drawAccentRule(rect: CGRect(x: renderSize.width * 0.36, y: renderSize.height * 0.40, width: renderSize.width * 0.28, height: 4), color: frameSet.palette.secondaryAccent, context: context)
+        drawStyledText(frameSet.metaLine, in: CGRect(x: renderSize.width * 0.24, y: renderSize.height * 0.32, width: renderSize.width * 0.52, height: renderSize.height * 0.05), fontName: "AvenirNext-DemiBold", fontSize: max(renderSize.width * 0.017, 18), color: frameSet.palette.secondaryAccent, alignment: .center, lineBreakMode: .byTruncatingTail, kern: 2.8, context: context)
+    }
+
+    private func drawCenteredCinematic(
+        frameSet: ConceptTitleCardFrameSet,
+        progress: CGFloat,
+        renderSize: CGSize,
+        context: CGContext
+    ) {
+        if let heroImage = frameSet.heroImage {
+            drawImageCard(
+                heroImage,
+                in: scaled(rect: CGRect(origin: .zero, size: renderSize), scale: 1.04 + (0.02 * progress)),
+                context: context,
+                alpha: 0.92
+            )
+        }
+        drawSoftPanel(rect: CGRect(x: renderSize.width * 0.18, y: renderSize.height * 0.22, width: renderSize.width * 0.64, height: renderSize.height * 0.28), fill: frameSet.palette.panel.copy(alpha: 0.46) ?? frameSet.palette.panel, context: context)
+        context.saveGState()
+        context.setShadow(offset: CGSize(width: 0, height: 10), blur: 28, color: CGColor(gray: 0, alpha: 0.52))
+        drawStyledText(frameSet.title, in: CGRect(x: renderSize.width * 0.16, y: renderSize.height * 0.35, width: renderSize.width * 0.68, height: renderSize.height * 0.12), fontName: "Georgia-Bold", fontSize: max(renderSize.width * 0.060, 54), color: frameSet.palette.text, alignment: .center, context: context)
+        context.restoreGState()
+        drawStyledText(frameSet.metaLine, in: CGRect(x: renderSize.width * 0.20, y: renderSize.height * 0.27, width: renderSize.width * 0.60, height: renderSize.height * 0.05), fontName: "AvenirNext-DemiBold", fontSize: max(renderSize.width * 0.016, 17), color: frameSet.palette.accent, alignment: .center, lineBreakMode: .byTruncatingTail, kern: 2.0, context: context)
+    }
+
+    private func drawTriptychParallax(
+        frameSet: ConceptTitleCardFrameSet,
+        progress: CGFloat,
+        renderSize: CGSize,
+        context: CGContext
+    ) {
+        let widths = [0.24, 0.20, 0.24]
+        let xs = [0.10, 0.40, 0.66]
+        for index in 0..<3 {
+            guard let image = previewImage(at: index, from: frameSet) else { continue }
+            let rect = CGRect(
+                x: renderSize.width * xs[index],
+                y: renderSize.height * 0.08 + cos((progress + CGFloat(index) * 0.13) * .pi * 2) * renderSize.height * 0.03,
+                width: renderSize.width * widths[index],
+                height: renderSize.height * 0.74
+            )
+            drawImageCard(
+                image,
+                in: rect,
+                context: context,
+                cornerRadius: 22,
+                alpha: 0.94,
+                strokeColor: frameSet.palette.secondaryAccent.copy(alpha: 0.24),
+                shadowOpacity: 0.22
+            )
+        }
+
+        drawSoftPanel(rect: CGRect(x: renderSize.width * 0.26, y: renderSize.height * 0.12, width: renderSize.width * 0.48, height: renderSize.height * 0.20), fill: frameSet.palette.panel.copy(alpha: 0.58) ?? frameSet.palette.panel, context: context)
+        drawStyledText(frameSet.title, in: CGRect(x: renderSize.width * 0.30, y: renderSize.height * 0.21, width: renderSize.width * 0.40, height: renderSize.height * 0.10), fontName: "AvenirNext-Bold", fontSize: max(renderSize.width * 0.052, 48), color: frameSet.palette.text, alignment: .center, context: context)
+        drawStyledText(frameSet.metaLine, in: CGRect(x: renderSize.width * 0.30, y: renderSize.height * 0.15, width: renderSize.width * 0.40, height: renderSize.height * 0.05), fontName: "AvenirNext-DemiBold", fontSize: max(renderSize.width * 0.015, 15), color: frameSet.palette.accent, alignment: .center, lineBreakMode: .byTruncatingTail, kern: 2.2, context: context)
+    }
+
+    private func drawPhotoBookCover(
+        frameSet: ConceptTitleCardFrameSet,
+        progress: CGFloat,
+        renderSize: CGSize,
+        context: CGContext
+    ) {
+        context.setFillColor(frameSet.palette.paper)
+        context.fill(CGRect(origin: .zero, size: renderSize))
+        if let heroImage = frameSet.heroImage {
+            let photoRect = CGRect(x: renderSize.width * 0.19, y: renderSize.height * 0.42, width: renderSize.width * 0.62, height: renderSize.height * 0.34)
+            drawSoftPanel(rect: photoRect.insetBy(dx: -18, dy: -18), fill: CGColor(gray: 1, alpha: 0.86), stroke: frameSet.palette.secondaryAccent.copy(alpha: 0.24), lineWidth: 2, cornerRadius: 2, context: context)
+            drawImageCard(heroImage, in: photoRect.offsetBy(dx: 0, dy: sin(progress * .pi * 2) * renderSize.height * 0.008), context: context, alpha: 1.0, shadowOpacity: 0.12)
+        }
+        drawStyledText(frameSet.title, in: CGRect(x: renderSize.width * 0.14, y: renderSize.height * 0.20, width: renderSize.width * 0.72, height: renderSize.height * 0.12), fontName: "Georgia-Bold", fontSize: max(renderSize.width * 0.052, 48), color: frameSet.palette.text, alignment: .center, context: context)
+        drawStyledText(frameSet.metaLine, in: CGRect(x: renderSize.width * 0.18, y: renderSize.height * 0.13, width: renderSize.width * 0.64, height: renderSize.height * 0.05), fontName: "Georgia", fontSize: max(renderSize.width * 0.016, 16), color: frameSet.palette.accent, alignment: .center, lineBreakMode: .byTruncatingTail, kern: 1.1, context: context)
+    }
+
+    private func drawMuseumPlaque(
+        frameSet: ConceptTitleCardFrameSet,
+        progress: CGFloat,
+        renderSize: CGSize,
+        context: CGContext
+    ) {
+        let artRect = CGRect(x: renderSize.width * 0.17, y: renderSize.height * 0.24, width: renderSize.width * 0.48, height: renderSize.height * 0.48)
+        drawSoftPanel(rect: artRect.insetBy(dx: -26, dy: -26), fill: CGColor(red: 0.19, green: 0.15, blue: 0.10, alpha: 1), stroke: frameSet.palette.accent.copy(alpha: 0.45), lineWidth: 6, cornerRadius: 6, context: context)
+        if let heroImage = frameSet.heroImage {
+            drawImageCard(heroImage, in: artRect.offsetBy(dx: 0, dy: sin(progress * .pi * 2) * renderSize.height * 0.006), context: context, alpha: 1.0)
+        }
+        let plaqueRect = CGRect(x: renderSize.width * 0.70, y: renderSize.height * 0.25, width: renderSize.width * 0.18, height: renderSize.height * 0.20)
+        drawSoftPanel(rect: plaqueRect, fill: frameSet.palette.paper.copy(alpha: 0.95) ?? frameSet.palette.paper, stroke: frameSet.palette.secondaryAccent.copy(alpha: 0.30), lineWidth: 2, cornerRadius: 8, context: context)
+        drawStyledText("Gallery 03", in: CGRect(x: plaqueRect.minX + plaqueRect.width * 0.12, y: plaqueRect.minY + plaqueRect.height * 0.72, width: plaqueRect.width * 0.76, height: plaqueRect.height * 0.12), fontName: "AvenirNext-DemiBold", fontSize: max(renderSize.width * 0.010, 11), color: frameSet.palette.accent, alignment: .left, lineBreakMode: .byTruncatingTail, kern: 1.6, context: context)
+        drawStyledText(frameSet.title, in: CGRect(x: plaqueRect.minX + plaqueRect.width * 0.12, y: plaqueRect.minY + plaqueRect.height * 0.32, width: plaqueRect.width * 0.76, height: plaqueRect.height * 0.32), fontName: "Georgia-Bold", fontSize: max(renderSize.width * 0.020, 19), color: CGColor(gray: 0.10, alpha: 1), alignment: .left, context: context)
+        drawStyledText(frameSet.metaLine, in: CGRect(x: plaqueRect.minX + plaqueRect.width * 0.12, y: plaqueRect.minY + plaqueRect.height * 0.12, width: plaqueRect.width * 0.76, height: plaqueRect.height * 0.14), fontName: "Georgia", fontSize: max(renderSize.width * 0.010, 11), color: CGColor(gray: 0.22, alpha: 1), alignment: .left, lineBreakMode: .byWordWrapping, context: context)
+    }
+
+    private func drawKaleidoscopeBloom(
+        frameSet: ConceptTitleCardFrameSet,
+        progress: CGFloat,
+        renderSize: CGSize,
+        context: CGContext
+    ) {
+        let center = CGPoint(x: renderSize.width * 0.5, y: renderSize.height * 0.55)
+        for index in 0..<8 {
+            guard let image = previewImage(at: index, from: frameSet) else { continue }
+            let angle = (CGFloat(index) / 8) * (.pi * 2) + progress * .pi * 0.2
+            let radius = renderSize.width * (0.14 + 0.05 * sin(progress * .pi * 2 + CGFloat(index)))
+            let rect = CGRect(
+                x: center.x + cos(angle) * radius - renderSize.width * 0.10,
+                y: center.y + sin(angle) * radius - renderSize.height * 0.09,
+                width: renderSize.width * 0.20,
+                height: renderSize.height * 0.18
+            )
+            drawImageCard(
+                image,
+                in: rect,
+                context: context,
+                cornerRadius: 24,
+                rotationDegrees: angle * 180 / .pi + 90,
+                alpha: 0.84,
+                strokeColor: frameSet.palette.secondaryAccent.copy(alpha: 0.30),
+                shadowOpacity: 0.18
+            )
+        }
+        let plateRect = CGRect(x: renderSize.width * 0.30, y: renderSize.height * 0.40, width: renderSize.width * 0.40, height: renderSize.height * 0.22)
+        drawSoftPanel(rect: plateRect, fill: frameSet.palette.panel.copy(alpha: 0.76) ?? frameSet.palette.panel, stroke: frameSet.palette.accent.copy(alpha: 0.34), lineWidth: 3, cornerRadius: 28, context: context)
+        drawStyledText(frameSet.title, in: CGRect(x: plateRect.minX + plateRect.width * 0.10, y: plateRect.minY + plateRect.height * 0.38, width: plateRect.width * 0.80, height: plateRect.height * 0.26), fontName: "AvenirNext-Bold", fontSize: max(renderSize.width * 0.052, 48), color: frameSet.palette.text, alignment: .center, context: context)
+        drawStyledText(frameSet.metaLine, in: CGRect(x: plateRect.minX + plateRect.width * 0.10, y: plateRect.minY + plateRect.height * 0.16, width: plateRect.width * 0.80, height: plateRect.height * 0.12), fontName: "AvenirNext-DemiBold", fontSize: max(renderSize.width * 0.015, 15), color: frameSet.palette.secondaryAccent, alignment: .center, lineBreakMode: .byTruncatingTail, kern: 2.2, context: context)
+    }
+
+    private func drawBroadcastMeltdown(
+        frameSet: ConceptTitleCardFrameSet,
+        progress: CGFloat,
+        renderSize: CGSize,
+        context: CGContext
+    ) {
+        drawScanlines(renderSize: renderSize, context: context)
+        let blockRect = CGRect(x: renderSize.width * 0.07, y: renderSize.height * 0.12, width: renderSize.width * 0.46, height: renderSize.height * 0.28)
+        drawSoftPanel(rect: blockRect, fill: frameSet.palette.panel.copy(alpha: 0.78) ?? frameSet.palette.panel, context: context)
+        drawStyledText("03", in: CGRect(x: renderSize.width * 0.68, y: renderSize.height * 0.52, width: renderSize.width * 0.22, height: renderSize.height * 0.20), fontName: "AvenirNext-Bold", fontSize: max(renderSize.width * 0.12, 120), color: frameSet.palette.accent.copy(alpha: 0.12) ?? frameSet.palette.accent, alignment: .center, context: context)
+        drawChromaOffsetTitle(frameSet.title, rect: CGRect(x: renderSize.width * 0.09, y: renderSize.height * 0.20, width: renderSize.width * 0.40, height: renderSize.height * 0.14), renderSize: renderSize, context: context)
+        drawStyledText(frameSet.metaLine, in: CGRect(x: renderSize.width * 0.10, y: renderSize.height * 0.14, width: renderSize.width * 0.34, height: renderSize.height * 0.05), fontName: "AvenirNext-DemiBold", fontSize: max(renderSize.width * 0.015, 15), color: frameSet.palette.secondaryAccent, alignment: .left, lineBreakMode: .byTruncatingTail, kern: 2.4, context: context)
+
+        let barY = renderSize.height * 0.62
+        for index in 0..<3 {
+            guard let image = previewImage(at: index, from: frameSet) else { continue }
+            let rect = CGRect(
+                x: renderSize.width * (0.58 + CGFloat(index) * 0.11),
+                y: barY + sin((progress + CGFloat(index) * 0.15) * .pi * 2) * renderSize.height * 0.01,
+                width: renderSize.width * 0.18,
+                height: renderSize.height * 0.12
+            )
+            drawImageCard(image, in: rect, context: context, cornerRadius: 8, alpha: 0.96, strokeColor: frameSet.palette.accent.copy(alpha: 0.20), shadowOpacity: 0.10)
+        }
+    }
+
+    private func drawCosmicOrbitarium(
+        frameSet: ConceptTitleCardFrameSet,
+        progress: CGFloat,
+        renderSize: CGSize,
+        context: CGContext
+    ) {
+        drawStarfield(seed: frameSet.seed ^ 0xC05A1C, renderSize: renderSize, context: context)
+        let center = CGPoint(x: renderSize.width * 0.50, y: renderSize.height * 0.52)
+        drawRadialGlow(center: center, radius: renderSize.width * 0.18, color: frameSet.palette.secondaryAccent.copy(alpha: 0.24) ?? frameSet.palette.secondaryAccent, context: context, colorSpace: frameSet.palette.text.colorSpace ?? CGColorSpaceCreateDeviceRGB())
+
+        let orbitalRadii: [CGFloat] = [0.18, 0.26, 0.34, 0.42]
+        for index in 0..<4 {
+            guard let image = previewImage(at: index, from: frameSet) else { continue }
+            let angle = progress * .pi * (0.8 + CGFloat(index) * 0.2) + CGFloat(index) * (.pi / 2)
+            let radius = renderSize.width * orbitalRadii[index]
+            let rect = CGRect(
+                x: center.x + cos(angle) * radius - renderSize.width * 0.07,
+                y: center.y + sin(angle) * radius * 0.58 - renderSize.height * 0.07,
+                width: renderSize.width * 0.14,
+                height: renderSize.height * 0.14
+            )
+            drawCircularImage(image, in: rect, context: context, strokeColor: frameSet.palette.accent.copy(alpha: 0.38), shadowOpacity: 0.28)
+        }
+
+        let titlePlate = CGRect(x: renderSize.width * 0.26, y: renderSize.height * 0.38, width: renderSize.width * 0.48, height: renderSize.height * 0.18)
+        drawSoftPanel(rect: titlePlate, fill: frameSet.palette.panel.copy(alpha: 0.82) ?? frameSet.palette.panel, stroke: frameSet.palette.secondaryAccent.copy(alpha: 0.28), lineWidth: 2, cornerRadius: 36, context: context)
+        drawStyledText(frameSet.title, in: CGRect(x: titlePlate.minX + titlePlate.width * 0.08, y: titlePlate.minY + titlePlate.height * 0.36, width: titlePlate.width * 0.84, height: titlePlate.height * 0.26), fontName: "Georgia-Bold", fontSize: max(renderSize.width * 0.050, 46), color: frameSet.palette.text, alignment: .center, context: context)
+        drawStyledText(frameSet.metaLine, in: CGRect(x: titlePlate.minX + titlePlate.width * 0.10, y: titlePlate.minY + titlePlate.height * 0.16, width: titlePlate.width * 0.80, height: titlePlate.height * 0.10), fontName: "AvenirNext-DemiBold", fontSize: max(renderSize.width * 0.014, 14), color: frameSet.palette.accent, alignment: .center, lineBreakMode: .byTruncatingTail, kern: 2.1, context: context)
+    }
+
+    private func drawScrapbookExplosion(
+        frameSet: ConceptTitleCardFrameSet,
+        progress: CGFloat,
+        renderSize: CGSize,
+        context: CGContext
+    ) {
+        context.setFillColor(frameSet.palette.paper)
+        context.fill(CGRect(origin: .zero, size: renderSize))
+        let scraps = [
+            CGRect(x: renderSize.width * 0.07, y: renderSize.height * 0.58, width: renderSize.width * 0.20, height: renderSize.height * 0.18),
+            CGRect(x: renderSize.width * 0.62, y: renderSize.height * 0.62, width: renderSize.width * 0.23, height: renderSize.height * 0.16),
+            CGRect(x: renderSize.width * 0.12, y: renderSize.height * 0.18, width: renderSize.width * 0.24, height: renderSize.height * 0.20),
+            CGRect(x: renderSize.width * 0.58, y: renderSize.height * 0.18, width: renderSize.width * 0.18, height: renderSize.height * 0.18)
+        ]
+        for (index, rect) in scraps.enumerated() {
+            let color = index.isMultiple(of: 2) ? frameSet.palette.accent.copy(alpha: 0.10) : frameSet.palette.secondaryAccent.copy(alpha: 0.10)
+            drawTornPaper(rect: rect, fill: color ?? frameSet.palette.paper, seed: frameSet.seed &+ UInt64(index), context: context)
+        }
+        for index in 0..<4 {
+            guard let image = previewImage(at: index, from: frameSet) else { continue }
+            let rect = scraps[index].offsetBy(dx: sin((progress + CGFloat(index) * 0.12) * .pi * 2) * renderSize.width * 0.005, dy: 0)
+            drawPolaroidCard(image: image, rect: rect, rotationDegrees: [-12, 9, -6, 12][index], context: context)
+            drawTapeStrip(rect: CGRect(x: rect.minX + rect.width * 0.30, y: rect.maxY - rect.height * 0.03, width: rect.width * 0.24, height: rect.height * 0.06), rotationDegrees: CGFloat(index.isMultiple(of: 2) ? -10 : 10), context: context)
+        }
+        let labelRect = CGRect(x: renderSize.width * 0.30, y: renderSize.height * 0.40, width: renderSize.width * 0.40, height: renderSize.height * 0.18)
+        drawTornPaper(rect: labelRect, fill: CGColor(red: 0.98, green: 0.96, blue: 0.90, alpha: 0.98), seed: frameSet.seed ^ 0x515A, context: context)
+        drawStyledText(frameSet.title, in: CGRect(x: labelRect.minX + labelRect.width * 0.08, y: labelRect.minY + labelRect.height * 0.44, width: labelRect.width * 0.84, height: labelRect.height * 0.24), fontName: "AvenirNext-Bold", fontSize: max(renderSize.width * 0.050, 46), color: CGColor(gray: 0.16, alpha: 1), alignment: .center, context: context)
+        drawStyledText(frameSet.metaLine, in: CGRect(x: labelRect.minX + labelRect.width * 0.08, y: labelRect.minY + labelRect.height * 0.18, width: labelRect.width * 0.84, height: labelRect.height * 0.10), fontName: "AvenirNext-DemiBold", fontSize: max(renderSize.width * 0.014, 14), color: frameSet.palette.accent, alignment: .center, lineBreakMode: .byTruncatingTail, kern: 1.8, context: context)
+    }
+
+    private func drawLiquidChrome(
+        frameSet: ConceptTitleCardFrameSet,
+        progress: CGFloat,
+        renderSize: CGSize,
+        context: CGContext
+    ) {
+        let colorSpace = frameSet.palette.text.colorSpace ?? CGColorSpaceCreateDeviceRGB()
+        drawChromeBlob(center: CGPoint(x: renderSize.width * 0.26, y: renderSize.height * 0.62), radius: renderSize.width * 0.18, primary: frameSet.palette.accent, secondary: frameSet.palette.secondaryAccent, progress: progress, context: context, colorSpace: colorSpace)
+        drawChromeBlob(center: CGPoint(x: renderSize.width * 0.74, y: renderSize.height * 0.56), radius: renderSize.width * 0.16, primary: frameSet.palette.secondaryAccent, secondary: frameSet.palette.accent, progress: progress + 0.2, context: context, colorSpace: colorSpace)
+        drawChromeBlob(center: CGPoint(x: renderSize.width * 0.54, y: renderSize.height * 0.28), radius: renderSize.width * 0.12, primary: frameSet.palette.accent.copy(alpha: 0.8) ?? frameSet.palette.accent, secondary: frameSet.palette.paper, progress: progress + 0.4, context: context, colorSpace: colorSpace)
+
+        for index in 0..<2 {
+            guard let image = previewImage(at: index, from: frameSet) else { continue }
+            let rect = CGRect(
+                x: renderSize.width * (0.10 + CGFloat(index) * 0.62),
+                y: renderSize.height * (0.16 + CGFloat(index) * 0.12),
+                width: renderSize.width * 0.22,
+                height: renderSize.height * 0.18
+            )
+            drawImageCard(image, in: rect, context: context, cornerRadius: 42, alpha: 0.88, strokeColor: frameSet.palette.paper.copy(alpha: 0.42), shadowOpacity: 0.32)
+        }
+
+        context.saveGState()
+        context.setShadow(offset: CGSize(width: 0, height: 14), blur: 34, color: frameSet.palette.secondaryAccent.copy(alpha: 0.35))
+        drawStyledText(frameSet.title, in: CGRect(x: renderSize.width * 0.10, y: renderSize.height * 0.52, width: renderSize.width * 0.80, height: renderSize.height * 0.20), fontName: "AvenirNext-Bold", fontSize: max(renderSize.width * 0.086, 78), color: frameSet.palette.text, alignment: .center, context: context)
+        context.restoreGState()
+        drawStyledText(frameSet.metaLine, in: CGRect(x: renderSize.width * 0.22, y: renderSize.height * 0.44, width: renderSize.width * 0.56, height: renderSize.height * 0.05), fontName: "AvenirNext-DemiBold", fontSize: max(renderSize.width * 0.016, 16), color: frameSet.palette.accent, alignment: .center, lineBreakMode: .byTruncatingTail, kern: 3.0, context: context)
+    }
+
+    private func previewImage(at index: Int, from frameSet: ConceptTitleCardFrameSet) -> CGImage? {
+        guard !frameSet.previewImages.isEmpty else {
+            return frameSet.heroImage
+        }
+        return frameSet.previewImages[index % frameSet.previewImages.count].image
+    }
+
+    private func drawStyledText(
+        _ text: String?,
+        in rect: CGRect,
+        fontName: String,
+        fontSize: CGFloat,
+        color: CGColor,
+        alignment: CTTextAlignment,
+        lineBreakMode: CTLineBreakMode = .byWordWrapping,
+        kern: CGFloat = 0,
+        context: CGContext
+    ) {
+        guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+            return
+        }
+        let attributes: [NSAttributedString.Key: Any] = [
+            NSAttributedString.Key(rawValue: kCTFontAttributeName as String): CTFontCreateWithName(fontName as CFString, fontSize, nil),
+            NSAttributedString.Key(rawValue: kCTForegroundColorAttributeName as String): color,
+            NSAttributedString.Key(rawValue: kCTParagraphStyleAttributeName as String): paragraphStyle(alignment: alignment, lineBreakMode: lineBreakMode),
+            NSAttributedString.Key(rawValue: kCTKernAttributeName as String): kern
+        ]
+        drawAttributedString(NSAttributedString(string: text, attributes: attributes), in: rect, context: context)
+    }
+
+    private func drawAccentRule(rect: CGRect, color: CGColor, context: CGContext) {
+        context.saveGState()
+        context.setFillColor(color)
+        context.fill(rect)
+        context.restoreGState()
+    }
+
+    private func drawSoftPanel(
+        rect: CGRect,
+        fill: CGColor,
+        stroke: CGColor? = nil,
+        lineWidth: CGFloat = 2,
+        cornerRadius: CGFloat = 24,
+        rotationDegrees: CGFloat = 0,
+        context: CGContext
+    ) {
+        context.saveGState()
+        if rotationDegrees != 0 {
+            context.translateBy(x: rect.midX, y: rect.midY)
+            context.rotate(by: rotationDegrees * (.pi / 180))
+            context.translateBy(x: -rect.midX, y: -rect.midY)
+        }
+        context.setShadow(offset: CGSize(width: 0, height: 12), blur: 24, color: CGColor(gray: 0, alpha: 0.20))
+        let path = CGPath(roundedRect: rect, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
+        context.addPath(path)
+        context.setFillColor(fill)
+        context.fillPath()
+        if let stroke {
+            context.addPath(path)
+            context.setStrokeColor(stroke)
+            context.setLineWidth(lineWidth)
+            context.strokePath()
+        }
+        context.restoreGState()
+    }
+
+    private func drawImageCard(
+        _ image: CGImage,
+        in rect: CGRect,
+        context: CGContext,
+        cornerRadius: CGFloat = 0,
+        rotationDegrees: CGFloat = 0,
+        alpha: CGFloat = 1,
+        strokeColor: CGColor? = nil,
+        shadowOpacity: CGFloat = 0.24
+    ) {
+        context.saveGState()
+        if rotationDegrees != 0 {
+            context.translateBy(x: rect.midX, y: rect.midY)
+            context.rotate(by: rotationDegrees * (.pi / 180))
+            context.translateBy(x: -rect.midX, y: -rect.midY)
+        }
+        context.setAlpha(alpha)
+        context.setShadow(offset: CGSize(width: 0, height: -8), blur: max(rect.width * 0.035, 12), color: CGColor(gray: 0, alpha: shadowOpacity))
+
+        let drawRect = rect
+        if cornerRadius > 0 {
+            let clipPath = CGPath(roundedRect: drawRect, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
+            context.addPath(clipPath)
+            context.clip()
+        }
+        let imageRect = Self.aspectFillRect(
+            imageSize: CGSize(width: image.width, height: image.height),
+            into: drawRect.size
+        ).offsetBy(dx: drawRect.minX, dy: drawRect.minY)
+        context.draw(image, in: imageRect)
+        context.restoreGState()
+
+        if let strokeColor {
+            context.saveGState()
+            if rotationDegrees != 0 {
+                context.translateBy(x: rect.midX, y: rect.midY)
+                context.rotate(by: rotationDegrees * (.pi / 180))
+                context.translateBy(x: -rect.midX, y: -rect.midY)
+            }
+            let path = cornerRadius > 0
+                ? CGPath(roundedRect: rect, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
+                : CGPath(rect: rect, transform: nil)
+            context.addPath(path)
+            context.setStrokeColor(strokeColor)
+            context.setLineWidth(max(rect.width * 0.006, 2))
+            context.strokePath()
+            context.restoreGState()
+        }
+    }
+
+    private func drawPolaroidCard(
+        image: CGImage,
+        rect: CGRect,
+        rotationDegrees: CGFloat,
+        context: CGContext
+    ) {
+        context.saveGState()
+        context.translateBy(x: rect.midX, y: rect.midY)
+        context.rotate(by: rotationDegrees * (.pi / 180))
+        context.translateBy(x: -rect.midX, y: -rect.midY)
+        context.setShadow(offset: CGSize(width: 0, height: -12), blur: 24, color: CGColor(gray: 0, alpha: 0.20))
+        let framePath = CGPath(roundedRect: rect, cornerWidth: 8, cornerHeight: 8, transform: nil)
+        context.addPath(framePath)
+        context.setFillColor(CGColor(gray: 1, alpha: 0.98))
+        context.fillPath()
+        let imageRect = CGRect(
+            x: rect.minX + rect.width * 0.08,
+            y: rect.minY + rect.height * 0.22,
+            width: rect.width * 0.84,
+            height: rect.height * 0.68
+        )
+        let clipPath = CGPath(roundedRect: imageRect, cornerWidth: 4, cornerHeight: 4, transform: nil)
+        context.addPath(clipPath)
+        context.clip()
+        let fillRect = Self.aspectFillRect(imageSize: CGSize(width: image.width, height: image.height), into: imageRect.size)
+            .offsetBy(dx: imageRect.minX, dy: imageRect.minY)
+        context.draw(image, in: fillRect)
+        context.restoreGState()
+    }
+
+    private func drawFilmPerforations(in rect: CGRect, renderSize: CGSize, context: CGContext) {
+        context.saveGState()
+        context.setFillColor(CGColor(gray: 0.12, alpha: 1))
+        let holeWidth = renderSize.width * 0.012
+        let spacing = holeWidth * 1.7
+        var x = rect.minX + spacing * 0.5
+        while x < rect.maxX {
+            context.fill(CGRect(x: x, y: rect.minY + rect.height * 0.86, width: holeWidth, height: rect.height * 0.08))
+            context.fill(CGRect(x: x, y: rect.minY + rect.height * 0.06, width: holeWidth, height: rect.height * 0.08))
+            x += spacing
+        }
+        context.restoreGState()
+    }
+
+    private func drawVignette(renderSize: CGSize, context: CGContext, colorSpace: CGColorSpace) {
+        guard let gradient = CGGradient(
+            colorsSpace: colorSpace,
+            colors: [
+                CGColor(gray: 0, alpha: 0) as Any,
+                CGColor(gray: 0, alpha: 0.52) as Any
+            ] as CFArray,
+            locations: [0.45, 1.0]
+        ) else {
+            return
+        }
+        let center = CGPoint(x: renderSize.width * 0.5, y: renderSize.height * 0.52)
+        context.saveGState()
+        context.drawRadialGradient(
+            gradient,
+            startCenter: center,
+            startRadius: 0,
+            endCenter: center,
+            endRadius: max(renderSize.width, renderSize.height) * 0.62,
+            options: []
+        )
+        context.restoreGState()
+    }
+
+    private func drawRadialGlow(
+        center: CGPoint,
+        radius: CGFloat,
+        color: CGColor,
+        context: CGContext,
+        colorSpace: CGColorSpace
+    ) {
+        guard let gradient = CGGradient(
+            colorsSpace: colorSpace,
+            colors: [
+                color,
+                color.copy(alpha: 0) ?? color
+            ] as CFArray,
+            locations: [0, 1]
+        ) else {
+            return
+        }
+        context.saveGState()
+        context.drawRadialGradient(
+            gradient,
+            startCenter: center,
+            startRadius: 0,
+            endCenter: center,
+            endRadius: radius,
+            options: []
+        )
+        context.restoreGState()
+    }
+
+    private func drawScanlines(renderSize: CGSize, context: CGContext) {
+        context.saveGState()
+        context.setStrokeColor(CGColor(gray: 1, alpha: 0.06))
+        context.setLineWidth(1)
+        var y: CGFloat = 0
+        while y <= renderSize.height {
+            context.move(to: CGPoint(x: 0, y: y))
+            context.addLine(to: CGPoint(x: renderSize.width, y: y))
+            y += 5
+        }
+        context.strokePath()
+        context.restoreGState()
+    }
+
+    private func drawChromaOffsetTitle(
+        _ text: String,
+        rect: CGRect,
+        renderSize: CGSize,
+        context: CGContext
+    ) {
+        let offset = max(renderSize.width * 0.003, 3)
+        drawStyledText(text, in: rect.offsetBy(dx: -offset, dy: 0), fontName: "AvenirNext-Bold", fontSize: max(renderSize.width * 0.062, 56), color: CGColor(red: 1.0, green: 0.26, blue: 0.36, alpha: 0.65), alignment: .left, context: context)
+        drawStyledText(text, in: rect.offsetBy(dx: offset, dy: 0), fontName: "AvenirNext-Bold", fontSize: max(renderSize.width * 0.062, 56), color: CGColor(red: 0.24, green: 0.88, blue: 1.0, alpha: 0.65), alignment: .left, context: context)
+        drawStyledText(text, in: rect, fontName: "AvenirNext-Bold", fontSize: max(renderSize.width * 0.062, 56), color: CGColor(gray: 1, alpha: 1), alignment: .left, context: context)
+    }
+
+    private func drawCircularImage(
+        _ image: CGImage,
+        in rect: CGRect,
+        context: CGContext,
+        strokeColor: CGColor?,
+        shadowOpacity: CGFloat
+    ) {
+        context.saveGState()
+        context.setShadow(offset: CGSize(width: 0, height: -10), blur: 24, color: CGColor(gray: 0, alpha: shadowOpacity))
+        context.addEllipse(in: rect)
+        context.clip()
+        let fillRect = Self.aspectFillRect(imageSize: CGSize(width: image.width, height: image.height), into: rect.size)
+            .offsetBy(dx: rect.minX, dy: rect.minY)
+        context.draw(image, in: fillRect)
+        context.restoreGState()
+        if let strokeColor {
+            context.saveGState()
+            context.addEllipse(in: rect)
+            context.setStrokeColor(strokeColor)
+            context.setLineWidth(max(rect.width * 0.02, 3))
+            context.strokePath()
+            context.restoreGState()
+        }
+    }
+
+    private func drawStarfield(seed: UInt64, renderSize: CGSize, context: CGContext) {
+        var generator = SeededRandomNumberGenerator(seed: seed)
+        context.saveGState()
+        for _ in 0..<90 {
+            let x = CGFloat.random(in: 0...renderSize.width, using: &generator)
+            let y = CGFloat.random(in: 0...renderSize.height, using: &generator)
+            let radius = CGFloat.random(in: 1.2...3.2, using: &generator)
+            let alpha = CGFloat.random(in: 0.15...0.85, using: &generator)
+            context.setFillColor(CGColor(gray: 1, alpha: alpha))
+            context.fillEllipse(in: CGRect(x: x, y: y, width: radius, height: radius))
+        }
+        context.restoreGState()
+    }
+
+    private func drawTornPaper(rect: CGRect, fill: CGColor, seed: UInt64, context: CGContext) {
+        var generator = SeededRandomNumberGenerator(seed: seed)
+        let path = CGMutablePath()
+        let points = 8
+        for index in 0..<points {
+            let angle = (CGFloat(index) / CGFloat(points)) * (.pi * 2)
+            let radiusX = rect.width * CGFloat.random(in: 0.42...0.52, using: &generator)
+            let radiusY = rect.height * CGFloat.random(in: 0.42...0.52, using: &generator)
+            let point = CGPoint(
+                x: rect.midX + cos(angle) * radiusX,
+                y: rect.midY + sin(angle) * radiusY
+            )
+            if index == 0 {
+                path.move(to: point)
+            } else {
+                path.addLine(to: point)
+            }
+        }
+        path.closeSubpath()
+        context.saveGState()
+        context.setShadow(offset: CGSize(width: 0, height: -8), blur: 18, color: CGColor(gray: 0, alpha: 0.12))
+        context.addPath(path)
+        context.setFillColor(fill)
+        context.fillPath()
+        context.restoreGState()
+    }
+
+    private func drawTapeStrip(rect: CGRect, rotationDegrees: CGFloat, context: CGContext) {
+        context.saveGState()
+        context.translateBy(x: rect.midX, y: rect.midY)
+        context.rotate(by: rotationDegrees * (.pi / 180))
+        context.translateBy(x: -rect.midX, y: -rect.midY)
+        context.setFillColor(CGColor(red: 0.95, green: 0.90, blue: 0.71, alpha: 0.54))
+        context.fill(CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height))
+        context.restoreGState()
+    }
+
+    private func drawChromeBlob(
+        center: CGPoint,
+        radius: CGFloat,
+        primary: CGColor,
+        secondary: CGColor,
+        progress: CGFloat,
+        context: CGContext,
+        colorSpace: CGColorSpace
+    ) {
+        let stretchedCenter = CGPoint(
+            x: center.x + sin(progress * .pi * 2) * radius * 0.12,
+            y: center.y + cos(progress * .pi * 2) * radius * 0.08
+        )
+        guard let gradient = CGGradient(
+            colorsSpace: colorSpace,
+            colors: [
+                secondary.copy(alpha: 0.92) ?? secondary,
+                primary.copy(alpha: 0.78) ?? primary,
+                CGColor(gray: 1, alpha: 0.12)
+            ] as CFArray,
+            locations: [0, 0.55, 1]
+        ) else {
+            return
+        }
+        context.saveGState()
+        context.setBlendMode(.screen)
+        context.drawRadialGradient(
+            gradient,
+            startCenter: stretchedCenter,
+            startRadius: radius * 0.08,
+            endCenter: stretchedCenter,
+            endRadius: radius,
+            options: []
+        )
         context.restoreGState()
     }
 

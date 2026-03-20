@@ -43,6 +43,7 @@ Implemented now:
 - Export UI/model for container/codec/frame rate/resolution/HDR/audio layout/bitrate mode.
 - Plex/Infuse-oriented default export preset for Apple TV 4K (`MP4 + HEVC + HDR + Smart Audio + Balanced + HDR Auto + HDR HEVC Encoder Default`), plus explicit UI reset action.
 - Plex TV episode naming + embedded MP4 metadata for the `Family Videos` library workflow, plus mega-test batch UI for exercising Resolution/FPS/Range/Audio combinations.
+- Offline title-treatment preview generation that can render a one-off concept gallery of opening-title styles into clips, stills, grouped contact sheets, `manifest.json`, and `index.html` without changing the shipping app UI or defaults.
 
 Open for S4 completion:
 - Migrate renderer to newer non-deprecated AVFoundation export APIs.
@@ -187,6 +188,7 @@ Operational updates after first packaged run:
 
 ## Changes Since Last Update
 
+- 2026-03-20: Added an offline `TitleTreatmentPreviewGenerator` workflow for March-2026-style title exploration, including 17 procedural opener treatments, grouped contact sheets, HTML/JSON review artifacts, and focused regression tests, while keeping the normal app render path unchanged.
 - 2026-03-03: Initialized git repository, created baseline commit, and created checkpoint branch with pre-change snapshot commit.
 - 2026-03-03: Added Swift package scaffold and desktop app shell (`MonthlyVideoGeneratorApp`).
 - 2026-03-03: Implemented core models, discovery, timeline builder, export profile manager, output resolver, and run report service.
@@ -338,4 +340,4 @@ Durable `known-good/*` tags are not pruned by the routine checkpoint-retention p
 
 ## Last Updated
 
-2026-03-20 11:24 America/New_York by Codex
+2026-03-20 16:01 America/New_York by Codex

@@ -9,7 +9,8 @@ let package = Package(
     products: [
         .library(name: "Core", targets: ["Core"]),
         .library(name: "PhotosIntegration", targets: ["PhotosIntegration"]),
-        .executable(name: "MonthlyVideoGeneratorApp", targets: ["MonthlyVideoGeneratorApp"])
+        .executable(name: "MonthlyVideoGeneratorApp", targets: ["MonthlyVideoGeneratorApp"]),
+        .executable(name: "TitleTreatmentPreviewGenerator", targets: ["TitleTreatmentPreviewGenerator"])
     ],
     targets: [
         .target(
@@ -28,6 +29,11 @@ let package = Package(
             resources: [
                 .process("Resources")
             ]
+        ),
+        .executableTarget(
+            name: "TitleTreatmentPreviewGenerator",
+            dependencies: ["Core"],
+            path: "Sources/TitleTreatmentPreviewGenerator"
         ),
         .testTarget(
             name: "CoreTests",
