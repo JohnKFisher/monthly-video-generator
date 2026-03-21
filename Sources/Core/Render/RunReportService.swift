@@ -12,6 +12,9 @@ public struct RunReport: Equatable {
     public let exportProfile: ExportProfile
     public let plexTVMetadata: PlexTVMetadata?
     public let chapters: [RenderChapter]
+    public let openingTitleTreatment: String?
+    public let openingTitleVariationSeed: UInt64?
+    public let openingTitlePreviewCount: Int?
 
     public init(
         generatedAt: Date,
@@ -24,7 +27,10 @@ public struct RunReport: Equatable {
         renderBackendSummary: String?,
         exportProfile: ExportProfile,
         plexTVMetadata: PlexTVMetadata?,
-        chapters: [RenderChapter]
+        chapters: [RenderChapter],
+        openingTitleTreatment: String? = nil,
+        openingTitleVariationSeed: UInt64? = nil,
+        openingTitlePreviewCount: Int? = nil
     ) {
         self.generatedAt = generatedAt
         self.sourceDescription = sourceDescription
@@ -37,6 +43,9 @@ public struct RunReport: Equatable {
         self.exportProfile = exportProfile
         self.plexTVMetadata = plexTVMetadata
         self.chapters = chapters
+        self.openingTitleTreatment = openingTitleTreatment
+        self.openingTitleVariationSeed = openingTitleVariationSeed
+        self.openingTitlePreviewCount = openingTitlePreviewCount
     }
 }
 
@@ -59,6 +68,13 @@ public final class RunReportService {
             sourceDescription = "Photos source: \(scope)"
         }
 
+        let openingTitleDescriptor: OpeningTitleCardDescriptor?
+        if case let .titleCard(descriptor) = preparation.timeline.segments.first?.asset {
+            openingTitleDescriptor = descriptor
+        } else {
+            openingTitleDescriptor = nil
+        }
+
         return RunReport(
             generatedAt: generatedAt,
             sourceDescription: sourceDescription,
@@ -70,7 +86,10 @@ public final class RunReportService {
             renderBackendSummary: renderBackendSummary,
             exportProfile: request.export,
             plexTVMetadata: request.plexTVMetadata,
-            chapters: request.chapters
+            chapters: request.chapters,
+            openingTitleTreatment: openingTitleDescriptor?.treatment.rawValue,
+            openingTitleVariationSeed: openingTitleDescriptor?.variationSeed,
+            openingTitlePreviewCount: openingTitleDescriptor?.previewItems.count
         )
     }
 
@@ -94,6 +113,9 @@ public final class RunReportService {
         let exportProfile: ExportProfile
         let plexTVMetadata: PlexTVMetadata?
         let chapters: [RenderChapter]
+        let openingTitleTreatment: String?
+        let openingTitleVariationSeed: UInt64?
+        let openingTitlePreviewCount: Int?
 
         init(report: RunReport) {
             generatedAt = report.generatedAt
@@ -107,6 +129,9 @@ public final class RunReportService {
             exportProfile = report.exportProfile
             plexTVMetadata = report.plexTVMetadata
             chapters = report.chapters
+            openingTitleTreatment = report.openingTitleTreatment
+            openingTitleVariationSeed = report.openingTitleVariationSeed
+            openingTitlePreviewCount = report.openingTitlePreviewCount
         }
     }
 }

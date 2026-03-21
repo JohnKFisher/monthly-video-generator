@@ -136,7 +136,7 @@ package enum TitleTreatmentPreviewCollection: String, Codable, CaseIterable, Sen
     ]
 }
 
-package enum OpeningTitleTreatment: String, CaseIterable, Codable, Sendable {
+public enum OpeningTitleTreatment: String, CaseIterable, Codable, Sendable {
     case currentCollage = "current-collage"
     case legacyStatic = "legacy-static"
     case heroLowerThird = "hero-lower-third"
@@ -175,7 +175,7 @@ package enum OpeningTitleTreatment: String, CaseIterable, Codable, Sendable {
     case collageOrbitRing = "collage-orbit-ring"
     case collagePrismShift = "collage-prism-shift"
 
-    package static let allCases: [OpeningTitleTreatment] = [
+    public static let allCases: [OpeningTitleTreatment] = [
         .currentCollage,
         .legacyStatic,
         .heroLowerThird,
@@ -216,6 +216,17 @@ package enum OpeningTitleTreatment: String, CaseIterable, Codable, Sendable {
     ]
 
     package static let shippingDefault: OpeningTitleTreatment = .currentCollage
+    package static let shippingRandomizedFamily: [OpeningTitleTreatment] =
+        TitleTreatmentPreviewCollection.currentCollageFamily.entries.map(\.treatment)
+
+    package static func randomizedShippingFamilyTreatment(for variationSeed: UInt64) -> OpeningTitleTreatment {
+        guard !shippingRandomizedFamily.isEmpty else {
+            return shippingDefault
+        }
+
+        let index = Int((variationSeed ^ 0x5EEDC011A63A1E51) % UInt64(shippingRandomizedFamily.count))
+        return shippingRandomizedFamily[index]
+    }
 
     package var classicExplorerCategory: OpeningTitleTreatmentCategory {
         switch self {

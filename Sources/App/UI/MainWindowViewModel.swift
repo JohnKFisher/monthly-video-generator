@@ -427,7 +427,7 @@ final class MainWindowViewModel: ObservableObject {
     private static let defaultExportProfile = ExportProfileManager().defaultProfile()
     private static let defaultPlexShowTitle = "Family Videos"
     private static let defaultOpeningTitleCaptionText = "Fisher Family Videos"
-    private static let defaultTitleDurationSeconds = 7.5
+    private static let defaultTitleDurationSeconds = 10.0
     private static let defaultCrossfadeDurationSeconds = 1.0
     private static let defaultStillImageDurationSeconds = 5.0
     private static let renderSettingsDefaultsKey = "MainWindowViewModel.renderSettings.v1"

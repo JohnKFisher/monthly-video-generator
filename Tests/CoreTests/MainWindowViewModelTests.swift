@@ -152,7 +152,7 @@ final class MainWindowViewModelTests: XCTestCase {
             preferencesStore: makePreferencesStore()
         )
 
-        XCTAssertEqual(viewModel.titleDurationSeconds, 7.5, accuracy: 0.0001)
+        XCTAssertEqual(viewModel.titleDurationSeconds, 10.0, accuracy: 0.0001)
         XCTAssertEqual(viewModel.crossfadeDurationSeconds, 1.0, accuracy: 0.0001)
         XCTAssertEqual(viewModel.stillImageDurationSeconds, 5.0, accuracy: 0.0001)
     }
@@ -287,7 +287,7 @@ final class MainWindowViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.openingTitleCaptionMode, .custom)
         XCTAssertEqual(viewModel.openingTitleCaptionText, "Fisher Family Videos")
-        XCTAssertEqual(viewModel.titleDurationSeconds, 7.5, accuracy: 0.0001)
+        XCTAssertEqual(viewModel.titleDurationSeconds, 10.0, accuracy: 0.0001)
         XCTAssertEqual(viewModel.crossfadeDurationSeconds, 1.0, accuracy: 0.0001)
         XCTAssertEqual(viewModel.stillImageDurationSeconds, 5.0, accuracy: 0.0001)
         XCTAssertFalse(viewModel.writeDiagnosticsLog)
@@ -868,7 +868,7 @@ final class MainWindowViewModelTests: XCTestCase {
             preferencesStore: preferencesStore
         )
 
-        XCTAssertEqual(viewModel.titleDurationSeconds, 7.5, accuracy: 0.0001)
+        XCTAssertEqual(viewModel.titleDurationSeconds, 10.0, accuracy: 0.0001)
         XCTAssertEqual(viewModel.openingTitleCaptionMode, .custom)
         XCTAssertEqual(viewModel.openingTitleCaptionText, "Fisher Family Videos")
     }

@@ -53,7 +53,7 @@ public struct StyleProfile: Equatable, Codable, Sendable {
 
     public static let stageTwoDefault = StyleProfile(
         openingTitle: nil,
-        titleDurationSeconds: 2.5,
+        titleDurationSeconds: 10.0,
         crossfadeDurationSeconds: 0.75,
         stillImageDurationSeconds: 3.0,
         showCaptureDateOverlay: true,

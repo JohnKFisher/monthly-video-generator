@@ -3,6 +3,7 @@ import Foundation
 public struct OpeningTitleCardDescriptor: Equatable, Sendable {
     public let title: String
     public let contextLine: String?
+    public let treatment: OpeningTitleTreatment
     public let previewItems: [MediaItem]
     public let dateSpanText: String?
     public let variationSeed: UInt64
@@ -11,6 +12,7 @@ public struct OpeningTitleCardDescriptor: Equatable, Sendable {
     public init(
         title: String,
         contextLine: String?,
+        treatment: OpeningTitleTreatment = .currentCollage,
         previewItems: [MediaItem],
         dateSpanText: String?,
         variationSeed: UInt64,
@@ -18,6 +20,7 @@ public struct OpeningTitleCardDescriptor: Equatable, Sendable {
     ) {
         self.title = title
         self.contextLine = contextLine
+        self.treatment = treatment
         self.previewItems = previewItems
         self.dateSpanText = dateSpanText
         self.variationSeed = variationSeed

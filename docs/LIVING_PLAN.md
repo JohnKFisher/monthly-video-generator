@@ -35,6 +35,8 @@ Implemented now:
 - Desktop SwiftUI app with folder/photos source selection.
 - Recursive folder scan and deterministic ordering.
 - Timeline builder with title card + crossfade support.
+- The shipping app opening-title path now randomizes per export job across the approved corrected `current-collage-family` pool (`21` variants total), including queued renders and full-year runs, while keeping the UI and persisted settings unchanged.
+- Shipping collage titles now request up to `10` preview assets, repeat previews only when a batch is smaller than the layout budget, and suppress hollow photo-box outlines until visible image content is present.
 - AVFoundation render engine for mixed images/videos with source video audio.
 - Safe output naming with auto-versioning in selected output directory.
 - PhotoKit discovery/materialization for month/year library rendering.
@@ -144,6 +146,7 @@ Operational updates after first packaged run:
 - 2026-03-20: Hotfix: HDR still gain-map decoding now applies source-image orientation to the auxiliary gain map too, eliminating rotated ghost-image overlays on affected HDR photos.
 - 2026-03-20: Bumped the shipped app version to `1.0.4`, switched packaged-app build numbers from timestamp IDs to a repo-tracked counted `BUILD_NUMBER` sequence, rebuilt the packaged app as `1.0.4 (200)`, and promoted the release to durable anchor `known-good/20260320-v1-0-4-hdr-still-fix` plus checkpoint `checkpoint/20260320-v1-0-4`.
 - 2026-03-20: Added a Photos year-queue action in the Export panel so the selected year can be scanned once and queued as separate month exports for each non-empty month, while preserving per-month auto titles and auto filenames.
+- 2026-03-20: Switched the shipping opening-title experience from a fixed `current-collage` control to per-run randomized selection across the corrected `21`-variant `current-collage-family`, threaded the chosen treatment through the title-card descriptor/render/report path, raised the shipping title-preview budget to `10`, prevented hollow collage photo-box outlines before image content is visible, and updated fresh/reset default opening-title duration to `10.0s`.
 
 ## Decisions Log
 
@@ -190,6 +193,7 @@ Operational updates after first packaged run:
 ## Changes Since Last Update
 
 - 2026-03-20: Added a new offline `current-collage-family` preview collection to `TitleTreatmentPreviewGenerator`, including `21` collage-focused review movies, `close`/`wide` grouped contact sheets, a deterministic `10`-preview-item collage pool for offline review only, collection-aware HTML/JSON artifacts, and focused tests for both the classic explorer and the new collage-family explorer; generated the first real review pack at `tmp/title-treatment-previews/20260320-192430-march-2026`.
+- 2026-03-20: Promoted the corrected `current-collage-family` concept pack into the shipping app’s opening-title runtime: each export job now chooses a fresh family variant, the title descriptor carries the selected treatment for rendering/reporting, shipping preview selection fills a `10`-slot collage budget with duplicates only when necessary, and the title-card tile strokes now stay in lockstep with image visibility so no hollow photo-box frames appear during the opener animation.
 - 2026-03-20: Added an offline `TitleTreatmentPreviewGenerator` workflow for March-2026-style title exploration, including 17 procedural opener treatments, grouped contact sheets, HTML/JSON review artifacts, focused regression tests, and a local ffmpeg movie-export fallback so each treatment can still be reviewed as a playable clip when AVFoundation preview-clip writing fails on a real sample month; the normal app render path remains unchanged.
 - 2026-03-03: Initialized git repository, created baseline commit, and created checkpoint branch with pre-change snapshot commit.
 - 2026-03-03: Added Swift package scaffold and desktop app shell (`MonthlyVideoGeneratorApp`).

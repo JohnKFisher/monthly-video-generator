@@ -1,6 +1,6 @@
 import AVFoundation
-import Core
 import XCTest
+@testable import Core
 
 final class TimelineBuilderTests: XCTestCase {
     func testDeterministicOrderingWithMatchingCaptureDates() {
@@ -32,7 +32,7 @@ final class TimelineBuilderTests: XCTestCase {
         XCTAssertEqual(timeline.estimatedDuration.seconds, 5.5, accuracy: 0.05)
     }
 
-    func testOpeningTitleDescriptorCapsPreviewsAndUsesInjectedSeed() {
+    func testOpeningTitleDescriptorUsesShippingFamilyTreatmentAndDeterministicFilledPreviewSelection() {
         let items = (0..<8).map { index in
             makeImageItem(
                 id: "item-\(index)",
@@ -57,7 +57,13 @@ final class TimelineBuilderTests: XCTestCase {
         }
 
         XCTAssertEqual(descriptor.variationSeed, 42)
-        XCTAssertEqual(descriptor.previewItems.count, 6)
+        XCTAssertEqual(descriptor.treatment, OpeningTitleTreatment.randomizedShippingFamilyTreatment(for: 42))
+        XCTAssertTrue(OpeningTitleTreatment.shippingRandomizedFamily.contains(descriptor.treatment))
+        XCTAssertEqual(
+            descriptor.previewItems.count,
+            TitleTreatmentPreviewCollection.currentCollageFamily.previewSelectionCount
+        )
+        XCTAssertEqual(Set(descriptor.previewItems.map(\.filename)).count, items.count)
 
         let repeatedTimeline = builder.buildTimeline(
             items: items,
@@ -74,6 +80,7 @@ final class TimelineBuilderTests: XCTestCase {
             descriptor.previewItems.map(\.filename),
             repeatedDescriptor.previewItems.map(\.filename)
         )
+        XCTAssertEqual(descriptor.treatment, repeatedDescriptor.treatment)
     }
 
     func testOpeningTitleDescriptorUsesAlbumTitleAsContextLine() {

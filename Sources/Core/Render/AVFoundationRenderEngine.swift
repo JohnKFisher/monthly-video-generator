@@ -1242,13 +1242,14 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                     duration: segment.duration,
                     renderSize: renderSize,
                     frameRate: frameRate,
-                    dynamicRange: exportDynamicRange
+                    dynamicRange: exportDynamicRange,
+                    treatment: descriptor.treatment
                 )
             }
             temporaryURLs.append(titleURL)
             diagnostics.add(
                 "Materialized title card clip at \(titleURL.path) for title '\(descriptor.resolvedTitle)' " +
-                "(previews=\(previewAssets.count), seed=\(descriptor.variationSeed))"
+                "(treatment=\(descriptor.treatment.rawValue), previews=\(previewAssets.count), seed=\(descriptor.variationSeed))"
             )
             clip = try await diagnostics.measurePreparationOperation(
                 .clipProbe,

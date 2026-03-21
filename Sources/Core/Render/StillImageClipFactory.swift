@@ -1355,12 +1355,14 @@ public final class StillImageClipFactory: @unchecked Sendable {
         rect.origin.x += tile.drift.x * oscillation
         rect.origin.y += tile.drift.y * cos((progress + tile.phase) * .pi * 2)
         rect = scaled(rect: rect, scale: 1.0 + (tile.scaleAmplitude * easedProgress))
+        let visibleProgress = min(max(easedProgress * 1.3, 0.15), 1)
+        let outlineVisibility = max((visibleProgress - 0.25) / 0.75, 0)
 
         context.saveGState()
         context.translateBy(x: rect.midX, y: rect.midY)
         context.rotate(by: tile.baseRotation * (.pi / 180))
         context.translateBy(x: -rect.midX, y: -rect.midY)
-        context.setAlpha(tile.opacity * min(max(easedProgress * 1.3, 0.15), 1))
+        context.setAlpha(tile.opacity * visibleProgress)
         context.setShadow(offset: CGSize(width: 0, height: -10), blur: max(rect.width * 0.035, 12), color: CGColor(gray: 0, alpha: 0.35))
 
         let clipPath = CGPath(roundedRect: rect, cornerWidth: rect.width * 0.06, cornerHeight: rect.width * 0.06, transform: nil)
@@ -1376,7 +1378,7 @@ public final class StillImageClipFactory: @unchecked Sendable {
         context.saveGState()
         let strokePath = CGPath(roundedRect: rect, cornerWidth: rect.width * 0.06, cornerHeight: rect.width * 0.06, transform: nil)
         context.addPath(strokePath)
-        context.setStrokeColor(accentColor.copy(alpha: 0.28) ?? accentColor)
+        context.setStrokeColor(accentColor.copy(alpha: 0.28 * outlineVisibility) ?? accentColor)
         context.setLineWidth(max(rect.width * 0.006, 2))
         context.strokePath()
         context.restoreGState()
@@ -2061,7 +2063,9 @@ public final class StillImageClipFactory: @unchecked Sendable {
 
         let bounce = 1 + recipe.motion.bounceStrength * sin(easedProgress * .pi) * (1 - easedProgress)
         rect = scaled(rect: rect, scale: (1.0 + (tile.scaleAmplitude * easedProgress)) * bounce)
-        let alpha = tile.opacity * min(max(easedProgress * 1.3, recipe.motion.entranceFloor), 1)
+        let visibleProgress = min(max(easedProgress * 1.3, recipe.motion.entranceFloor), 1)
+        let alpha = tile.opacity * visibleProgress
+        let outlineVisibility = max((visibleProgress - 0.25) / 0.75, 0)
 
         if recipe.lighting.ghostOffset > 0 {
             let ghostOffset = renderSize.width * recipe.lighting.ghostOffset
@@ -2136,15 +2140,15 @@ public final class StillImageClipFactory: @unchecked Sendable {
             path = makeCutoutPath(rect: rect, phase: tile.phase)
         }
         context.addPath(path)
-        context.setStrokeColor((recipe.layout.tileShape == .framed ? palette.highlight : palette.accent).copy(alpha: 0.30) ?? palette.accent)
+        context.setStrokeColor((recipe.layout.tileShape == .framed ? palette.highlight : palette.accent).copy(alpha: 0.30 * outlineVisibility) ?? palette.accent)
         context.setLineWidth(max(rect.width * 0.006, 2))
         context.strokePath()
         context.restoreGState()
 
-        if recipe.lighting.edgeGlowAlpha > 0 {
+        if recipe.lighting.edgeGlowAlpha > 0, outlineVisibility > 0 {
             context.saveGState()
             context.addPath(path)
-            context.setStrokeColor((palette.secondaryAccent.copy(alpha: recipe.lighting.edgeGlowAlpha) ?? palette.secondaryAccent))
+            context.setStrokeColor((palette.secondaryAccent.copy(alpha: recipe.lighting.edgeGlowAlpha * outlineVisibility) ?? palette.secondaryAccent))
             context.setLineWidth(max(rect.width * 0.012, 4))
             context.setShadow(offset: .zero, blur: max(rect.width * 0.05, 16), color: palette.secondaryAccent.copy(alpha: recipe.lighting.edgeGlowAlpha * 0.8))
             context.strokePath()

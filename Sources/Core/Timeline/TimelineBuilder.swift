@@ -74,6 +74,7 @@ public final class TimelineBuilder {
         monthYear: MonthYear?
     ) -> OpeningTitleCardDescriptor {
         let variationSeed = variationSeedGenerator()
+        let treatment = OpeningTitleTreatment.randomizedShippingFamilyTreatment(for: variationSeed)
         let dateSpanText = formattedDateSpan(for: orderedItems)
         let resolvedContextLine: String?
         switch style.openingTitleCaptionMode {
@@ -90,10 +91,11 @@ public final class TimelineBuilder {
         return OpeningTitleCardDescriptor(
             title: title,
             contextLine: resolvedContextLine,
+            treatment: treatment,
             previewItems: OpeningTitlePreviewSelector.selectPreviewItems(
                 from: orderedItems,
                 variationSeed: variationSeed,
-                count: 6
+                count: TitleTreatmentPreviewCollection.currentCollageFamily.previewSelectionCount
             ),
             dateSpanText: dateSpanText,
             variationSeed: variationSeed,

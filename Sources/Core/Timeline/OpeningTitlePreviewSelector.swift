@@ -6,10 +6,49 @@ package enum OpeningTitlePreviewSelector {
         variationSeed: UInt64,
         count: Int
     ) -> [MediaItem] {
-        guard !orderedItems.isEmpty else {
+        guard !orderedItems.isEmpty, count > 0 else {
             return []
         }
 
+        if count <= orderedItems.count {
+            return selectUniquePreviewItems(
+                from: orderedItems,
+                variationSeed: variationSeed,
+                count: count
+            )
+        }
+
+        let uniqueItems = selectUniquePreviewItems(
+            from: orderedItems,
+            variationSeed: variationSeed,
+            count: orderedItems.count
+        )
+        let repeatedItems = selectRepeatedPreviewItems(
+            from: uniqueItems,
+            variationSeed: variationSeed,
+            count: count - uniqueItems.count
+        )
+
+        var selectedItems = Array<MediaItem?>(repeating: nil, count: count)
+        for (index, item) in uniqueItems.enumerated() {
+            let slot = min(index * count / uniqueItems.count, count - 1)
+            selectedItems[slot] = item
+        }
+
+        var repeatedIndex = 0
+        for slot in 0..<selectedItems.count where selectedItems[slot] == nil {
+            selectedItems[slot] = repeatedItems[repeatedIndex]
+            repeatedIndex += 1
+        }
+
+        return selectedItems.compactMap { $0 }
+    }
+
+    private static func selectUniquePreviewItems(
+        from orderedItems: [MediaItem],
+        variationSeed: UInt64,
+        count: Int
+    ) -> [MediaItem] {
         let previewCount = min(max(count, 1), orderedItems.count)
         var generator = SeededRandomNumberGenerator(seed: variationSeed ^ 0xA5A55A5ADEADBEEF)
         var selectedItems: [MediaItem] = []
@@ -24,6 +63,33 @@ package enum OpeningTitlePreviewSelector {
         }
 
         return selectedItems
+    }
+
+    private static func selectRepeatedPreviewItems(
+        from orderedItems: [MediaItem],
+        variationSeed: UInt64,
+        count: Int
+    ) -> [MediaItem] {
+        guard !orderedItems.isEmpty, count > 0 else {
+            return []
+        }
+
+        var generator = SeededRandomNumberGenerator(seed: variationSeed ^ 0x91E10DA5C79E7B1D)
+        var repeatedItems: [MediaItem] = []
+        repeatedItems.reserveCapacity(count)
+        var shuffledItems = orderedItems
+
+        while repeatedItems.count < count {
+            shuffledItems.shuffle(using: &generator)
+            for item in shuffledItems {
+                repeatedItems.append(item)
+                if repeatedItems.count == count {
+                    break
+                }
+            }
+        }
+
+        return repeatedItems
     }
 }
 
