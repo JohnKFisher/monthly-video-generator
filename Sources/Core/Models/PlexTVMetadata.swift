@@ -198,17 +198,22 @@ public enum PlexTVMetadataResolver {
         showTitle: String,
         monthYear: MonthYear,
         descriptionText: String,
+        embeddedTitleOverride: String? = nil,
         creationTime: Date?,
         provenance: EmbeddedOutputProvenance? = nil,
         timeZone: TimeZone = .current
     ) -> PlexTVMetadata {
         let identity = PlexEpisodeIdentity(showTitle: showTitle, monthYear: monthYear)
         let resolvedCreationTime = creationTime ?? fallbackCreationTime(for: monthYear, timeZone: timeZone)
+        let embeddedTitle = normalizedEmbeddedTitle(
+            embeddedTitleOverride,
+            fallback: identity.episodeTitle
+        )
 
         return PlexTVMetadata(
             identity: identity,
             embedded: EmbeddedOutputMetadata(
-                title: identity.episodeTitle,
+                title: embeddedTitle,
                 description: descriptionText,
                 synopsis: descriptionText,
                 comment: descriptionText,
@@ -222,6 +227,15 @@ public enum PlexTVMetadataResolver {
                 provenance: provenance
             )
         )
+    }
+
+    private static func normalizedEmbeddedTitle(_ override: String?, fallback: String) -> String {
+        guard let override else {
+            return fallback
+        }
+
+        let trimmed = override.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? fallback : trimmed
     }
 }
 

@@ -1264,10 +1264,13 @@ final class MainWindowViewModel: ObservableObject {
             timeline: preparedSession.preparation.timeline,
             appIdentity: exportProvenanceIdentity
         )
+        let embeddedTitleOverride = preparedSession.style.openingTitle?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         let metadata = PlexTVMetadataResolver.resolveMetadata(
             showTitle: resolvedPlexShowTitle(for: snapshot),
             monthYear: monthYearContext.monthYear,
             descriptionText: snapshot.isPlexDescriptionAutoManaged ? autoDescription : snapshot.plexDescriptionText,
+            embeddedTitleOverride: embeddedTitleOverride,
             creationTime: monthYearContext.latestCaptureDate,
             provenance: provenance
         )

@@ -359,6 +359,47 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertEqual(request.chapters.last?.photoCount, 1)
     }
 
+    func testCustomOpeningTitleUpdatesEmbeddedMetadataTitle() async throws {
+        let julyCaptureDate = makeDate(year: 2024, month: 7, day: 12)
+        let coordinator = RenderCoordinatorSpy(
+            preparation: makePreparation(items: [makeImageItem(id: "image-1", captureDate: julyCaptureDate)])
+        )
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            preferencesStore: makePreferencesStore(),
+            exportProvenanceIdentity: OutputProvenanceAppIdentity(
+                appName: "Monthly Video Generator",
+                appVersion: "0.5.0",
+                buildNumber: "20260307200552"
+            )
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.selectedMonth = 6
+        viewModel.selectedYear = 2025
+        viewModel.sourceMode = .folder
+        viewModel.selectedFolderURL = directory
+        viewModel.outputDirectoryURL = directory
+        viewModel.includeOpeningTitle = true
+        viewModel.openingTitleText = "Summer Highlights"
+
+        viewModel.startRender()
+        await waitUntil(
+            message: "Timed out waiting for custom-title render to finish."
+        ) {
+            coordinator.renderRequests.count == 1 && !viewModel.isRendering
+        }
+
+        let resolvedMonthYear = MonthYear(month: 7, year: 2024)
+        let request = try XCTUnwrap(coordinator.renderRequests.first)
+        XCTAssertEqual(request.output.baseFilename, expectedOutputName(monthYear: resolvedMonthYear))
+        XCTAssertEqual(request.style.openingTitle, "Summer Highlights")
+        XCTAssertEqual(request.plexTVMetadata?.identity.episodeTitle, "July 2024")
+        XCTAssertEqual(request.plexTVMetadata?.identity.filenameBase, expectedOutputName(monthYear: resolvedMonthYear))
+        XCTAssertEqual(request.plexTVMetadata?.embedded.title, "Summer Highlights")
+    }
+
     func testFolderRenderMixedMonthFailureRevealsManualOverride() async throws {
         let juneCaptureDate = makeDate(year: 2025, month: 6, day: 18)
         let julyCaptureDate = makeDate(year: 2025, month: 7, day: 2)
