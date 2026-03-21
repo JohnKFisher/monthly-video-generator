@@ -430,6 +430,8 @@ final class MainWindowViewModel: ObservableObject {
     private static let defaultTitleDurationSeconds = 10.0
     private static let defaultCrossfadeDurationSeconds = 1.0
     private static let defaultStillImageDurationSeconds = 5.0
+    private static let minimumSelectableYear = 2000
+    private static let maximumSelectableYear = 2030
     private static let renderSettingsDefaultsKey = "MainWindowViewModel.renderSettings.v1"
 
     init(
@@ -460,13 +462,12 @@ final class MainWindowViewModel: ObservableObject {
             calendar: calendar,
             now: nowProvider()
         )
-        let currentYear = calendar.component(.year, from: nowProvider())
         selectedMonth = launchMonthYear.month
         selectedYear = launchMonthYear.year
         manualMonthYearOverrideMonth = launchMonthYear.month
         manualMonthYearOverrideYear = launchMonthYear.year
         openingTitleText = launchMonthYear.displayLabel
-        years = Array((currentYear - 15)...(currentYear + 2)).reversed()
+        years = Array((Self.minimumSelectableYear...Self.maximumSelectableYear)).reversed()
 
         let moviesDirectory = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Movies", isDirectory: true)
