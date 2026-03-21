@@ -393,10 +393,12 @@ final class MainWindowViewModelTests: XCTestCase {
 
         let resolvedMonthYear = MonthYear(month: 7, year: 2024)
         let request = try XCTUnwrap(coordinator.renderRequests.first)
-        XCTAssertEqual(request.output.baseFilename, expectedOutputName(monthYear: resolvedMonthYear))
+        XCTAssertEqual(viewModel.outputFilename, expectedOutputName(monthYear: resolvedMonthYear, episodeTitleOverride: "Summer Highlights"))
+        XCTAssertEqual(request.output.baseFilename, expectedOutputName(monthYear: resolvedMonthYear, episodeTitleOverride: "Summer Highlights"))
         XCTAssertEqual(request.style.openingTitle, "Summer Highlights")
-        XCTAssertEqual(request.plexTVMetadata?.identity.episodeTitle, "July 2024")
-        XCTAssertEqual(request.plexTVMetadata?.identity.filenameBase, expectedOutputName(monthYear: resolvedMonthYear))
+        XCTAssertEqual(request.plexTVMetadata?.identity.episodeTitle, "Summer Highlights")
+        XCTAssertEqual(request.plexTVMetadata?.identity.filenameBase, expectedOutputName(monthYear: resolvedMonthYear, episodeTitleOverride: "Summer Highlights"))
+        XCTAssertEqual(request.plexTVMetadata?.embedded.episodeID, "S2024E0799")
         XCTAssertEqual(request.plexTVMetadata?.embedded.title, "Summer Highlights")
     }
 
@@ -1557,8 +1559,16 @@ final class MainWindowViewModelTests: XCTestCase {
         return calendar
     }
 
-    private func expectedOutputName(showTitle: String = "Family Videos", monthYear: MonthYear) -> String {
-        PlexTVFilenameGenerator().makeOutputName(showTitle: showTitle, monthYear: monthYear)
+    private func expectedOutputName(
+        showTitle: String = "Family Videos",
+        monthYear: MonthYear,
+        episodeTitleOverride: String? = nil
+    ) -> String {
+        PlexTVFilenameGenerator().makeOutputName(
+            showTitle: showTitle,
+            monthYear: monthYear,
+            episodeTitleOverride: episodeTitleOverride
+        )
     }
 
     private func expectedDescription(monthYear: MonthYear) -> String {

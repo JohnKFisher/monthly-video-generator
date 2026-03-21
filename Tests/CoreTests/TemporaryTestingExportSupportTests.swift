@@ -14,4 +14,16 @@ final class TemporaryTestingExportSupportTests: XCTestCase {
 
         XCTAssertEqual(outputName, "Family Videos - S2025E0699 - June 2025")
     }
+
+    func testFilenameGeneratorUsesCustomEpisodeTitleWhenProvided() {
+        let generator = PlexTVFilenameGenerator()
+
+        let outputName = generator.makeOutputName(
+            showTitle: "Family Videos",
+            monthYear: MonthYear(month: 6, year: 2025),
+            episodeTitleOverride: "Summer Highlights"
+        )
+
+        XCTAssertEqual(outputName, "Family Videos - S2025E0699 - Summer Highlights")
+    }
 }

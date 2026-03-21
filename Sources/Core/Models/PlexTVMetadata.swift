@@ -4,10 +4,12 @@ import Foundation
 public struct PlexEpisodeIdentity: Equatable, Codable, Sendable {
     public let showTitle: String
     public let monthYear: MonthYear
+    public let customEpisodeTitle: String?
 
-    public init(showTitle: String, monthYear: MonthYear) {
+    public init(showTitle: String, monthYear: MonthYear, customEpisodeTitle: String? = nil) {
         self.showTitle = showTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         self.monthYear = monthYear
+        self.customEpisodeTitle = Self.normalizedCustomEpisodeTitle(customEpisodeTitle)
     }
 
     public var seasonNumber: Int {
@@ -23,11 +25,20 @@ public struct PlexEpisodeIdentity: Equatable, Codable, Sendable {
     }
 
     public var episodeTitle: String {
-        monthYear.displayLabel
+        customEpisodeTitle ?? monthYear.displayLabel
     }
 
     public var filenameBase: String {
         "\(showTitle) - \(episodeID) - \(episodeTitle)"
+    }
+
+    private static func normalizedCustomEpisodeTitle(_ value: String?) -> String? {
+        guard let value else {
+            return nil
+        }
+
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 
@@ -198,22 +209,22 @@ public enum PlexTVMetadataResolver {
         showTitle: String,
         monthYear: MonthYear,
         descriptionText: String,
-        embeddedTitleOverride: String? = nil,
+        episodeTitleOverride: String? = nil,
         creationTime: Date?,
         provenance: EmbeddedOutputProvenance? = nil,
         timeZone: TimeZone = .current
     ) -> PlexTVMetadata {
-        let identity = PlexEpisodeIdentity(showTitle: showTitle, monthYear: monthYear)
-        let resolvedCreationTime = creationTime ?? fallbackCreationTime(for: monthYear, timeZone: timeZone)
-        let embeddedTitle = normalizedEmbeddedTitle(
-            embeddedTitleOverride,
-            fallback: identity.episodeTitle
+        let identity = PlexEpisodeIdentity(
+            showTitle: showTitle,
+            monthYear: monthYear,
+            customEpisodeTitle: episodeTitleOverride
         )
+        let resolvedCreationTime = creationTime ?? fallbackCreationTime(for: monthYear, timeZone: timeZone)
 
         return PlexTVMetadata(
             identity: identity,
             embedded: EmbeddedOutputMetadata(
-                title: embeddedTitle,
+                title: identity.episodeTitle,
                 description: descriptionText,
                 synopsis: descriptionText,
                 comment: descriptionText,
@@ -227,15 +238,6 @@ public enum PlexTVMetadataResolver {
                 provenance: provenance
             )
         )
-    }
-
-    private static func normalizedEmbeddedTitle(_ override: String?, fallback: String) -> String {
-        guard let override else {
-            return fallback
-        }
-
-        let trimmed = override.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? fallback : trimmed
     }
 }
 

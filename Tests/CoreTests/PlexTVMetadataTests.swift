@@ -42,18 +42,20 @@ final class PlexTVMetadataTests: XCTestCase {
         )
     }
 
-    func testResolverUsesEmbeddedTitleOverrideWithoutChangingEpisodeIdentity() {
+    func testResolverUsesCustomEpisodeTitleForIdentityAndEmbeddedMetadata() {
         let metadata = PlexTVMetadataResolver.resolveMetadata(
             showTitle: "Family Videos",
             monthYear: MonthYear(month: 6, year: 2026),
             descriptionText: "Fisher Family Monthly Video for June 2026",
-            embeddedTitleOverride: "Summer Highlights",
+            episodeTitleOverride: "Summer Highlights",
             creationTime: makeDate(year: 2026, month: 6, day: 28)
         )
 
-        XCTAssertEqual(metadata.identity.episodeTitle, "June 2026")
-        XCTAssertEqual(metadata.identity.filenameBase, "Family Videos - S2026E0699 - June 2026")
+        XCTAssertEqual(metadata.identity.customEpisodeTitle, "Summer Highlights")
+        XCTAssertEqual(metadata.identity.episodeTitle, "Summer Highlights")
+        XCTAssertEqual(metadata.identity.filenameBase, "Family Videos - S2026E0699 - Summer Highlights")
         XCTAssertEqual(metadata.embedded.title, "Summer Highlights")
+        XCTAssertEqual(metadata.embedded.episodeID, "S2026E0699")
     }
 
     func testProvenanceResolverBuildsStandardAndCustomMetadata() throws {

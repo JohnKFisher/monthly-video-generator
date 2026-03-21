@@ -1264,13 +1264,15 @@ final class MainWindowViewModel: ObservableObject {
             timeline: preparedSession.preparation.timeline,
             appIdentity: exportProvenanceIdentity
         )
-        let embeddedTitleOverride = preparedSession.style.openingTitle?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let episodeTitleOverride = resolvedCustomPlexEpisodeTitleOverride(
+            snapshot: snapshot,
+            title: preparedSession.style.openingTitle
+        )
         let metadata = PlexTVMetadataResolver.resolveMetadata(
             showTitle: resolvedPlexShowTitle(for: snapshot),
             monthYear: monthYearContext.monthYear,
             descriptionText: snapshot.isPlexDescriptionAutoManaged ? autoDescription : snapshot.plexDescriptionText,
-            embeddedTitleOverride: embeddedTitleOverride,
+            episodeTitleOverride: episodeTitleOverride,
             creationTime: monthYearContext.latestCaptureDate,
             provenance: provenance
         )
@@ -1369,9 +1371,14 @@ final class MainWindowViewModel: ObservableObject {
     }
 
     private func generatedOutputName(for snapshot: QueuedRenderSnapshot) -> String {
-        filenameGenerator.makeOutputName(
+        let monthYear = previewMonthYear(for: snapshot)
+        return filenameGenerator.makeOutputName(
             showTitle: resolvedPlexShowTitle(for: snapshot),
-            monthYear: previewMonthYear(for: snapshot)
+            monthYear: monthYear,
+            episodeTitleOverride: resolvedPlexEpisodeTitleOverride(
+                for: monthYear,
+                snapshot: snapshot
+            )
         )
     }
 
@@ -2344,6 +2351,28 @@ final class MainWindowViewModel: ObservableObject {
             return trimmed
         }
         return monthYear.displayLabel
+    }
+
+    private func resolvedPlexEpisodeTitleOverride(
+        for monthYear: MonthYear,
+        snapshot: QueuedRenderSnapshot
+    ) -> String? {
+        guard snapshot.includeOpeningTitle, !snapshot.isOpeningTitleAutoManaged else {
+            return nil
+        }
+
+        return resolvedOpeningTitle(for: monthYear, snapshot: snapshot)
+    }
+
+    private func resolvedCustomPlexEpisodeTitleOverride(
+        snapshot: QueuedRenderSnapshot,
+        title: String?
+    ) -> String? {
+        guard snapshot.includeOpeningTitle, !snapshot.isOpeningTitleAutoManaged else {
+            return nil
+        }
+
+        return title?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func applyReportedRenderProgress(_ reportedProgress: Double) {
