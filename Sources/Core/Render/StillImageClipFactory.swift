@@ -2707,6 +2707,7 @@ public final class StillImageClipFactory: @unchecked Sendable {
                 end: CGColor(red: 0.18, green: 0.14, blue: 0.11, alpha: 1),
                 accent: CGColor(red: 0.92, green: 0.32, blue: 0.24, alpha: 1),
                 secondaryAccent: CGColor(red: 0.24, green: 0.68, blue: 0.84, alpha: 1),
+                text: CGColor(red: 0.16, green: 0.14, blue: 0.12, alpha: 1),
                 panel: CGColor(red: 0.95, green: 0.92, blue: 0.86, alpha: 0.88),
                 highlight: CGColor(red: 0.98, green: 0.96, blue: 0.90, alpha: 0.28)
             )
