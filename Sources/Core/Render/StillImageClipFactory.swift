@@ -3051,16 +3051,16 @@ public final class StillImageClipFactory: @unchecked Sendable {
 
     private func centeredOverlayStyle(
         cornerRadius: CGFloat = 34,
-        titleFontScale: CGFloat = 0.062,
-        contextFontScale: CGFloat = 0.021,
-        strokeAlpha: CGFloat = 0.10,
+        titleFontScale: CGFloat = 0.052,
+        contextFontScale: CGFloat = 0.019,
+        strokeAlpha: CGFloat = 0.12,
         glowAlpha: CGFloat = 0
     ) -> AnimatedCollageOverlayStyle {
         AnimatedCollageOverlayStyle(
-            backdropRect: CGRect(x: 0.23, y: 0.10, width: 0.54, height: 0.24),
-            titleRect: CGRect(x: 0.28, y: 0.14, width: 0.44, height: 0.12),
-            contextRect: CGRect(x: 0.30, y: 0.28, width: 0.40, height: 0.04),
-            accentRect: CGRect(x: 0.36, y: 0.125, width: 0.28, height: 0.006),
+            backdropRect: CGRect(x: 0.19, y: 0.08, width: 0.62, height: 0.28),
+            titleRect: CGRect(x: 0.25, y: 0.13, width: 0.50, height: 0.15),
+            contextRect: CGRect(x: 0.26, y: 0.29, width: 0.48, height: 0.05),
+            accentRect: CGRect(x: 0.37, y: 0.115, width: 0.26, height: 0.006),
             cornerRadius: cornerRadius,
             alignment: .center,
             titleFontName: "AvenirNext-Bold",
@@ -3069,7 +3069,7 @@ public final class StillImageClipFactory: @unchecked Sendable {
             contextFontScale: contextFontScale,
             accentColorUsesSecondary: true,
             showBackdrop: true,
-            showAccentRule: false,
+            showAccentRule: true,
             strokeAlpha: strokeAlpha,
             glowAlpha: glowAlpha
         )
