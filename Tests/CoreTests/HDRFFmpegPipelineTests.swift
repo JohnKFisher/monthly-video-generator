@@ -2045,7 +2045,8 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         let command = try builder.buildCommand(plan: plan, resolution: makeCapableResolution())
         let joined = command.arguments.joined(separator: " ")
 
-        XCTAssertTrue(joined.contains("-movflags +write_colr+use_metadata_tags"))
+        XCTAssertTrue(joined.contains("-movflags +write_colr"))
+        XCTAssertFalse(joined.contains("use_metadata_tags"))
         XCTAssertTrue(joined.contains("-metadata title=June 2026"))
         XCTAssertTrue(joined.contains("-metadata show=Family Videos"))
         XCTAssertTrue(joined.contains("-metadata season_number=2026"))
@@ -2060,8 +2061,8 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("-metadata software=Monthly Video Generator"))
         XCTAssertTrue(joined.contains("-metadata version=0.5.0 (20260307200552)"))
         XCTAssertTrue(joined.contains("-metadata information=1920x1080, 30 fps, SDR, H.264, AAC Stereo, MP4, Balanced bitrate"))
-        XCTAssertTrue(joined.contains("-metadata com.jkfisher.monthlyvideogenerator.app_version=0.5.0"))
-        XCTAssertTrue(joined.contains("-metadata com.jkfisher.monthlyvideogenerator.export_json={\"appName\":\"Monthly Video Generator\",\"appVersion\":\"0.5.0\",\"buildNumber\":\"20260307200552\"}"))
+        XCTAssertFalse(joined.contains("com.jkfisher.monthlyvideogenerator.app_version"))
+        XCTAssertFalse(joined.contains("com.jkfisher.monthlyvideogenerator.export_json"))
     }
 
     func testCommandBuilderMapsNamedChaptersForFinalMP4() throws {
@@ -2240,7 +2241,6 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         let description = "Fisher Family Monthly Video for June 2026"
         let creationTime = "2026-06-28T12:00:00Z"
         let provenanceInformation = "16x16, 30 fps, SDR, H.264, AAC Stereo, MP4, Balanced bitrate"
-        let exportJSON = "{\"appName\":\"Monthly Video Generator\",\"appVersion\":\"0.5.0\",\"buildNumber\":\"20260307200552\",\"resolvedWidth\":16,\"resolvedHeight\":16,\"resolvedFrameRate\":30}"
 
         _ = try runProcess(
             executableURL: ffmpegURL,
@@ -2256,7 +2256,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
                 "-c:v", "libx264",
                 "-pix_fmt", "yuv420p",
                 "-c:a", "aac",
-                "-movflags", "+use_metadata_tags",
+                "-movflags", "+write_colr",
                 "-metadata", "title=June 2026",
                 "-metadata", "show=Family Videos",
                 "-metadata", "season_number=2026",
@@ -2271,11 +2271,6 @@ final class HDRFFmpegPipelineTests: XCTestCase {
                 "-metadata", "software=Monthly Video Generator",
                 "-metadata", "version=0.5.0 (20260307200552)",
                 "-metadata", "information=\(provenanceInformation)",
-                "-metadata", "com.jkfisher.monthlyvideogenerator.app_name=Monthly Video Generator",
-                "-metadata", "com.jkfisher.monthlyvideogenerator.app_version=0.5.0",
-                "-metadata", "com.jkfisher.monthlyvideogenerator.build_number=20260307200552",
-                "-metadata", "com.jkfisher.monthlyvideogenerator.export_profile=container=mp4,videoCodec=h264,audioCodec=aac,dynamicRange=sdr,resolutionPolicy=fixed720p,resolvedSize=16x16,frameRatePolicy=fps30,resolvedFrameRate=30,audioLayout=stereo,bitrateMode=balanced",
-                "-metadata", "com.jkfisher.monthlyvideogenerator.export_json=\(exportJSON)",
                 outputURL.path
             ]
         )
@@ -2308,11 +2303,65 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertEqual(tags["software"] as? String, "Monthly Video Generator")
         XCTAssertEqual(tags["version"] as? String, "0.5.0 (20260307200552)")
         XCTAssertEqual(tags["information"] as? String, provenanceInformation)
-        XCTAssertEqual(tags["com.jkfisher.monthlyvideogenerator.app_name"] as? String, "Monthly Video Generator")
-        XCTAssertEqual(tags["com.jkfisher.monthlyvideogenerator.app_version"] as? String, "0.5.0")
-        XCTAssertEqual(tags["com.jkfisher.monthlyvideogenerator.build_number"] as? String, "20260307200552")
-        XCTAssertEqual(tags["com.jkfisher.monthlyvideogenerator.export_profile"] as? String, "container=mp4,videoCodec=h264,audioCodec=aac,dynamicRange=sdr,resolutionPolicy=fixed720p,resolvedSize=16x16,frameRatePolicy=fps30,resolvedFrameRate=30,audioLayout=stereo,bitrateMode=balanced")
-        XCTAssertEqual(tags["com.jkfisher.monthlyvideogenerator.export_json"] as? String, exportJSON)
+        XCTAssertNil(tags["com.jkfisher.monthlyvideogenerator.app_name"])
+        XCTAssertNil(tags["com.jkfisher.monthlyvideogenerator.app_version"])
+        XCTAssertNil(tags["com.jkfisher.monthlyvideogenerator.build_number"])
+        XCTAssertNil(tags["com.jkfisher.monthlyvideogenerator.export_profile"])
+        XCTAssertNil(tags["com.jkfisher.monthlyvideogenerator.export_json"])
+    }
+
+    func testBundledFFmpegWritesItemListTitleForPlexFriendlyMP4() throws {
+        guard
+            let ffmpegURL = bundledBinaryURL(named: "ffmpeg"),
+            let exiftoolURL = executableOnPath(named: "exiftool")
+        else {
+            throw XCTSkip("Bundled FFmpeg binaries or exiftool are unavailable.")
+        }
+
+        let outputDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outputDirectory) }
+
+        let outputURL = outputDirectory.appendingPathComponent("plex-itemlist.mp4")
+
+        _ = try runProcess(
+            executableURL: ffmpegURL,
+            arguments: [
+                "-hide_banner",
+                "-loglevel", "error",
+                "-y",
+                "-f", "lavfi",
+                "-i", "color=c=black:s=16x16:d=1",
+                "-f", "lavfi",
+                "-i", "anullsrc=r=48000:cl=stereo",
+                "-shortest",
+                "-c:v", "libx264",
+                "-pix_fmt", "yuv420p",
+                "-c:a", "aac",
+                "-movflags", "+write_colr",
+                "-metadata", "title=Summer Highlights",
+                "-metadata", "show=Family Videos",
+                outputURL.path
+            ]
+        )
+
+        let exiftoolOutput = try runProcess(
+            executableURL: exiftoolURL,
+            arguments: [
+                "-G1",
+                "-a",
+                "-s",
+                "-QuickTime:All",
+                "-Keys:All",
+                "-ItemList:All",
+                outputURL.path
+            ]
+        )
+
+        XCTAssertTrue(exiftoolOutput.contains("[ItemList]      Title"))
+        XCTAssertTrue(exiftoolOutput.contains("Summer Highlights"))
+        XCTAssertTrue(exiftoolOutput.contains("[ItemList]      TVShow"))
+        XCTAssertFalse(exiftoolOutput.contains("[Keys]          Title                           : Summer Highlights"))
     }
 
     func testBundledFFmpegPreservesNamedChaptersInMP4() throws {
@@ -2439,6 +2488,17 @@ final class HDRFFmpegPipelineTests: XCTestCase {
             return nil
         }
         return url
+    }
+
+    private func executableOnPath(named name: String) -> URL? {
+        let path = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        for entry in path.split(separator: ":") {
+            let candidate = URL(fileURLWithPath: String(entry), isDirectory: true).appendingPathComponent(name)
+            if FileManager.default.isExecutableFile(atPath: candidate.path) {
+                return candidate
+            }
+        }
+        return nil
     }
 
     private func runProcess(executableURL: URL, arguments: [String]) throws -> String {

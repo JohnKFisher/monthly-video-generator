@@ -969,11 +969,6 @@ struct FFmpegCommandBuilder {
                 ("version", provenance.version),
                 ("information", provenance.information)
             ])
-            metadataEntries.append(
-                contentsOf: provenance.customEntries
-                    .sorted { lhs, rhs in lhs.key < rhs.key }
-                    .map { ($0.key, $0.value) }
-            )
         }
 
         for (key, value) in metadataEntries where !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -982,10 +977,10 @@ struct FFmpegCommandBuilder {
     }
 
     private func movflags(for plan: FFmpegRenderPlan) -> String {
-        guard plan.renderIntent == .finalDelivery, plan.container == .mp4 else {
-            return "+write_colr"
-        }
-        return "+write_colr+use_metadata_tags"
+        // Final Plex-facing MP4 exports intentionally avoid use_metadata_tags
+        // so FFmpeg writes the standard MP4/iTunes metadata atoms that Plex is
+        // more likely to honor for episode title/show fields.
+        return "+write_colr"
     }
 
     private func baseArguments() -> [String] {
