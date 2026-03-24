@@ -1,5 +1,6 @@
 import Core
 import Foundation
+import Photos
 @testable import PhotosIntegration
 import XCTest
 
@@ -141,6 +142,91 @@ final class PhotoKitAssetMaterializerTests: XCTestCase {
         }
     }
 
+    func testMaterializePhotoAssetRetriesTransientPhotosNetworkErrorOnce() async throws {
+        let materializedVideoURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PhotoKitAssetMaterializerTests-retry-\(UUID().uuidString)")
+            .appendingPathExtension("mov")
+        try Data().write(to: materializedVideoURL)
+        defer {
+            try? FileManager.default.removeItem(at: materializedVideoURL)
+        }
+
+        let materializationCounter = LockedCounter()
+        let materializer = PhotoKitAssetMaterializer(
+            videoInspectionLoader: { localIdentifier in
+                XCTAssertEqual(localIdentifier, "video-1")
+                return PhotoKitAssetMaterializer.LoadedVideoInspection(
+                    sourceFrameRate: 30,
+                    sourceAudioChannelCount: 2
+                )
+            },
+            videoFileMaterializer: { localIdentifier, preferredFilename in
+                XCTAssertEqual(localIdentifier, "video-1")
+                XCTAssertEqual(preferredFilename, "IMG_0001.MOV")
+                if materializationCounter.incrementAndGet() == 1 {
+                    throw NSError(domain: PHPhotosErrorDomain, code: 3169)
+                }
+                return materializedVideoURL
+            },
+            transientRetryDelay: .zero
+        )
+
+        _ = try await materializer.prepareItemsForSmartMedia(
+            [makePhotoVideoItem(localIdentifier: "video-1")],
+            inspectFrameRate: true,
+            inspectAudioChannels: true
+        )
+
+        let materializedURL = try await materializer.materializePhotoAsset(
+            localIdentifier: "video-1",
+            preferredFilename: "IMG_0001.MOV"
+        )
+
+        XCTAssertEqual(materializedURL, materializedVideoURL)
+        XCTAssertEqual(materializationCounter.value, 2)
+    }
+
+    func testMaterializePhotoAssetSurfacesActionablePhotosNetworkFailure() async throws {
+        let materializer = PhotoKitAssetMaterializer(
+            videoInspectionLoader: { localIdentifier in
+                XCTAssertEqual(localIdentifier, "video-1")
+                return PhotoKitAssetMaterializer.LoadedVideoInspection(
+                    sourceFrameRate: 30,
+                    sourceAudioChannelCount: 2
+                )
+            },
+            videoFileMaterializer: { localIdentifier, preferredFilename in
+                XCTAssertEqual(localIdentifier, "video-1")
+                XCTAssertEqual(preferredFilename, "IMG_0001.MOV")
+                throw NSError(domain: PHPhotosErrorDomain, code: 3169)
+            },
+            transientRetryDelay: .zero
+        )
+
+        _ = try await materializer.prepareItemsForSmartMedia(
+            [makePhotoVideoItem(localIdentifier: "video-1")],
+            inspectFrameRate: true,
+            inspectAudioChannels: true
+        )
+
+        do {
+            _ = try await materializer.materializePhotoAsset(
+                localIdentifier: "video-1",
+                preferredFilename: "IMG_0001.MOV"
+            )
+            XCTFail("Expected a RenderError.exportFailed for Photos network failures")
+        } catch let renderError as RenderError {
+            guard case let .exportFailed(message) = renderError else {
+                return XCTFail("Expected exportFailed, got \(renderError)")
+            }
+            XCTAssertTrue(message.contains("IMG_0001.MOV"))
+            XCTAssertTrue(message.contains("PHPhotosErrorDomain 3169"))
+            XCTAssertTrue(message.contains("network connection"))
+        } catch {
+            XCTFail("Expected RenderError, got \(error)")
+        }
+    }
+
     private func makePhotoVideoItem(localIdentifier: String) -> MediaItem {
         MediaItem(
             id: localIdentifier,
@@ -164,6 +250,14 @@ private final class LockedCounter: @unchecked Sendable {
         lock.lock()
         value += 1
         lock.unlock()
+    }
+
+    func incrementAndGet() -> Int {
+        lock.lock()
+        value += 1
+        let updatedValue = value
+        lock.unlock()
+        return updatedValue
     }
 }
 

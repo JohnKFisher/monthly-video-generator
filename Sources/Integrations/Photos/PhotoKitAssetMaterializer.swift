@@ -37,6 +37,20 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
     typealias VideoInspectionLoader = @Sendable (String) async throws -> LoadedVideoInspection
     typealias VideoFileMaterializer = @Sendable (String, String) async throws -> URL
 
+    private enum MaterializationOperation {
+        case imageData
+        case videoResource
+
+        var fallbackVerb: String {
+            switch self {
+            case .imageData:
+                return "load"
+            case .videoResource:
+                return "download"
+            }
+        }
+    }
+
     struct LoadedVideoInspection: Equatable, Sendable {
         let sourceFrameRate: Double?
         let sourceAudioChannelCount: Int?
@@ -306,6 +320,13 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
     private let activeRequestRegistry: ActiveRequestRegistry
     private let videoInspectionLoader: VideoInspectionLoader
     private let videoFileMaterializer: VideoFileMaterializer
+    private let transientRetryDelay: Duration
+
+    private static let photosNetworkAccessRequiredCode = 3164
+    private static let photosNetworkErrorCode = 3169
+    private static let photosOperationInterruptedCode = 3301
+    private static let photosMissingResourceCode = 3303
+    private static let defaultTransientRetryDelay: Duration = .milliseconds(250)
 
     public init() {
         let registry = ActiveRequestRegistry()
@@ -320,16 +341,19 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
                 activeRequests: registry
             )
         }
+        self.transientRetryDelay = Self.defaultTransientRetryDelay
     }
 
     init(
         videoInspectionLoader: @escaping VideoInspectionLoader,
-        videoFileMaterializer: @escaping VideoFileMaterializer
+        videoFileMaterializer: @escaping VideoFileMaterializer,
+        transientRetryDelay: Duration = PhotoKitAssetMaterializer.defaultTransientRetryDelay
     ) {
         let registry = ActiveRequestRegistry()
         self.activeRequestRegistry = registry
         self.videoInspectionLoader = videoInspectionLoader
         self.videoFileMaterializer = videoFileMaterializer
+        self.transientRetryDelay = transientRetryDelay
     }
 
     public func cancelPendingRequests() {
@@ -347,33 +371,46 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
     }
 
     public func materializePhotoAsset(localIdentifier: String, preferredFilename: String) async throws -> URL {
-        if let cachedVideoURL = await materializedVideoCache.cachedURL(for: localIdentifier),
-           fileManager.fileExists(atPath: cachedVideoURL.path) {
-            return cachedVideoURL
-        }
+        do {
+            if let cachedVideoURL = await materializedVideoCache.cachedURL(for: localIdentifier),
+               fileManager.fileExists(atPath: cachedVideoURL.path) {
+                return cachedVideoURL
+            }
 
-        if await videoInspectionCache.cachedInspection(for: localIdentifier) != nil {
-            return try await materializeVideo(
+            if await videoInspectionCache.cachedInspection(for: localIdentifier) != nil {
+                return try await materializeVideo(
+                    localIdentifier: localIdentifier,
+                    preferredFilename: preferredFilename
+                )
+            }
+
+            let fetchResult = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil)
+            guard let asset = fetchResult.firstObject else {
+                throw PhotoMaterializerError.missingAsset(localIdentifier)
+            }
+
+            switch asset.mediaType {
+            case .image:
+                return try await materializeImage(asset: asset, preferredFilename: preferredFilename)
+            case .video:
+                return try await materializeVideo(
+                    localIdentifier: asset.localIdentifier,
+                    preferredFilename: preferredFilename
+                )
+            default:
+                throw PhotoMaterializerError.missingAsset(localIdentifier)
+            }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let renderError as RenderError {
+            throw renderError
+        } catch {
+            throw Self.materializationFailure(
+                from: error,
+                operation: .videoResource,
                 localIdentifier: localIdentifier,
                 preferredFilename: preferredFilename
             )
-        }
-
-        let fetchResult = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil)
-        guard let asset = fetchResult.firstObject else {
-            throw PhotoMaterializerError.missingAsset(localIdentifier)
-        }
-
-        switch asset.mediaType {
-        case .image:
-            return try await materializeImage(asset: asset, preferredFilename: preferredFilename)
-        case .video:
-            return try await materializeVideo(
-                localIdentifier: asset.localIdentifier,
-                preferredFilename: preferredFilename
-            )
-        default:
-            throw PhotoMaterializerError.missingAsset(localIdentifier)
         }
     }
 
@@ -458,7 +495,13 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
     }
 
     private func materializeImage(asset: PHAsset, preferredFilename: String) async throws -> URL {
-        let imageData = try await requestImageData(asset: asset)
+        let imageData = try await runMaterializationOperation(
+            .imageData,
+            localIdentifier: asset.localIdentifier,
+            preferredFilename: preferredFilename
+        ) {
+            try await self.requestImageData(asset: asset)
+        }
 
         let ext = URL(fileURLWithPath: preferredFilename).pathExtension.isEmpty ? "jpg" : URL(fileURLWithPath: preferredFilename).pathExtension
         let targetURL = Self.temporaryAssetURL(
@@ -476,7 +519,13 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
             return cachedVideoURL
         }
 
-        let materializedURL = try await videoFileMaterializer(localIdentifier, preferredFilename)
+        let materializedURL = try await runMaterializationOperation(
+            .videoResource,
+            localIdentifier: localIdentifier,
+            preferredFilename: preferredFilename
+        ) {
+            try await self.videoFileMaterializer(localIdentifier, preferredFilename)
+        }
         await materializedVideoCache.store(materializedURL, for: localIdentifier)
         return materializedURL
     }
@@ -489,6 +538,121 @@ public final class PhotoKitAssetMaterializer: PhotoAssetMaterializing, @unchecke
         let loadedVideoInspection = try await videoInspectionLoader(localIdentifier)
         await videoInspectionCache.store(loadedVideoInspection, for: localIdentifier)
         return loadedVideoInspection
+    }
+
+    private func runMaterializationOperation<T>(
+        _ operation: MaterializationOperation,
+        localIdentifier: String,
+        preferredFilename: String,
+        action: @escaping () async throws -> T
+    ) async throws -> T {
+        do {
+            return try await action()
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let renderError as RenderError {
+            throw renderError
+        } catch {
+            guard Self.shouldRetryMaterialization(after: error) else {
+                throw Self.materializationFailure(
+                    from: error,
+                    operation: operation,
+                    localIdentifier: localIdentifier,
+                    preferredFilename: preferredFilename
+                )
+            }
+        }
+
+        try Task.checkCancellation()
+        if transientRetryDelay != .zero {
+            try await Task.sleep(for: transientRetryDelay)
+        }
+
+        do {
+            return try await action()
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let renderError as RenderError {
+            throw renderError
+        } catch {
+            throw Self.materializationFailure(
+                from: error,
+                operation: operation,
+                localIdentifier: localIdentifier,
+                preferredFilename: preferredFilename
+            )
+        }
+    }
+
+    private static func shouldRetryMaterialization(after error: Error) -> Bool {
+        let nsError = error as NSError
+        guard nsError.domain == PHPhotosErrorDomain else {
+            return false
+        }
+        return nsError.code == photosNetworkErrorCode || nsError.code == photosOperationInterruptedCode
+    }
+
+    private static func materializationFailure(
+        from error: Error,
+        operation: MaterializationOperation,
+        localIdentifier: String,
+        preferredFilename: String
+    ) -> RenderError {
+        if let renderError = error as? RenderError {
+            return renderError
+        }
+
+        if let materializerError = error as? PhotoMaterializerError {
+            return RenderError.exportFailed(
+                materializerError.errorDescription ?? "Apple Photos could not load this asset."
+            )
+        }
+
+        let nsError = error as NSError
+        let displayName = displayName(preferredFilename: preferredFilename, localIdentifier: localIdentifier)
+
+        switch (nsError.domain, nsError.code) {
+        case (PHPhotosErrorDomain, photosNetworkAccessRequiredCode):
+            return RenderError.exportFailed(
+                "Apple Photos needs network access to download \"\(displayName)\" from iCloud (PHPhotosErrorDomain 3164). Connect to the internet or open the item in Photos first, then render again."
+            )
+        case (PHPhotosErrorDomain, photosNetworkErrorCode):
+            return RenderError.exportFailed(
+                "Apple Photos lost its network connection while downloading \"\(displayName)\" from iCloud (PHPhotosErrorDomain 3169). Open the item in Photos to finish downloading it, or retry when the network is stable."
+            )
+        case (PHPhotosErrorDomain, photosOperationInterruptedCode):
+            return RenderError.exportFailed(
+                "Apple Photos was interrupted while downloading \"\(displayName)\" (PHPhotosErrorDomain 3301). Retry the render after Photos finishes syncing."
+            )
+        case (PHPhotosErrorDomain, photosMissingResourceCode):
+            return RenderError.exportFailed(
+                "Apple Photos could not find the backing media resource for \"\(displayName)\" (PHPhotosErrorDomain 3303). Confirm the item still opens in Photos, then render again."
+            )
+        default:
+            var details = ["Apple Photos could not \(operation.fallbackVerb) \"\(displayName)\" (\(nsError.domain) \(nsError.code))."]
+            let localizedDescription = nsError.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !localizedDescription.isEmpty,
+               localizedDescription != "The operation couldn't be completed." &&
+               localizedDescription != "The operation couldn’t be completed." &&
+               localizedDescription != "The operation couldn’t be completed. (\(nsError.domain) error \(nsError.code).)" &&
+               localizedDescription != "The operation couldn't be completed. (\(nsError.domain) error \(nsError.code).)" {
+                details.append(localizedDescription)
+            }
+            if let reason = nsError.localizedFailureReason, !reason.isEmpty {
+                details.append(reason)
+            } else if let suggestion = nsError.localizedRecoverySuggestion, !suggestion.isEmpty {
+                details.append(suggestion)
+            }
+            return RenderError.exportFailed(details.joined(separator: " "))
+        }
+    }
+
+    private static func displayName(preferredFilename: String, localIdentifier: String) -> String {
+        let filename = preferredFilename.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !filename.isEmpty else {
+            return localIdentifier
+        }
+        return URL(fileURLWithPath: filename).lastPathComponent
     }
 
     private func requestImageData(asset: PHAsset) async throws -> Data {
