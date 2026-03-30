@@ -384,32 +384,32 @@ final class RenderPipelineTests: XCTestCase {
         XCTAssertTrue(engine.shouldApplyHDRToneMapping(for: profile))
     }
 
-    func testHDRX265ThreadProfileUsesShortJobBoostThroughTwentyMinutes() {
+    func testHDRX265ThreadProfileMapsExplicitHDRSpeedSelection() {
         let engine = AVFoundationRenderEngine()
 
         XCTAssertEqual(
             engine.x265ThreadProfile(
-                forExpectedFinalDurationSeconds: 1199,
-                dynamicRange: .hdr,
-                videoCodec: .hevc
-            ),
-            .shortJobBoost
-        )
-        XCTAssertEqual(
-            engine.x265ThreadProfile(
-                forExpectedFinalDurationSeconds: 1200,
-                dynamicRange: .hdr,
-                videoCodec: .hevc
-            ),
-            .shortJobBoost
-        )
-        XCTAssertEqual(
-            engine.x265ThreadProfile(
-                forExpectedFinalDurationSeconds: 1200.01,
+                for: .slow,
                 dynamicRange: .hdr,
                 videoCodec: .hevc
             ),
             .conservative
+        )
+        XCTAssertEqual(
+            engine.x265ThreadProfile(
+                for: .medium,
+                dynamicRange: .hdr,
+                videoCodec: .hevc
+            ),
+            .balanced
+        )
+        XCTAssertEqual(
+            engine.x265ThreadProfile(
+                for: .fast,
+                dynamicRange: .hdr,
+                videoCodec: .hevc
+            ),
+            .shortJobBoost
         )
     }
 
@@ -418,7 +418,7 @@ final class RenderPipelineTests: XCTestCase {
 
         XCTAssertEqual(
             engine.x265ThreadProfile(
-                forExpectedFinalDurationSeconds: 600,
+                for: .fast,
                 dynamicRange: .sdr,
                 videoCodec: .hevc
             ),
@@ -426,7 +426,7 @@ final class RenderPipelineTests: XCTestCase {
         )
         XCTAssertEqual(
             engine.x265ThreadProfile(
-                forExpectedFinalDurationSeconds: 600,
+                for: .fast,
                 dynamicRange: .hdr,
                 videoCodec: .h264
             ),

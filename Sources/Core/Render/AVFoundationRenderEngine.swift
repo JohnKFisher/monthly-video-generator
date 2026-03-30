@@ -4,7 +4,6 @@ import Foundation
 import VideoToolbox
 
 public final class AVFoundationRenderEngine: @unchecked Sendable {
-    static let shortJobBoostMaximumDurationSeconds = 20 * 60.0
     private static let maxConcurrentClipMaterializations = 2
     private static let maxConcurrentTitlePreviewResolutions = 3
 
@@ -99,6 +98,7 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                 "resolution=\(exportProfile.resolution.normalized.rawValue), dynamicRange=\(exportProfile.dynamicRange.rawValue), " +
                 "hdrFFmpegBinaryMode=\(exportProfile.hdrFFmpegBinaryMode.rawValue), " +
                 "hdrHEVCEncoderMode=\(exportProfile.hdrHEVCEncoderMode.rawValue), " +
+                "hdrX265Speed=\(exportProfile.hdrX265Speed.rawValue), " +
                 "audioLayout=\(exportProfile.audioLayout.rawValue), bitrate=\(exportProfile.bitrateMode.rawValue)"
             )
             if let plexTVMetadata {
@@ -470,14 +470,6 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
             )
         }
         let transitionDurationSeconds = max(transitionDuration.seconds, 0)
-        let totalDurationSeconds = ffmpegClips.reduce(0) { partialResult, clip in
-            partialResult + max(clip.durationSeconds, 0.01)
-        }
-        let expectedFinalDurationSeconds = max(
-            totalDurationSeconds - transitionDurationSeconds * Double(max(ffmpegClips.count - 1, 0)),
-            0.01
-        )
-
         return FFmpegRenderPlan(
             clips: ffmpegClips,
             transitionDurationSeconds: transitionDurationSeconds,
@@ -492,7 +484,7 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
             dynamicRange: exportProfile.dynamicRange,
             hdrHEVCEncoderMode: exportProfile.hdrHEVCEncoderMode,
             x265ThreadProfile: x265ThreadProfile(
-                forExpectedFinalDurationSeconds: expectedFinalDurationSeconds,
+                for: exportProfile.hdrX265Speed,
                 dynamicRange: exportProfile.dynamicRange,
                 videoCodec: exportProfile.videoCodec
             ),
@@ -504,17 +496,23 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
     }
 
     func x265ThreadProfile(
-        forExpectedFinalDurationSeconds expectedFinalDurationSeconds: Double,
+        for speed: HDRX265Speed,
         dynamicRange: DynamicRange,
         videoCodec: VideoCodec
     ) -> FFmpegX265ThreadProfile {
         guard dynamicRange == .hdr,
-              videoCodec == .hevc,
-              expectedFinalDurationSeconds <= Self.shortJobBoostMaximumDurationSeconds else {
+              videoCodec == .hevc else {
             return .conservative
         }
 
-        return .shortJobBoost
+        switch speed {
+        case .slow:
+            return .conservative
+        case .medium:
+            return .balanced
+        case .fast:
+            return .shortJobBoost
+        }
     }
 
     private func resolveOutputChapters(

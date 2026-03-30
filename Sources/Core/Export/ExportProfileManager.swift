@@ -115,6 +115,26 @@ public final class ExportProfileManager {
                     )
                 )
             }
+            switch profile.hdrX265Speed {
+            case .slow:
+                warnings.append(
+                    ExportCompatibilityWarning(
+                        "HDR libx265 speed Slow uses the most conservative thread caps for the final encode."
+                    )
+                )
+            case .medium:
+                warnings.append(
+                    ExportCompatibilityWarning(
+                        "HDR libx265 speed Medium uses balanced thread caps and is the default setting."
+                    )
+                )
+            case .fast:
+                warnings.append(
+                    ExportCompatibilityWarning(
+                        "HDR libx265 speed Fast increases CPU and memory demand and may change the encoded bitstream even when the visible result looks the same."
+                    )
+                )
+            }
 
         }
 
@@ -187,6 +207,7 @@ public final class ExportProfileManager {
             dynamicRange: profile.dynamicRange,
             hdrFFmpegBinaryMode: profile.hdrFFmpegBinaryMode,
             hdrHEVCEncoderMode: profile.hdrHEVCEncoderMode,
+            hdrX265Speed: profile.hdrX265Speed,
             audioLayout: profile.audioLayout,
             bitrateMode: profile.bitrateMode
         )
@@ -202,6 +223,7 @@ public final class ExportProfileManager {
             dynamicRange: profile.dynamicRange,
             hdrFFmpegBinaryMode: profile.hdrFFmpegBinaryMode,
             hdrHEVCEncoderMode: profile.hdrHEVCEncoderMode,
+            hdrX265Speed: profile.hdrX265Speed,
             audioLayout: profile.audioLayout,
             bitrateMode: profile.bitrateMode
         )
@@ -217,6 +239,7 @@ public final class ExportProfileManager {
             dynamicRange: profile.dynamicRange,
             hdrFFmpegBinaryMode: profile.hdrFFmpegBinaryMode,
             hdrHEVCEncoderMode: profile.hdrHEVCEncoderMode,
+            hdrX265Speed: profile.hdrX265Speed,
             audioLayout: audioLayout,
             bitrateMode: profile.bitrateMode
         )

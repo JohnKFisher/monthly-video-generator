@@ -43,8 +43,9 @@ enum FFmpegRenderIntent: String, Equatable, Sendable {
 }
 
 enum FFmpegX265ThreadProfile: String, Equatable, Sendable {
-    case conservative
-    case shortJobBoost
+    case conservative = "slow"
+    case balanced = "medium"
+    case shortJobBoost = "fast"
 }
 
 struct FFmpegBinary: Equatable, Sendable {

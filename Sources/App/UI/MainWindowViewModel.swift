@@ -209,6 +209,7 @@ final class MainWindowViewModel: ObservableObject {
         let selectedDynamicRange: DynamicRange
         let selectedHDRBinaryMode: HDRFFmpegBinaryMode
         let selectedHDRHEVCEncoderMode: HDRHEVCEncoderMode
+        let selectedHDRX265Speed: HDRX265Speed
         let selectedAudioLayout: AudioLayout
         let selectedBitrateMode: BitrateMode
         let writeDiagnosticsLog: Bool
@@ -364,6 +365,9 @@ final class MainWindowViewModel: ObservableObject {
         didSet { handleRenderSettingChange() }
     }
     @Published var selectedHDRHEVCEncoderMode: HDRHEVCEncoderMode = MainWindowViewModel.defaultExportProfile.hdrHEVCEncoderMode {
+        didSet { handleRenderSettingChange() }
+    }
+    @Published var selectedHDRX265Speed: HDRX265Speed = MainWindowViewModel.defaultExportProfile.hdrX265Speed {
         didSet { handleRenderSettingChange() }
     }
     @Published var selectedAudioLayout: AudioLayout = MainWindowViewModel.defaultExportProfile.audioLayout {
@@ -576,6 +580,29 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
 
+    var isHDRX265SpeedControlEnabled: Bool {
+        selectedDynamicRange == .hdr
+    }
+
+    var hdrX265SpeedDescription: String {
+        guard selectedDynamicRange == .hdr else {
+            return "Applies only to HDR exports that use libx265."
+        }
+
+        switch selectedHDRX265Speed {
+        case .slow:
+            return "Slow uses the most conservative HDR libx265 thread caps (4 pools / 2 frame threads)."
+        case .medium:
+            return "Medium uses balanced HDR libx265 thread caps (5 pools / 2 frame threads) and is the default."
+        case .fast:
+            return "Fast uses the most aggressive HDR libx265 thread caps (6 pools / 3 frame threads) for shorter renders on capable Macs."
+        }
+    }
+
+    var hdrX265SpeedCaution: String {
+        "Changing HDR libx265 speed can change the encoded HEVC bitstream even when the visible output looks the same."
+    }
+
     var ffmpegEngineDescription: String {
         "Bundled FFmpeg is used by default. If bundled FFmpeg cannot satisfy the selected export, the app will ask before falling back to system FFmpeg."
     }
@@ -781,6 +808,7 @@ final class MainWindowViewModel: ObservableObject {
         selectedDynamicRange = profile.dynamicRange
         selectedHDRBinaryMode = profile.hdrFFmpegBinaryMode
         selectedHDRHEVCEncoderMode = profile.hdrHEVCEncoderMode
+        selectedHDRX265Speed = profile.hdrX265Speed
         selectedAudioLayout = profile.audioLayout
         selectedBitrateMode = profile.bitrateMode
         writeDiagnosticsLog = false
@@ -1016,6 +1044,7 @@ final class MainWindowViewModel: ObservableObject {
             dynamicRange: snapshot.selectedDynamicRange,
             audioLayout: snapshot.selectedAudioLayout,
             hdrHEVCEncoderMode: snapshot.selectedHDRHEVCEncoderMode,
+            hdrX265Speed: snapshot.selectedHDRX265Speed,
             items: preparedSession.preparation.items
         )
 
@@ -1091,6 +1120,7 @@ final class MainWindowViewModel: ObservableObject {
             selectedDynamicRange: selectedDynamicRange,
             selectedHDRBinaryMode: selectedHDRBinaryMode,
             selectedHDRHEVCEncoderMode: selectedHDRHEVCEncoderMode,
+            selectedHDRX265Speed: selectedHDRX265Speed,
             selectedAudioLayout: selectedAudioLayout,
             selectedBitrateMode: selectedBitrateMode,
             writeDiagnosticsLog: writeDiagnosticsLog
@@ -1361,7 +1391,8 @@ final class MainWindowViewModel: ObservableObject {
                 frameRate: snapshot.selectedFrameRatePolicy,
                 dynamicRange: snapshot.selectedDynamicRange,
                 audioLayout: snapshot.selectedAudioLayout,
-                hdrHEVCEncoderMode: snapshot.selectedHDRHEVCEncoderMode
+                hdrHEVCEncoderMode: snapshot.selectedHDRHEVCEncoderMode,
+                hdrX265Speed: snapshot.selectedHDRX265Speed
             )
         )
     }
@@ -1427,6 +1458,7 @@ final class MainWindowViewModel: ObservableObject {
             selectedDynamicRange: baseSnapshot.selectedDynamicRange,
             selectedHDRBinaryMode: baseSnapshot.selectedHDRBinaryMode,
             selectedHDRHEVCEncoderMode: baseSnapshot.selectedHDRHEVCEncoderMode,
+            selectedHDRX265Speed: baseSnapshot.selectedHDRX265Speed,
             selectedAudioLayout: baseSnapshot.selectedAudioLayout,
             selectedBitrateMode: baseSnapshot.selectedBitrateMode,
             writeDiagnosticsLog: baseSnapshot.writeDiagnosticsLog
@@ -1467,6 +1499,7 @@ final class MainWindowViewModel: ObservableObject {
             selectedDynamicRange: seededSnapshot.selectedDynamicRange,
             selectedHDRBinaryMode: seededSnapshot.selectedHDRBinaryMode,
             selectedHDRHEVCEncoderMode: seededSnapshot.selectedHDRHEVCEncoderMode,
+            selectedHDRX265Speed: seededSnapshot.selectedHDRX265Speed,
             selectedAudioLayout: seededSnapshot.selectedAudioLayout,
             selectedBitrateMode: seededSnapshot.selectedBitrateMode,
             writeDiagnosticsLog: seededSnapshot.writeDiagnosticsLog
@@ -1749,6 +1782,7 @@ final class MainWindowViewModel: ObservableObject {
         dynamicRange: DynamicRange,
         audioLayout: AudioLayout,
         hdrHEVCEncoderMode: HDRHEVCEncoderMode,
+        hdrX265Speed: HDRX265Speed,
         items: [MediaItem]
     ) -> ExportProfileResolution {
         exportProfileManager.resolveProfile(
@@ -1758,7 +1792,8 @@ final class MainWindowViewModel: ObservableObject {
                 frameRate: frameRate,
                 dynamicRange: dynamicRange,
                 audioLayout: audioLayout,
-                hdrHEVCEncoderMode: hdrHEVCEncoderMode
+                hdrHEVCEncoderMode: hdrHEVCEncoderMode,
+                hdrX265Speed: hdrX265Speed
             ),
             items: items
         )
@@ -1770,7 +1805,8 @@ final class MainWindowViewModel: ObservableObject {
         frameRate: FrameRatePolicy,
         dynamicRange: DynamicRange,
         audioLayout: AudioLayout,
-        hdrHEVCEncoderMode: HDRHEVCEncoderMode
+        hdrHEVCEncoderMode: HDRHEVCEncoderMode,
+        hdrX265Speed: HDRX265Speed
     ) -> ExportProfile {
         ExportProfile(
             container: snapshot.selectedContainer,
@@ -1781,6 +1817,7 @@ final class MainWindowViewModel: ObservableObject {
             dynamicRange: dynamicRange,
             hdrFFmpegBinaryMode: snapshot.selectedHDRBinaryMode,
             hdrHEVCEncoderMode: hdrHEVCEncoderMode,
+            hdrX265Speed: hdrX265Speed,
             audioLayout: audioLayout,
             bitrateMode: snapshot.selectedBitrateMode
         )
@@ -2529,6 +2566,7 @@ final class MainWindowViewModel: ObservableObject {
         selectedDynamicRange = settings.selectedDynamicRange
         selectedHDRBinaryMode = .bundledPreferred
         selectedHDRHEVCEncoderMode = settings.selectedHDRHEVCEncoderMode ?? .automatic
+        selectedHDRX265Speed = settings.selectedHDRX265Speed ?? .medium
         selectedAudioLayout = settings.selectedAudioLayout
         selectedBitrateMode = settings.selectedBitrateMode
         writeDiagnosticsLog = settings.writeDiagnosticsLog ?? false
@@ -2570,6 +2608,7 @@ final class MainWindowViewModel: ObservableObject {
             selectedDynamicRange: selectedDynamicRange,
             selectedHDRBinaryMode: selectedHDRBinaryMode,
             selectedHDRHEVCEncoderMode: selectedHDRHEVCEncoderMode,
+            selectedHDRX265Speed: selectedHDRX265Speed,
             selectedAudioLayout: selectedAudioLayout,
             selectedBitrateMode: selectedBitrateMode,
             writeDiagnosticsLog: writeDiagnosticsLog,
@@ -2603,6 +2642,7 @@ final class MainWindowViewModel: ObservableObject {
         let selectedDynamicRange: DynamicRange
         let selectedHDRBinaryMode: HDRFFmpegBinaryMode?
         let selectedHDRHEVCEncoderMode: HDRHEVCEncoderMode?
+        let selectedHDRX265Speed: HDRX265Speed?
         let selectedAudioLayout: AudioLayout
         let selectedBitrateMode: BitrateMode
         let writeDiagnosticsLog: Bool?

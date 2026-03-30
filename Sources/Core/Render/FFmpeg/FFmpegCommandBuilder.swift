@@ -890,6 +890,8 @@ struct FFmpegCommandBuilder {
         switch plan.x265ThreadProfile {
         case .conservative:
             cap = 4
+        case .balanced:
+            cap = 5
         case .shortJobBoost:
             cap = 6
         }
@@ -905,6 +907,8 @@ struct FFmpegCommandBuilder {
         let cap: Int
         switch plan.x265ThreadProfile {
         case .conservative:
+            cap = 2
+        case .balanced:
             cap = 2
         case .shortJobBoost:
             cap = 3

@@ -173,6 +173,16 @@ public enum BitrateMode: String, CaseIterable, Codable, Sendable {
     case sizeFirst
 }
 
+public enum HDRX265Speed: String, CaseIterable, Codable, Sendable {
+    case slow
+    case medium
+    case fast
+
+    public var displayLabel: String {
+        rawValue.capitalized
+    }
+}
+
 public struct ExportProfile: Equatable, Codable, Sendable {
     public let container: ContainerFormat
     public let videoCodec: VideoCodec
@@ -182,6 +192,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
     public let dynamicRange: DynamicRange
     public let hdrFFmpegBinaryMode: HDRFFmpegBinaryMode
     public let hdrHEVCEncoderMode: HDRHEVCEncoderMode
+    public let hdrX265Speed: HDRX265Speed
     public let audioLayout: AudioLayout
     public let bitrateMode: BitrateMode
 
@@ -194,6 +205,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         dynamicRange: DynamicRange,
         hdrFFmpegBinaryMode: HDRFFmpegBinaryMode = .bundledPreferred,
         hdrHEVCEncoderMode: HDRHEVCEncoderMode = .automatic,
+        hdrX265Speed: HDRX265Speed = .medium,
         audioLayout: AudioLayout,
         bitrateMode: BitrateMode
     ) {
@@ -205,6 +217,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         self.dynamicRange = dynamicRange
         self.hdrFFmpegBinaryMode = hdrFFmpegBinaryMode
         self.hdrHEVCEncoderMode = hdrHEVCEncoderMode
+        self.hdrX265Speed = hdrX265Speed
         self.audioLayout = audioLayout
         self.bitrateMode = bitrateMode
     }
@@ -218,6 +231,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         dynamicRange: .sdr,
         hdrFFmpegBinaryMode: .bundledPreferred,
         hdrHEVCEncoderMode: .automatic,
+        hdrX265Speed: .medium,
         audioLayout: .smart,
         bitrateMode: .balanced
     )
@@ -231,6 +245,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         dynamicRange: .hdr,
         hdrFFmpegBinaryMode: .bundledPreferred,
         hdrHEVCEncoderMode: .automatic,
+        hdrX265Speed: .medium,
         audioLayout: .smart,
         bitrateMode: .balanced
     )
@@ -244,6 +259,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         case dynamicRange
         case hdrFFmpegBinaryMode
         case hdrHEVCEncoderMode
+        case hdrX265Speed
         case audioLayout
         case bitrateMode
     }
@@ -258,6 +274,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         self.dynamicRange = try container.decode(DynamicRange.self, forKey: .dynamicRange)
         self.hdrFFmpegBinaryMode = try container.decodeIfPresent(HDRFFmpegBinaryMode.self, forKey: .hdrFFmpegBinaryMode) ?? .bundledPreferred
         self.hdrHEVCEncoderMode = try container.decodeIfPresent(HDRHEVCEncoderMode.self, forKey: .hdrHEVCEncoderMode) ?? .automatic
+        self.hdrX265Speed = try container.decodeIfPresent(HDRX265Speed.self, forKey: .hdrX265Speed) ?? .medium
         self.audioLayout = try container.decode(AudioLayout.self, forKey: .audioLayout)
         self.bitrateMode = try container.decode(BitrateMode.self, forKey: .bitrateMode)
     }
@@ -272,6 +289,7 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         try container.encode(self.dynamicRange, forKey: .dynamicRange)
         try container.encode(self.hdrFFmpegBinaryMode, forKey: .hdrFFmpegBinaryMode)
         try container.encode(self.hdrHEVCEncoderMode, forKey: .hdrHEVCEncoderMode)
+        try container.encode(self.hdrX265Speed, forKey: .hdrX265Speed)
         try container.encode(self.audioLayout, forKey: .audioLayout)
         try container.encode(self.bitrateMode, forKey: .bitrateMode)
     }

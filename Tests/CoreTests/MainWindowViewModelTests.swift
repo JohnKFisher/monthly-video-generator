@@ -44,6 +44,15 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedYear, 2025)
     }
 
+    func testHDRX265SpeedDefaultsToMedium() {
+        let viewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            preferencesStore: makePreferencesStore()
+        )
+
+        XCTAssertEqual(viewModel.selectedHDRX265Speed, .medium)
+    }
+
     func testPersistedAlbumFilterIsOverriddenBackToMonthYearOnLaunch() throws {
         let preferencesStore = makePreferencesStore()
         let payload: [String: Any] = [
@@ -768,6 +777,27 @@ final class MainWindowViewModelTests: XCTestCase {
         restoredViewModel.resetExportSettingsToPlexDefaults()
 
         XCTAssertEqual(restoredViewModel.selectedHDRHEVCEncoderMode, .automatic)
+    }
+
+    func testHDRX265SpeedSelectionPersistsAndResetRestoresDefault() {
+        let preferencesStore = makePreferencesStore()
+        let initialViewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            preferencesStore: preferencesStore
+        )
+
+        initialViewModel.selectedHDRX265Speed = .fast
+
+        let restoredViewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            preferencesStore: preferencesStore
+        )
+
+        XCTAssertEqual(restoredViewModel.selectedHDRX265Speed, .fast)
+
+        restoredViewModel.resetExportSettingsToPlexDefaults()
+
+        XCTAssertEqual(restoredViewModel.selectedHDRX265Speed, .medium)
     }
 
     func testCaptureDateOverlayDefaultsToEnabled() {

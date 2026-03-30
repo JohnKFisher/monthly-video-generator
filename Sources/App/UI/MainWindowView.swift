@@ -431,11 +431,20 @@ struct MainWindowView: View {
                         }
                         .disabled(viewModel.selectedDynamicRange != .hdr)
 
+                        Picker("HDR libx265 Speed", selection: $viewModel.selectedHDRX265Speed) {
+                            ForEach(HDRX265Speed.allCases, id: \.self) { speed in
+                                Text(speed.displayLabel).tag(speed)
+                            }
+                        }
+                        .disabled(!viewModel.isHDRX265SpeedControlEnabled)
+
                         if viewModel.isHDRSelectionLocked {
                             caption(viewModel.hdrSelectionLockReason)
                         }
                         caption(viewModel.ffmpegEngineDescription)
                         caption(viewModel.hdrHEVCEncoderDescription)
+                        caption(viewModel.hdrX265SpeedDescription)
+                        caption(viewModel.hdrX265SpeedCaution)
 
                         VStack(alignment: .leading, spacing: 4) {
                             caption(viewModel.bitrateModeDescription)
