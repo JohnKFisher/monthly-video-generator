@@ -149,6 +149,7 @@ Operational updates after first packaged run:
 - 2026-03-20: Added a Photos year-queue action in the Export panel so the selected year can be scanned once and queued as separate month exports for each non-empty month, while preserving per-month auto titles and auto filenames.
 - 2026-03-20: Switched the shipping opening-title experience from a fixed `current-collage` control to per-run randomized selection across the corrected `21`-variant `current-collage-family`, threaded the chosen treatment through the title-card descriptor/render/report path, raised the shipping title-preview budget to `10`, prevented hollow collage photo-box outlines before image content is visible, and updated fresh/reset default opening-title duration to `10.0s`.
 - 2026-03-20: Bumped the shipped app version to `1.1.0`, rebuilt the packaged app as `1.1.0 (202)`, and promoted the release to durable anchor `known-good/20260320-v1-1-0-collage-titles` plus checkpoint `checkpoint/20260320-v1-1-0`.
+- 2026-03-30: Fast-forwarded `main` to include the HDR `libx265` speed presets plus the latest Photos iCloud fetch-failure fix, rebuilt the packaged app as `1.1.0 (206)`, and promoted the built state to durable anchor `known-good/20260330-v1-1-0-b206-hdr-speed-presets` plus checkpoint `checkpoint/20260330-v1-1-0-b206-hdr-speed-presets`.
 
 ## Decisions Log
 
