@@ -3,5 +3,6 @@
 .swiftpm/
 .home/
 dist/
+tmp/
 third_party/ffmpeg/bin/
 third_party/ffmpeg/PROVENANCE.txt

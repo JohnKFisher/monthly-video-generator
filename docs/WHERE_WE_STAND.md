@@ -31,7 +31,7 @@ What is partially implemented:
 - Stage 4 export controls are in place, but some advanced choices are still constrained by renderer/backend reality.
 - Progress reporting exists and is materially better than before, but the longest HDR jobs still need a more polished ETA/cancellation experience.
 - Resumable HDR execution exists for large jobs, but the UX around recovery remains technical.
-- Remote GitHub Actions verification cannot happen until the repository is actually initialized on GitHub.
+- The public GitHub repository now exists, but the first push is intentionally paused until disposable experimental `tmp/` history is cleaned out of the local repo.
 
 What is not implemented yet:
 - Final S4 completion and sign-off.
@@ -60,11 +60,11 @@ Important operational risks:
 - The app is safest when treated as local-only and single-user; it is not designed around shared/networked coordination.
 
 Recommended next priorities:
+- Finish the pre-push history cleanup, push `main` to GitHub, and verify the first remote `build.yml` and `release.yml` runs end-to-end.
 - Manually smoke-test several real exports and confirm the randomized collage-family openers stay readable and free of hollow photo-box artifacts.
 - Re-tune export defaults and bitrate targets using real-world 4K60 HDR examples.
 - Improve progress/cancel/resume UX for long-running FFmpeg/HDR jobs.
 - Add a lightweight inspectable UI hint or export-summary note for which title treatment was chosen, if that would help review iteration.
-- Initialize the GitHub repository, push the checked-in workflows, and verify the first remote build/release runs end-to-end.
 
 Most recent durable known-good anchor:
 - `known-good/20260320-v1-1-0-collage-titles`

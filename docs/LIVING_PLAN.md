@@ -57,7 +57,7 @@ Open for S4 completion:
 - Continue tightening renderer-option parity where settings remain advisory outside HDR constraints.
 - Refine progress UX with ETA prediction and stronger cancellation affordances for long HDR jobs.
 - Before finalizing export defaults, validate representative `4K60 / HEVC / Balanced` output sizes for the Plex -> Infuse -> Apple TV 4K workflow and reduce the balanced target if files are unreasonably large.
-- After the repo is initialized on GitHub, verify the first remote `build.yml` and `release.yml` runs end-to-end and fix any CI-only packaging drift without changing render behavior.
+- After the cleaned first push lands on GitHub, verify the first remote `build.yml` and `release.yml` runs end-to-end and fix any CI-only packaging drift without changing render behavior.
 
 Operational updates after first packaged run:
 - Added repeatable `.app` bundling script so each build produces a Finder app bundle.
@@ -202,6 +202,7 @@ Operational updates after first packaged run:
 
 ## Changes Since Last Update
 
+- 2026-04-21: Created the public GitHub repository `JohnKFisher/monthly-video-generator`, but intentionally paused the first push so disposable `tmp/hdr_sdr_iter` experiment artifacts can be removed from tracked history before publication; `tmp/` is now a scratch-only ignored path.
 - 2026-03-21: Final Plex-oriented MP4 exports now prefer standard MP4/iTunes-style metadata atoms for title/show/episode fields instead of QuickTime Keys so Plex is more likely to honor custom episode titles; as a tradeoff, app-specific `com.jkfisher.monthlyvideogenerator.*` custom metadata is no longer embedded in those final MP4 files.
 - 2026-03-21: Custom opening-title text now drives the Plex-facing episode title as well as the embedded MP4 `title` metadata tag for final renders, and auto-managed output filenames now use that custom title while keeping season/episode numbering month-based.
 - 2026-03-20: Added a new offline `current-collage-family` preview collection to `TitleTreatmentPreviewGenerator`, including `21` collage-focused review movies, `close`/`wide` grouped contact sheets, a deterministic `10`-preview-item collage pool for offline review only, collection-aware HTML/JSON artifacts, and focused tests for both the classic explorer and the new collage-family explorer; generated the first real review pack at `tmp/title-treatment-previews/20260320-192430-march-2026`.
