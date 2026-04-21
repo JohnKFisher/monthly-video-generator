@@ -71,6 +71,7 @@ enum AppMetadata {
         return nil
     }
 
+    @MainActor
     private static func bundledImage(
         named resourceName: String,
         extension fileExtension: String
@@ -84,10 +85,12 @@ enum AppMetadata {
         return NSImage(contentsOf: url)
     }
 
+    @MainActor
     static let headerIconImage: NSImage? = {
         bundledImage(named: headerIconResourceName, extension: "png")
     }()
 
+    @MainActor
     static let easterEggImage: NSImage? = {
         bundledImage(named: easterEggImageResourceName, extension: "jpeg")
     }()
