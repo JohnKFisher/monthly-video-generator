@@ -5,9 +5,14 @@ import AppKit
 #endif
 
 enum AppMetadata {
+    private struct AppLinks: Decodable {
+        let repositoryURL: String?
+    }
+
     static let appName = "Monthly Video Generator"
     static let headerIconResourceName = "AppHeaderIcon"
     static let easterEggImageResourceName = "JohnKennethEasterEgg"
+    static let appLinksResourceName = "AppLinks"
     private static let appResourceBundleName = "MonthlyVideoGenerator_MonthlyVideoGeneratorApp.bundle"
 
     static var shortVersion: String {
@@ -32,6 +37,21 @@ enum AppMetadata {
 
     static var versionBuildLabel: String {
         "Version \(versionBuildValue)"
+    }
+
+    static var repositoryURL: URL? {
+        guard
+            let bundle = appResourceBundle,
+            let url = bundle.url(forResource: appLinksResourceName, withExtension: "json"),
+            let data = try? Data(contentsOf: url),
+            let links = try? JSONDecoder().decode(AppLinks.self, from: data),
+            let repositoryURL = links.repositoryURL?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !repositoryURL.isEmpty
+        else {
+            return nil
+        }
+
+        return URL(string: repositoryURL)
     }
 
     #if canImport(AppKit)

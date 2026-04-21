@@ -47,16 +47,23 @@ Implemented now:
 - Plex TV episode naming + embedded MP4 metadata for the `Family Videos` library workflow, plus mega-test batch UI for exercising Resolution/FPS/Range/Audio combinations.
 - Offline title-treatment preview generation that can render a one-off concept gallery of opening-title styles into playable review movies, stills, grouped contact sheets, `manifest.json`, and `index.html` without changing the shipping app UI or defaults; when AVFoundation title-card clip writing is unavailable, the preview workflow now falls back to local ffmpeg movie export for these review artifacts only.
 - Added a second offline title-treatment preview collection, `current-collage-family`, centered on the winning `current-collage` opener: `21` playable collage-focused variants (`1` control + `20` new variations) grouped into `close` and `wide` contact sheets, with deterministic larger preview pools and `--collection` CLI selection.
+- Repo governance now includes `docs/DECISIONS.md`, with root/conditional agent-rule alignment documented separately from shipping app behavior.
+- Release identity now comes from committed `VERSION` + `BUILD_NUMBER`, while `scripts/build_app.sh` stays packaging-only and `scripts/prepare_release.sh` handles intentional patch/build bumps.
+- Shared `.dmg` packaging now lives in `scripts/create_dmg.sh`, and first-pass GitHub Actions build/release workflows are checked in for initial GitHub publication.
+- README/license/About-style surfaces now disclose the personal-use nature of the app, MIT licensing, current ad-hoc-signed/non-notarized macOS distribution state, and an optional repository link that stays hidden until configured.
 
 Open for S4 completion:
 - Migrate renderer to newer non-deprecated AVFoundation export APIs.
 - Continue tightening renderer-option parity where settings remain advisory outside HDR constraints.
 - Refine progress UX with ETA prediction and stronger cancellation affordances for long HDR jobs.
 - Before finalizing export defaults, validate representative `4K60 / HEVC / Balanced` output sizes for the Plex -> Infuse -> Apple TV 4K workflow and reduce the balanced target if files are unreasonably large.
+- After the repo is initialized on GitHub, verify the first remote `build.yml` and `release.yml` runs end-to-end and fix any CI-only packaging drift without changing render behavior.
 
 Operational updates after first packaged run:
 - Added repeatable `.app` bundling script so each build produces a Finder app bundle.
 - Updated `.app` bundling to produce a release universal bundle, package SwiftPM resources conventionally, embed Swift runtime libraries, and ad-hoc sign the finished app for off-machine testing.
+- Added shared `scripts/create_dmg.sh` so local packaging and future GitHub release automation produce the same DMG artifact shape from the same committed app version/build.
+- Added `scripts/prepare_release.sh` so release bumps are explicit checked-in changes instead of side effects of local packaging.
 - Stabilized HDR final-delivery `libx265` commands by capping FFmpeg/x265 thread pressure to reduce OS-level `SIGKILL` risk on large renders.
 - Expanded FFmpeg diagnostics and surfaced error text with structured failure snapshots (encoder/binary/progress/output/stderr), richer report headers, and duplicate-line cleanup in the UI error formatter.
 - Added visible app version/build label in the main window.
@@ -258,6 +265,10 @@ Operational updates after first packaged run:
 - 2026-03-05: Replaced FFmpeg termination-handler wait with a race-free async poll and added parser coverage for both `out_time_ms` and `out_time_us` progress keys.
 - 2026-03-05: Enabled periodic FFmpeg progress emission (`-stats_period 0.5`) and preallocated diagnostics log file paths at render start for improved long-run observability.
 - 2026-03-05: Removed shared callback lock coupling between FFmpeg diagnostics and progress paths so progress updates remain responsive under heavy stderr logging.
+- 2026-04-20: Added `docs/DECISIONS.md` and aligned repo governance/docs to the new root + conditional agent rules without changing the render/export pipeline.
+- 2026-04-20: Changed packaging so `scripts/build_app.sh` reads committed `VERSION` + `BUILD_NUMBER` without mutating tracked version files, added `scripts/prepare_release.sh` for intentional patch/build bumps, and added `scripts/create_dmg.sh` for shared local/CI DMG packaging.
+- 2026-04-20: Added first-pass GitHub Actions build/release workflows for future GitHub initialization, publishing through the repo's shared shell scripts and documenting that macOS distribution remains ad-hoc signed and not notarized.
+- 2026-04-20: Updated README/license/About-style surfaces for personal-use disclosure, MIT licensing, honest non-notarized distribution guidance, and an optional clickable repository link that stays hidden until configured.
 - 2026-03-05: Force-closed FFmpeg output/error pipes after process termination to prevent post-encode completion hangs while awaiting stream readers.
 - 2026-03-05: Added an FFmpeg HDR stall watchdog that monitors both `out_time` advancement and output-file byte growth, terminating stuck processes with explicit stall context.
 - 2026-03-05: Added phase/status callback plumbing from renderer to UI and upgraded on-screen render status with HDR encode elapsed/output-size/speed details.
@@ -352,4 +363,4 @@ Durable `known-good/*` tags are not pruned by the routine checkpoint-retention p
 
 ## Last Updated
 
-2026-03-20 19:35 America/New_York by Codex
+2026-04-20 10:30 America/New_York by Codex

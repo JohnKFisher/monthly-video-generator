@@ -2,6 +2,19 @@
 
 Monthly Video Generator is a local-only macOS app that builds slideshow videos from media in folders and Apple Photos.
 
+This is a personal-use, hobby, vibe-coded project built primarily to satisfy my own workflow. If it happens to be useful to anyone else, that's incidental. It is released under the MIT license with no warranties, support commitments, stability guarantees, or roadmap promises beyond what the code and docs honestly say today.
+
+## Distribution Note
+
+Packaged builds are currently ad-hoc signed for local distribution testing and are **not notarized**. That improves compatibility, but it does not remove macOS trust prompts for downloaded copies.
+
+If macOS blocks launch:
+
+1. Try opening the app once from Finder.
+2. Then either Control-click the app in Finder and choose `Open`, or go to `System Settings -> Privacy & Security` and choose `Open Anyway`.
+
+If I later set up full Developer ID signing and notarization, the docs and release workflow will say so explicitly.
+
 ## Safety and Workflow
 
 This project follows a strict milestone workflow:
@@ -41,13 +54,42 @@ when needed:
 APP_ARCHS="arm64" ./scripts/build_app.sh
 ```
 
-Packaged builds use the repo-tracked `BUILD_NUMBER` file as the source of truth for `CFBundleVersion`. A successful `./scripts/build_app.sh` run increments that counter exactly once after the app bundle finishes building and signing.
+Packaged builds use the repo-tracked `VERSION` and `BUILD_NUMBER` files as the source of truth for `CFBundleShortVersionString` and `CFBundleVersion`. `./scripts/build_app.sh` packages the current committed release identity and does **not** mutate tracked version files as a side effect.
 
 Optional signing override for a real certificate:
 
 ```bash
 CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./scripts/build_app.sh
 ```
+
+## Prepare A Release Bump
+
+When you want a new publishable version, bump the checked-in release identity first:
+
+```bash
+./scripts/prepare_release.sh
+```
+
+That increments the patch version in `VERSION` and the integer build number in `BUILD_NUMBER` together. Review and commit those file changes before packaging or pushing.
+
+## Create A `.dmg`
+
+After the `.app` exists:
+
+```bash
+./scripts/create_dmg.sh
+```
+
+This creates a versioned DMG in `dist/`, named from the checked-in `VERSION` and `BUILD_NUMBER`.
+
+## GitHub Release Flow
+
+This repo is being prepared for first-time GitHub publication with two GitHub Actions workflows:
+
+- `build.yml` builds, tests, packages, and uploads macOS artifacts from committed source.
+- `release.yml` treats a committed version/build bump on `main` as the publish signal and creates or updates the matching GitHub Release.
+
+The release workflow publishes the DMG built from committed source and keeps distribution notes honest: ad-hoc signing is supported now, notarization is not.
 
 ## Optional: Bundle FFmpeg For Final Export
 

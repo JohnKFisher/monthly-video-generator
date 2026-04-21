@@ -8,11 +8,12 @@ BUNDLE_ID="com.jkfisher.MonthlyVideoGenerator"
 VERSION_FILE="$ROOT_DIR/VERSION"
 BUILD_NUMBER_FILE="$ROOT_DIR/BUILD_NUMBER"
 DIST_DIR="$ROOT_DIR/dist"
-APP_BUNDLE="$DIST_DIR/${APP_NAME}.app"
-CONTENTS_DIR="$APP_BUNDLE/Contents"
-MACOS_DIR="$CONTENTS_DIR/MacOS"
-RESOURCES_DIR="$CONTENTS_DIR/Resources"
-FRAMEWORKS_DIR="$CONTENTS_DIR/Frameworks"
+FINAL_APP_BUNDLE="$DIST_DIR/${APP_NAME}.app"
+APP_BUNDLE=""
+CONTENTS_DIR=""
+MACOS_DIR=""
+RESOURCES_DIR=""
+FRAMEWORKS_DIR=""
 THIRD_PARTY_FFMPEG_BIN_DIR="$ROOT_DIR/third_party/ffmpeg/bin"
 ICON_NAME="AppIcon"
 ICON_GENERATOR_SCRIPT="$ROOT_DIR/scripts/generate_app_icon.swift"
@@ -21,10 +22,14 @@ DEFAULT_APP_ARCHS="arm64 x86_64"
 APP_ARCHS="${APP_ARCHS:-$DEFAULT_APP_ARCHS}"
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
 ICON_TEMP_DIR=""
+PACKAGING_TEMP_DIR=""
 
 cleanup() {
   if [[ -n "$ICON_TEMP_DIR" && -d "$ICON_TEMP_DIR" ]]; then
     rm -rf "$ICON_TEMP_DIR"
+  fi
+  if [[ -n "$PACKAGING_TEMP_DIR" && -d "$PACKAGING_TEMP_DIR" ]]; then
+    rm -rf "$PACKAGING_TEMP_DIR"
   fi
 }
 
@@ -51,13 +56,18 @@ if [[ ! "$CURRENT_BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
-NEXT_BUILD_NUMBER="$((CURRENT_BUILD_NUMBER + 1))"
-
 read -r -a BUILD_ARCHS <<< "$APP_ARCHS"
 if [[ "${#BUILD_ARCHS[@]}" -eq 0 ]]; then
   echo "Error: APP_ARCHS must contain at least one architecture (for example: 'arm64 x86_64')." >&2
   exit 1
 fi
+
+PACKAGING_TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/monthly-video-generator-app.XXXXXX")"
+APP_BUNDLE="$PACKAGING_TEMP_DIR/${APP_NAME}.app"
+CONTENTS_DIR="$APP_BUNDLE/Contents"
+MACOS_DIR="$CONTENTS_DIR/MacOS"
+RESOURCES_DIR="$CONTENTS_DIR/Resources"
+FRAMEWORKS_DIR="$CONTENTS_DIR/Frameworks"
 
 BIN_PATHS=()
 RESOURCE_SOURCE_DIR=""
@@ -160,12 +170,12 @@ swift "$ICON_GENERATOR_SCRIPT" \
   --master-png "$MASTER_ICON_PNG"
 
 iconutil --convert icns "$ICONSET_DIR" --output "$ICON_OUTPUT"
-cp "$ICON_OUTPUT" "$RESOURCES_DIR/${ICON_NAME}.icns"
+ditto --noextattr --noqtn "$ICON_OUTPUT" "$RESOURCES_DIR/${ICON_NAME}.icns"
 
 if [[ -x "$THIRD_PARTY_FFMPEG_BIN_DIR/ffmpeg" && -x "$THIRD_PARTY_FFMPEG_BIN_DIR/ffprobe" ]]; then
   mkdir -p "$RESOURCES_DIR/FFmpeg"
-  cp "$THIRD_PARTY_FFMPEG_BIN_DIR/ffmpeg" "$RESOURCES_DIR/FFmpeg/ffmpeg"
-  cp "$THIRD_PARTY_FFMPEG_BIN_DIR/ffprobe" "$RESOURCES_DIR/FFmpeg/ffprobe"
+  ditto --noextattr --noqtn "$THIRD_PARTY_FFMPEG_BIN_DIR/ffmpeg" "$RESOURCES_DIR/FFmpeg/ffmpeg"
+  ditto --noextattr --noqtn "$THIRD_PARTY_FFMPEG_BIN_DIR/ffprobe" "$RESOURCES_DIR/FFmpeg/ffprobe"
   chmod +x "$RESOURCES_DIR/FFmpeg/ffmpeg" "$RESOURCES_DIR/FFmpeg/ffprobe"
   echo "Bundled FFmpeg binaries from: $THIRD_PARTY_FFMPEG_BIN_DIR"
 else
@@ -174,7 +184,7 @@ fi
 
 if [[ -n "$RESOURCE_SOURCE_DIR" ]]; then
   while IFS= read -r resource_bundle; do
-    cp -R "$resource_bundle" "$RESOURCES_DIR/"
+    ditto --noextattr --noqtn "$resource_bundle" "$RESOURCES_DIR/$(basename "$resource_bundle")"
   done < <(find "$RESOURCE_SOURCE_DIR" -maxdepth 1 -type d -name "*.bundle" | sort)
 fi
 
@@ -221,7 +231,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key>
   <string>$APP_VERSION</string>
   <key>CFBundleVersion</key>
-  <string>$NEXT_BUILD_NUMBER</string>
+  <string>$CURRENT_BUILD_NUMBER</string>
   <key>LSMinimumSystemVersion</key>
   <string>$MINIMUM_SYSTEM_VERSION</string>
   <key>NSHighResolutionCapable</key>
@@ -232,15 +242,18 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 </plist>
 PLIST
 
+chmod -R u+w "$APP_BUNDLE"
+xattr -cr "$APP_BUNDLE"
+
 codesign_target "$APP_BUNDLE"
 codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
 
-temp_build_number_file="$(mktemp "${TMPDIR:-/tmp}/monthly-video-generator-build-number.XXXXXX")"
-printf '%s\n' "$NEXT_BUILD_NUMBER" > "$temp_build_number_file"
-mv "$temp_build_number_file" "$BUILD_NUMBER_FILE"
+rm -rf "$FINAL_APP_BUNDLE"
+mkdir -p "$DIST_DIR"
+ditto "$APP_BUNDLE" "$FINAL_APP_BUNDLE"
 
-echo "Built app bundle: $APP_BUNDLE"
-echo "Version: $APP_VERSION ($NEXT_BUILD_NUMBER)"
+echo "Built app bundle: $FINAL_APP_BUNDLE"
+echo "Version: $APP_VERSION ($CURRENT_BUILD_NUMBER)"
 echo "Architectures: ${BUILD_ARCHS[*]}"
 if [[ "$CODESIGN_IDENTITY" == "-" ]]; then
   echo "Signing: ad-hoc"

@@ -1,0 +1,89 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - VERSION
+      - BUILD_NUMBER
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  macos-release:
+    runs-on: macos-14
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Read release identity
+        run: |
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          BUILD_NUMBER="$(tr -d '[:space:]' < BUILD_NUMBER)"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "BUILD_NUMBER=${BUILD_NUMBER}" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=v${VERSION}" >> "$GITHUB_ENV"
+          echo "RELEASE_NAME=Monthly Video Generator ${VERSION}" >> "$GITHUB_ENV"
+          echo "DMG_PATH=dist/Monthly-Video-Generator-v${VERSION}-build-${BUILD_NUMBER}-macOS-universal.dmg" >> "$GITHUB_ENV"
+
+      - name: Build package
+        run: swift build
+
+      - name: Run tests
+        run: swift test
+
+      - name: Build app bundle
+        run: ./scripts/build_app.sh
+
+      - name: Build DMG
+        run: ./scripts/create_dmg.sh
+
+      - name: Generate release notes
+        run: |
+          NOTES_FILE="$RUNNER_TEMP/release-notes.md"
+          PREVIOUS_TAG="$(git tag --sort=-version:refname | grep -Fxv "$RELEASE_TAG" | head -n 1 || true)"
+          if [[ -n "$PREVIOUS_TAG" ]]; then
+            RANGE="${PREVIOUS_TAG}..HEAD"
+            HEADER="Changes since ${PREVIOUS_TAG}"
+          else
+            RANGE="HEAD"
+            HEADER="Initial release"
+          fi
+
+          {
+            echo "# ${RELEASE_NAME}"
+            echo
+            echo "${HEADER}"
+            echo
+            COMMITS="$(git log --format='%s' ${RANGE} | grep -viE '^(prepare release|bump version|bump build)' || true)"
+            if [[ -n "$COMMITS" ]]; then
+              printf '%s\n' "$COMMITS" | sed 's/^/- /'
+            else
+              echo "- Packaging and repo-alignment updates for this release."
+            fi
+            echo
+            echo "Distribution note: this build is ad-hoc signed for local testing and is not notarized. If macOS blocks launch, use Finder Open or System Settings > Privacy & Security > Open Anyway."
+          } > "$NOTES_FILE"
+
+          echo "RELEASE_NOTES_FILE=$NOTES_FILE" >> "$GITHUB_ENV"
+
+      - name: Publish GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" --title "$RELEASE_NAME" --notes-file "$RELEASE_NOTES_FILE"
+            gh release upload "$RELEASE_TAG" "$DMG_PATH" --clobber
+          else
+            gh release create "$RELEASE_TAG" "$DMG_PATH" --title "$RELEASE_NAME" --notes-file "$RELEASE_NOTES_FILE"
+          fi

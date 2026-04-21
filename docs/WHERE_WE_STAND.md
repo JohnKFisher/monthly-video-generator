@@ -2,12 +2,12 @@
 
 Current version/build:
 - `1.1.0`
-- Latest packaged local build verified in this repo: `202`
+- Latest checked-in build identity: `206`
 
 Current overall status:
 - The app is usable now for local folder-based and Apple Photos-based monthly video exports, and this `1.1.0` release folds the approved collage-title exploration back into the shipping app.
 - Opening title cards now randomize per export job across the corrected `21`-variant collage-family set, including queued exports and full-year runs.
-- Fresh/reset defaults now use a `10.0s` opening title card, and packaged app build numbers continue to use the repo-tracked counted `BUILD_NUMBER` sequence.
+- Fresh/reset defaults now use a `10.0s` opening title card, and release identity now comes from the checked-in `VERSION` plus `BUILD_NUMBER` files.
 
 What is working now:
 - Local-only macOS app workflow with no telemetry or cloud requirement.
@@ -23,11 +23,15 @@ What is working now:
 - Embedded MP4 metadata and named chapters for the `Family Videos` workflow.
 - Stable still-image handling through Apple/AVFoundation materialized intermediate clips.
 - HDR still-photo gain-map decoding that respects source-image orientation for affected rotated/oriented HDR photos.
+- Shared packaging scripts for `.app` and `.dmg` creation from committed source.
+- First-pass GitHub Actions build/release workflows checked in for the repo's first public GitHub initialization.
+- Optional About-style repository link plumbing exists in the app, but stays hidden until a repo URL is configured.
 
 What is partially implemented:
 - Stage 4 export controls are in place, but some advanced choices are still constrained by renderer/backend reality.
 - Progress reporting exists and is materially better than before, but the longest HDR jobs still need a more polished ETA/cancellation experience.
 - Resumable HDR execution exists for large jobs, but the UX around recovery remains technical.
+- Remote GitHub Actions verification cannot happen until the repository is actually initialized on GitHub.
 
 What is not implemented yet:
 - Final S4 completion and sign-off.
@@ -41,6 +45,8 @@ Known limitations and trust warnings:
 - Apple Photos exports depend on Photos permissions and can be affected by PhotoKit/iCloud materialization latency.
 - Balanced bitrate is workable now, but very large 4K60 HDR outputs may still need more tuning for size.
 - The chosen randomized opening-title treatment is recorded in the JSON run report, not surfaced in the main UI yet.
+- Packaged builds are ad-hoc signed and not notarized, so downloaded copies may still require Finder `Open` or `System Settings -> Privacy & Security -> Open Anyway`.
+- The current bundle identifier remains mixed-case (`com.jkfisher.MonthlyVideoGenerator`) pending a separate migration decision; it was intentionally not renamed during this alignment pass.
 
 Setup/runtime requirements:
 - macOS 15-class environment for the current SwiftPM/app workflow.
@@ -58,6 +64,7 @@ Recommended next priorities:
 - Re-tune export defaults and bitrate targets using real-world 4K60 HDR examples.
 - Improve progress/cancel/resume UX for long-running FFmpeg/HDR jobs.
 - Add a lightweight inspectable UI hint or export-summary note for which title treatment was chosen, if that would help review iteration.
+- Initialize the GitHub repository, push the checked-in workflows, and verify the first remote build/release runs end-to-end.
 
 Most recent durable known-good anchor:
 - `known-good/20260320-v1-1-0-collage-titles`

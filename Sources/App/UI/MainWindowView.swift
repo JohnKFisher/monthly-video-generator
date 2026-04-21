@@ -840,11 +840,25 @@ struct MainWindowView: View {
             }
             #endif
 
-            Text("Vibecoded (poorly) by John Kenneth Fisher, 2026.")
+            Text("Monthly Video Generator")
+                .font(.headline)
+                .multilineTextAlignment(.center)
+
+            Text("Personal-use macOS app")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+
+            Text("Copyright © 2026 John Kenneth Fisher")
                 .font(.callout)
                 .multilineTextAlignment(.center)
+
+            if let repositoryURL = AppMetadata.repositoryURL {
+                Link("GitHub Repository", destination: repositoryURL)
+                    .font(.callout.weight(.medium))
+            }
         }
-        .frame(width: 220)
+        .frame(width: 240)
         .padding(16)
     }
 
