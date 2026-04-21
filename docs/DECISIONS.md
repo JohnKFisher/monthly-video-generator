@@ -10,3 +10,4 @@
 ## 2026-04-21
 
 - Decision: Remove the experimental `tmp/hdr_sdr_iter` artifacts from tracked history before the first GitHub push and ignore `tmp/` going forward. Rationale: those files are disposable scratch outputs, materially bloat the public repository, and are not part of the shipping app, build inputs, or release artifacts. Status: approved.
+- Decision: Run GitHub Actions packaging/release workflows on `macos-15` for this repo's first public CI path. Rationale: the package requires Swift tools `6.0`, and the initial `macos-14` runner defaulted to Swift `5.10`, causing the first remote `swift build` step to fail before packaging or release creation. Status: approved.

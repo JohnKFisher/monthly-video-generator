@@ -31,7 +31,7 @@ What is partially implemented:
 - Stage 4 export controls are in place, but some advanced choices are still constrained by renderer/backend reality.
 - Progress reporting exists and is materially better than before, but the longest HDR jobs still need a more polished ETA/cancellation experience.
 - Resumable HDR execution exists for large jobs, but the UX around recovery remains technical.
-- The public GitHub repository and release automation are in place, but the first remote release run still needs to prove itself on GitHub.
+- The public GitHub repository and release automation are in place, but the first remote release run exposed a GitHub runner toolchain mismatch and still needs a clean passing rerun on `macos-15`.
 
 What is not implemented yet:
 - Final S4 completion and sign-off.
@@ -60,7 +60,7 @@ Important operational risks:
 - The app is safest when treated as local-only and single-user; it is not designed around shared/networked coordination.
 
 Recommended next priorities:
-- Verify the first remote `build.yml` and `release.yml` runs end-to-end for `1.2.0`, then fix any CI-only packaging drift without disturbing render behavior.
+- Verify the rerun `build.yml` and `release.yml` runs end-to-end for `1.2.0` on `macos-15`, then fix any remaining CI-only packaging drift without disturbing render behavior.
 - Manually smoke-test several real exports and confirm the randomized collage-family openers stay readable and free of hollow photo-box artifacts.
 - Re-tune export defaults and bitrate targets using real-world 4K60 HDR examples.
 - Improve progress/cancel/resume UX for long-running FFmpeg/HDR jobs.
