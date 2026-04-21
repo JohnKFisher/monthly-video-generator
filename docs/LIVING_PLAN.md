@@ -202,6 +202,7 @@ Operational updates after first packaged run:
 
 ## Changes Since Last Update
 
+- 2026-04-21: Bumped the checked-in release identity to `1.2.0 (207)` as the first intended public GitHub release line after the pre-push history cleanup, with the next step being remote Actions verification on the real `origin/main` push.
 - 2026-04-21: Created the public GitHub repository `JohnKFisher/monthly-video-generator`, but intentionally paused the first push so disposable `tmp/hdr_sdr_iter` experiment artifacts can be removed from tracked history before publication; `tmp/` is now a scratch-only ignored path.
 - 2026-03-21: Final Plex-oriented MP4 exports now prefer standard MP4/iTunes-style metadata atoms for title/show/episode fields instead of QuickTime Keys so Plex is more likely to honor custom episode titles; as a tradeoff, app-specific `com.jkfisher.monthlyvideogenerator.*` custom metadata is no longer embedded in those final MP4 files.
 - 2026-03-21: Custom opening-title text now drives the Plex-facing episode title as well as the embedded MP4 `title` metadata tag for final renders, and auto-managed output filenames now use that custom title while keeping season/episode numbering month-based.

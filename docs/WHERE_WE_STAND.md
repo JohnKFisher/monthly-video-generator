@@ -1,11 +1,11 @@
 # Monthly Video Generator
 
 Current version/build:
-- `1.1.0`
-- Latest checked-in build identity: `206`
+- `1.2.0`
+- Latest checked-in build identity: `207`
 
 Current overall status:
-- The app is usable now for local folder-based and Apple Photos-based monthly video exports, and this `1.1.0` release folds the approved collage-title exploration back into the shipping app.
+- The app is usable now for local folder-based and Apple Photos-based monthly video exports, and this `1.2.0` release is the first intended public GitHub-published cut after the repo cleanup and CI/release alignment work.
 - Opening title cards now randomize per export job across the corrected `21`-variant collage-family set, including queued exports and full-year runs.
 - Fresh/reset defaults now use a `10.0s` opening title card, and release identity now comes from the checked-in `VERSION` plus `BUILD_NUMBER` files.
 
@@ -31,7 +31,7 @@ What is partially implemented:
 - Stage 4 export controls are in place, but some advanced choices are still constrained by renderer/backend reality.
 - Progress reporting exists and is materially better than before, but the longest HDR jobs still need a more polished ETA/cancellation experience.
 - Resumable HDR execution exists for large jobs, but the UX around recovery remains technical.
-- The public GitHub repository now exists, but the first push is intentionally paused until disposable experimental `tmp/` history is cleaned out of the local repo.
+- The public GitHub repository and release automation are in place, but the first remote release run still needs to prove itself on GitHub.
 
 What is not implemented yet:
 - Final S4 completion and sign-off.
@@ -60,7 +60,7 @@ Important operational risks:
 - The app is safest when treated as local-only and single-user; it is not designed around shared/networked coordination.
 
 Recommended next priorities:
-- Finish the pre-push history cleanup, push `main` to GitHub, and verify the first remote `build.yml` and `release.yml` runs end-to-end.
+- Verify the first remote `build.yml` and `release.yml` runs end-to-end for `1.2.0`, then fix any CI-only packaging drift without disturbing render behavior.
 - Manually smoke-test several real exports and confirm the randomized collage-family openers stay readable and free of hollow photo-box artifacts.
 - Re-tune export defaults and bitrate targets using real-world 4K60 HDR examples.
 - Improve progress/cancel/resume UX for long-running FFmpeg/HDR jobs.
