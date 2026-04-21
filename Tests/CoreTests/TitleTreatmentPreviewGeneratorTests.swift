@@ -101,6 +101,7 @@ final class TitleTreatmentPreviewGeneratorTests: XCTestCase {
     }
 
     func testPreviewGeneratorWritesFullArtifactSetForClassicExplorer() async throws {
+        try requireFFmpegProbeBinary()
         let sourceFolderURL = try makeFixtureSourceFolder(imageCount: 6)
         let outputRootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("TitleTreatmentPreviewGeneratorTests-output-root-\(UUID().uuidString)", isDirectory: true)
@@ -150,6 +151,7 @@ final class TitleTreatmentPreviewGeneratorTests: XCTestCase {
     }
 
     func testPreviewGeneratorWritesFullArtifactSetForCurrentCollageFamily() async throws {
+        try requireFFmpegProbeBinary()
         let sourceFolderURL = try makeFixtureSourceFolder(imageCount: 10)
         let outputRootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("TitleTreatmentPreviewGeneratorTests-family-output-root-\(UUID().uuidString)", isDirectory: true)
@@ -202,6 +204,7 @@ final class TitleTreatmentPreviewGeneratorTests: XCTestCase {
     }
 
     func testPreviewGeneratorSupportsFullHDCurrentCollageFixture() async throws {
+        try requireFFmpegProbeBinary()
         let sourceFolderURL = try makeFixtureSourceFolder(imageCount: 6)
         let outputRootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("TitleTreatmentPreviewGeneratorTests-fullhd-output-root-\(UUID().uuidString)", isDirectory: true)
@@ -279,6 +282,14 @@ final class TitleTreatmentPreviewGeneratorTests: XCTestCase {
             try FileManager.default.removeItem(at: imageURL)
         }
         return folderURL
+    }
+
+    private func requireFFmpegProbeBinary() throws {
+        do {
+            _ = try FFmpegBinaryResolver().resolveProbeBinary(mode: .autoSystemThenBundled)
+        } catch {
+            throw XCTSkip("Skipping FFmpeg-dependent preview test because no ffmpeg/ffprobe binary pair is available: \(error)")
+        }
     }
 
     private func makeFixtureImage(index: Int) throws -> URL {
