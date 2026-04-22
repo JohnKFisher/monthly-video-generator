@@ -68,11 +68,42 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
         statusHandler: (@MainActor @Sendable (String) -> Void)? = nil,
         systemFFmpegFallbackHandler: SystemFFmpegFallbackHandler? = nil
     ) async throws -> RenderResult {
+        try await render(
+            timeline: timeline,
+            style: style,
+            exportProfile: exportProfile,
+            outputTarget: outputTarget,
+            plexTVMetadata: plexTVMetadata,
+            chapters: chapters,
+            photoMaterializer: photoMaterializer,
+            writeDiagnosticsLog: writeDiagnosticsLog,
+            progressHandler: progressHandler,
+            statusHandler: statusHandler,
+            systemFFmpegFallbackHandler: systemFFmpegFallbackHandler,
+            executionOptions: .default
+        )
+    }
+
+    func render(
+        timeline: Timeline,
+        style: StyleProfile,
+        exportProfile: ExportProfile,
+        outputTarget: OutputTarget,
+        plexTVMetadata: PlexTVMetadata?,
+        chapters: [RenderChapter],
+        photoMaterializer: PhotoAssetMaterializing?,
+        writeDiagnosticsLog: Bool,
+        progressHandler: (@MainActor @Sendable (Double) -> Void)? = nil,
+        statusHandler: (@MainActor @Sendable (String) -> Void)? = nil,
+        systemFFmpegFallbackHandler: SystemFFmpegFallbackHandler? = nil,
+        executionOptions: RenderExecutionOptions
+    ) async throws -> RenderResult {
         guard !timeline.segments.isEmpty else {
             throw RenderError.noRenderableMedia
         }
 
         let diagnostics = RenderDiagnostics()
+        let renderStartedAt = Date()
         var liveDiagnosticsLogURL: URL?
         var resolvedFrameRate = 30
         var renderSize = CGSize.zero
@@ -182,7 +213,8 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                 exportProfile: exportProfile,
                 embeddedMetadata: plexTVMetadata?.embedded,
                 chapters: resolvedChapters,
-                chapterMetadataURL: nil
+                chapterMetadataURL: nil,
+                executionOptions: executionOptions
             )
 
             let binaryResolution: FFmpegBinaryResolution
@@ -243,7 +275,8 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                     exportProfile: exportProfile,
                     embeddedMetadata: plexTVMetadata?.embedded,
                     chapters: resolvedChapters,
-                    chapterMetadataURL: chapterMetadataURL
+                    chapterMetadataURL: chapterMetadataURL,
+                    executionOptions: executionOptions
                 )
                 guard let progressiveExecutionPlan = ffmpegProgressivePipelineBuilder.makeExecutionPlan(
                     for: ffmpegPlan,
@@ -303,7 +336,8 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                     exportProfile: exportProfile,
                     embeddedMetadata: plexTVMetadata?.embedded,
                     chapters: resolvedChapters,
-                    chapterMetadataURL: chapterMetadataURL
+                    chapterMetadataURL: chapterMetadataURL,
+                    executionOptions: executionOptions
                 )
                 renderedOutputURL = candidateOutputURL
                 diagnostics.add("Resolved output URL: \(candidateOutputURL.path)")
@@ -333,6 +367,17 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
             return diagnostics.measurePhase(.diagnosticsFinalization) {
                 diagnostics.add("Render completed successfully")
                 cleanupTemporaryFiles(&temporaryURLs, diagnostics: diagnostics)
+                let outputURL = renderedOutputURL ?? candidateOutputURL
+                let commandSummaries = diagnostics.commandSummariesSnapshot().map { summary in
+                    RenderCommandSummary(
+                        stageLabel: summary.stageLabel,
+                        renderIntent: summary.renderIntent,
+                        encoder: summary.encoder,
+                        elapsedSeconds: summary.elapsedSeconds,
+                        outputFileSizeBytes: summary.finalOutputSizeBytes
+                    )
+                }
+                let outputFileSizeBytes = currentFileSizeBytes(at: outputURL).flatMap(int64Value(for:))
                 let diagnosticsLogURL: URL?
                 if writeDiagnosticsLog {
                     diagnosticsLogURL = persistDiagnosticsReport(
@@ -344,7 +389,7 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                     diagnosticsLogURL = nil
                 }
                 return RenderResult(
-                    outputURL: renderedOutputURL ?? candidateOutputURL,
+                    outputURL: outputURL,
                     diagnosticsLogURL: diagnosticsLogURL,
                     backendSummary: binaryResolution.backendSummary(
                         codec: exportProfile.videoCodec,
@@ -360,6 +405,11 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                         width: Int(renderSize.width.rounded()),
                         height: Int(renderSize.height.rounded()),
                         frameRate: resolvedFrameRate
+                    ),
+                    executionDetails: RenderExecutionDetails(
+                        elapsedSeconds: Date().timeIntervalSince(renderStartedAt),
+                        outputFileSizeBytes: outputFileSizeBytes,
+                        commandSummaries: commandSummaries
                     )
                 )
             }
@@ -456,7 +506,8 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
         exportProfile: ExportProfile,
         embeddedMetadata: EmbeddedOutputMetadata?,
         chapters: [RenderChapter],
-        chapterMetadataURL: URL?
+        chapterMetadataURL: URL?,
+        executionOptions: RenderExecutionOptions
     ) -> FFmpegRenderPlan {
         let ffmpegClips = clips.map {
             FFmpegRenderClip(
@@ -488,6 +539,7 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                 dynamicRange: exportProfile.dynamicRange,
                 videoCodec: exportProfile.videoCodec
             ),
+            finalHEVCTuningOverride: executionOptions.finalHEVCTuningOverride,
             embeddedMetadata: embeddedMetadata,
             chapters: chapters,
             chapterMetadataURL: chapterMetadataURL,
@@ -971,6 +1023,29 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
         } catch {
             diagnostics.add("Persistent artifact cleanup skipped for \(url.path): \(describe(error))")
         }
+    }
+
+    private func currentFileSizeBytes(at url: URL) -> UInt64? {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return nil
+        }
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path) else {
+            return nil
+        }
+        if let size = attributes[.size] as? NSNumber {
+            return size.uint64Value
+        }
+        if let size = attributes[.size] as? Int {
+            return UInt64(max(size, 0))
+        }
+        return nil
+    }
+
+    private func int64Value(for value: UInt64) -> Int64? {
+        guard value <= UInt64(Int64.max) else {
+            return nil
+        }
+        return Int64(value)
     }
 
     private func pauseProgressiveRenderIfRequested(
@@ -2642,6 +2717,13 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
             lock.lock()
             ffmpegCommandSummaries.append(summary)
             lock.unlock()
+        }
+
+        func commandSummariesSnapshot() -> [FFmpegHDRRenderer.CommandExecutionStats] {
+            lock.lock()
+            let snapshot = ffmpegCommandSummaries
+            lock.unlock()
+            return snapshot
         }
 
         func renderReport(outcome: String, error: Error?) -> String {

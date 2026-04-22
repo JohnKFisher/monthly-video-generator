@@ -238,6 +238,57 @@ final class FFmpegProgressivePipelineTests: XCTestCase {
         )
     }
 
+    func testFinalHDRDeliveryUsesDefaultLibx265TuningWithoutOverride() throws {
+        let commandBuilder = FFmpegCommandBuilder()
+        let command = try commandBuilder.buildCommand(
+            plan: makeHDRPlan(clipCount: 4, clipDuration: 4.0, transitionDuration: 0.75),
+            resolution: makeCapableResolution()
+        )
+        let joined = command.arguments.joined(separator: " ")
+
+        XCTAssertTrue(joined.contains("-preset medium"))
+        XCTAssertTrue(joined.contains("-crf 17"))
+    }
+
+    func testBakeoffOverrideOnlyChangesFinalSoftwareHEVCCommands() throws {
+        let builder = FFmpegHDRProgressivePipelineBuilder()
+        let commandBuilder = FFmpegCommandBuilder()
+        let plan = FFmpegRenderPlan(
+            clips: makeHDRPlan(clipCount: 22, clipDuration: 4.0, transitionDuration: 0.75).clips,
+            transitionDurationSeconds: 0.75,
+            endFadeToBlackDurationSeconds: 1.5,
+            outputURL: URL(fileURLWithPath: "/tmp/final.mp4"),
+            renderSize: CGSize(width: 3840, height: 2160),
+            frameRate: 60,
+            audioLayout: .stereo,
+            bitrateMode: .balanced,
+            container: .mp4,
+            videoCodec: .hevc,
+            dynamicRange: .hdr,
+            hdrHEVCEncoderMode: .automatic,
+            finalHEVCTuningOverride: FinalHEVCTuningOverride(preset: "slow", crf: 18),
+            renderIntent: .finalDelivery
+        )
+
+        let executionPlan = try XCTUnwrap(makeExecutionPlan(builder: builder, plan: plan))
+        let presentationCommand = try commandBuilder.buildCommand(
+            plan: try XCTUnwrap(executionPlan.presentationPlans.first),
+            resolution: makeSoftwareOnlyResolution()
+        )
+        let batchCommand = try commandBuilder.buildCommand(
+            plan: try XCTUnwrap(executionPlan.batchPlans.first?.plan),
+            resolution: makeSoftwareOnlyResolution()
+        )
+
+        let presentationJoined = presentationCommand.arguments.joined(separator: " ")
+        let batchJoined = batchCommand.arguments.joined(separator: " ")
+
+        XCTAssertTrue(presentationJoined.contains("-preset medium"))
+        XCTAssertFalse(presentationJoined.contains("-crf 18"))
+        XCTAssertTrue(batchJoined.contains("-preset slow"))
+        XCTAssertTrue(batchJoined.contains("-crf 18"))
+    }
+
     private func makeExecutionPlan(
         builder: FFmpegHDRProgressivePipelineBuilder,
         plan: FFmpegRenderPlan
@@ -303,6 +354,30 @@ final class FFmpegProgressivePipelineTests: XCTestCase {
                 hasH264VideoToolbox: true,
                 hasLibx265: true,
                 hasHEVCVideoToolbox: true
+            ),
+            systemCapabilities: nil,
+            bundledCapabilities: nil,
+            fallbackReason: nil
+        )
+    }
+
+    private func makeSoftwareOnlyResolution() -> FFmpegBinaryResolution {
+        FFmpegBinaryResolution(
+            selectedBinary: FFmpegBinary(
+                ffmpegURL: URL(fileURLWithPath: "/tmp/ffmpeg"),
+                ffprobeURL: URL(fileURLWithPath: "/tmp/ffprobe"),
+                source: .system
+            ),
+            selectedCapabilities: FFmpegCapabilities(
+                versionDescription: "system",
+                hasZscale: true,
+                hasTonemap: true,
+                hasXfade: true,
+                hasAcrossfade: true,
+                hasLibx264: true,
+                hasH264VideoToolbox: true,
+                hasLibx265: true,
+                hasHEVCVideoToolbox: false
             ),
             systemCapabilities: nil,
             bundledCapabilities: nil,

@@ -259,6 +259,129 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.outputFilename, expectedOutputName(monthYear: MonthYear(month: 7, year: 2025)))
     }
 
+    func testOutputDirectoryDefaultsFromShellPreferencesAndPersistsAcrossLaunches() throws {
+        let preferencesStore = makePreferencesStore()
+        let outputDirectory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: outputDirectory) }
+
+        let initialShellPreferences = AppShellPreferencesStore(userDefaults: preferencesStore)
+        initialShellPreferences.setDefaultOutputDirectory(outputDirectory)
+
+        let initialViewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            preferencesStore: preferencesStore,
+            shellPreferences: initialShellPreferences
+        )
+
+        XCTAssertEqual(initialViewModel.outputDirectoryURL, outputDirectory)
+
+        let restoredViewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            preferencesStore: preferencesStore,
+            shellPreferences: AppShellPreferencesStore(userDefaults: preferencesStore)
+        )
+
+        XCTAssertEqual(restoredViewModel.outputDirectoryURL, outputDirectory)
+    }
+
+    func testMissingPersistedOutputDirectoryFallsBackToMoviesDefault() throws {
+        let preferencesStore = makePreferencesStore()
+        let outputDirectory = makeTemporaryDirectory()
+
+        let initialShellPreferences = AppShellPreferencesStore(userDefaults: preferencesStore)
+        initialShellPreferences.setDefaultOutputDirectory(outputDirectory)
+
+        try FileManager.default.removeItem(at: outputDirectory)
+
+        let restoredShellPreferences = AppShellPreferencesStore(userDefaults: preferencesStore)
+
+        XCTAssertEqual(
+            restoredShellPreferences.defaultOutputDirectoryURL,
+            AppShellPreferencesStore.defaultMoviesDirectory()
+        )
+    }
+
+    func testChooseOutputFolderUpdatesShellPreferences() throws {
+        let preferencesStore = makePreferencesStore()
+        let shellPreferences = AppShellPreferencesStore(userDefaults: preferencesStore)
+        let selectedDirectory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: selectedDirectory) }
+
+        let folderSelector = FolderSelectorSpy(selectedURL: selectedDirectory)
+        let viewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            preferencesStore: preferencesStore,
+            shellPreferences: shellPreferences,
+            folderSelector: folderSelector
+        )
+
+        viewModel.chooseOutputFolder()
+
+        XCTAssertEqual(viewModel.outputDirectoryURL, selectedDirectory)
+        XCTAssertEqual(shellPreferences.defaultOutputDirectoryURL, selectedDirectory)
+        XCTAssertEqual(folderSelector.invocations.count, 1)
+        XCTAssertEqual(folderSelector.invocations.first?.title, "Select Output Folder")
+    }
+
+    func testCommandAvailabilityReflectsRenderAndExportState() {
+        let viewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            preferencesStore: makePreferencesStore()
+        )
+
+        XCTAssertTrue(viewModel.canStartRender)
+        XCTAssertTrue(viewModel.canChooseInputFolder)
+        XCTAssertTrue(viewModel.canChooseOutputFolder)
+        XCTAssertFalse(viewModel.canRevealLastRenderedOutput)
+
+        viewModel.lastOutputPath = "/tmp/final-export.mov"
+        XCTAssertTrue(viewModel.canRevealLastRenderedOutput)
+
+        viewModel.isRendering = true
+        XCTAssertFalse(viewModel.canStartRender)
+        XCTAssertFalse(viewModel.canRunHEVCBakeoff)
+        XCTAssertFalse(viewModel.canChooseInputFolder)
+        XCTAssertFalse(viewModel.canChooseOutputFolder)
+    }
+
+    func testRunHEVCBakeoffCompletesAndSurfacesReviewIndex() async throws {
+        let bundleRoot = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: bundleRoot) }
+
+        let summary = HEVCBakeoffCompletionSummary(
+            albumTitle: "Test Export",
+            bundleRootURL: bundleRoot,
+            manifestURL: bundleRoot.appendingPathComponent("manifest.json"),
+            indexURL: bundleRoot.appendingPathComponent("index.html"),
+            candidates: []
+        )
+        let runner = HEVCBakeoffRunnerSpy(summary: summary)
+        let viewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            preferencesStore: makePreferencesStore(),
+            hevcBakeoffRunner: runner
+        )
+
+        viewModel.runHEVCBakeoff()
+
+        await waitUntil(message: "Timed out waiting for HEVC bakeoff to finish.") {
+            runner.runCallCount == 1 && !viewModel.isRendering
+        }
+
+        XCTAssertEqual(viewModel.renderCompleteAlertTitle, "Bakeoff Complete")
+        XCTAssertTrue(viewModel.showRenderCompleteAlert)
+        XCTAssertEqual(viewModel.lastOutputPath, summary.indexURL.path)
+        XCTAssertEqual(
+            viewModel.renderCompleteAlertMessage,
+            """
+            Comparison bundle: \(summary.bundleRootURL.path)
+
+            Review index: \(summary.indexURL.path)
+            """
+        )
+        XCTAssertTrue(viewModel.statusMessage.contains(summary.bundleRootURL.path))
+    }
+
     func testShowTitlePersistsAcrossLaunchesAndResetRestoresDefault() {
         let preferencesStore = makePreferencesStore()
         let initialViewModel = makeViewModel(
@@ -1499,6 +1622,10 @@ final class MainWindowViewModelTests: XCTestCase {
         coordinator: RenderCoordinating,
         photoDiscovery: any PhotoLibraryDiscovering = PhotoLibraryDiscoveringSpy(),
         preferencesStore: UserDefaults,
+        shellPreferences: AppShellPreferencesStore? = nil,
+        folderSelector: any FolderSelecting = OpenPanelFolderSelector(),
+        workspaceCoordinator: any FileWorkspaceOpening = AppKitWorkspaceCoordinator(),
+        hevcBakeoffRunner: any HEVCBakeoffRunning = HEVCBakeoffRunnerSpy(),
         exportProvenanceIdentity: OutputProvenanceAppIdentity = AppMetadata.exportProvenanceIdentity,
         calendar: Calendar = .current,
         nowProvider: @escaping () -> Date = Date.init
@@ -1507,6 +1634,10 @@ final class MainWindowViewModelTests: XCTestCase {
             coordinator: coordinator,
             photoDiscovery: photoDiscovery,
             preferencesStore: preferencesStore,
+            shellPreferences: shellPreferences,
+            folderSelector: folderSelector,
+            workspaceCoordinator: workspaceCoordinator,
+            hevcBakeoffRunner: hevcBakeoffRunner,
             filenameGenerator: PlexTVFilenameGenerator(),
             exportProvenanceIdentity: exportProvenanceIdentity,
             calendar: calendar,
@@ -1684,6 +1815,40 @@ private final class PhotoLibraryDiscoveringSpy: PhotoLibraryDiscovering, @unchec
 }
 
 @MainActor
+private final class HEVCBakeoffRunnerSpy: HEVCBakeoffRunning, @unchecked Sendable {
+    var summary: HEVCBakeoffCompletionSummary
+    var error: Error?
+    private(set) var runCallCount: Int = 0
+
+    init(
+        summary: HEVCBakeoffCompletionSummary = HEVCBakeoffCompletionSummary(
+            albumTitle: "Test Export",
+            bundleRootURL: URL(fileURLWithPath: "/tmp/hevc-bakeoff"),
+            manifestURL: URL(fileURLWithPath: "/tmp/hevc-bakeoff/manifest.json"),
+            indexURL: URL(fileURLWithPath: "/tmp/hevc-bakeoff/index.html"),
+            candidates: []
+        ),
+        error: Error? = nil
+    ) {
+        self.summary = summary
+        self.error = error
+    }
+
+    func run(
+        statusHandler: HEVCBakeoffStatusHandler,
+        progressHandler: HEVCBakeoffProgressHandler
+    ) async throws -> HEVCBakeoffCompletionSummary {
+        runCallCount += 1
+        statusHandler?("Running HEVC bakeoff")
+        progressHandler?(1.0)
+        if let error {
+            throw error
+        }
+        return summary
+    }
+}
+
+@MainActor
 private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendable {
     let preparation: RenderPreparation
     var failedRenderIndices: Set<Int>
@@ -1740,7 +1905,8 @@ private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendabl
         writeDiagnosticsLog: Bool,
         progressHandler: RenderProgressHandler,
         statusHandler: RenderStatusHandler,
-        systemFFmpegFallbackHandler: SystemFFmpegFallbackHandler?
+        systemFFmpegFallbackHandler: SystemFFmpegFallbackHandler?,
+        executionOptions: RenderExecutionOptions
     ) async throws -> RenderResult {
         let index = renderRequests.count
         renderRequests.append(request)
@@ -1850,5 +2016,31 @@ private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendabl
         case .matchSourceMax:
             return (1920, 1080)
         }
+    }
+}
+
+private final class FolderSelectorSpy: FolderSelecting {
+    struct Invocation {
+        let title: String
+        let prompt: String
+        let initialDirectoryURL: URL?
+    }
+
+    var selectedURL: URL?
+    private(set) var invocations: [Invocation] = []
+
+    init(selectedURL: URL?) {
+        self.selectedURL = selectedURL
+    }
+
+    func chooseFolder(title: String, prompt: String, initialDirectoryURL: URL?) -> URL? {
+        invocations.append(
+            Invocation(
+                title: title,
+                prompt: prompt,
+                initialDirectoryURL: initialDirectoryURL
+            )
+        )
+        return selectedURL
     }
 }

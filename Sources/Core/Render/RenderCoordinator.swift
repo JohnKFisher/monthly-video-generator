@@ -10,7 +10,7 @@ public enum RenderBackendBinarySource: String, Codable, Sendable {
     }
 }
 
-public struct RenderBackendInfo: Equatable, Sendable {
+public struct RenderBackendInfo: Equatable, Codable, Sendable {
     public let binarySource: RenderBackendBinarySource?
     public let encoder: String?
 
@@ -20,7 +20,7 @@ public struct RenderBackendInfo: Equatable, Sendable {
     }
 }
 
-public struct ResolvedRenderVideoInfo: Equatable, Sendable {
+public struct ResolvedRenderVideoInfo: Equatable, Codable, Sendable {
     public let width: Int
     public let height: Int
     public let frameRate: Int
@@ -44,12 +44,27 @@ public struct RenderPreparation: @unchecked Sendable {
     }
 }
 
+package struct RenderCommandSummary: Equatable, Sendable {
+    package let stageLabel: String
+    package let renderIntent: FFmpegRenderIntent
+    package let encoder: String
+    package let elapsedSeconds: TimeInterval
+    package let outputFileSizeBytes: UInt64
+}
+
+package struct RenderExecutionDetails: Equatable, Sendable {
+    package let elapsedSeconds: TimeInterval
+    package let outputFileSizeBytes: Int64?
+    package let commandSummaries: [RenderCommandSummary]
+}
+
 public struct RenderResult: Sendable {
     public let outputURL: URL
     public let diagnosticsLogURL: URL?
     public let backendSummary: String?
     public let backendInfo: RenderBackendInfo?
     public let resolvedVideoInfo: ResolvedRenderVideoInfo?
+    package let executionDetails: RenderExecutionDetails?
 
     public init(
         outputURL: URL,
@@ -63,6 +78,23 @@ public struct RenderResult: Sendable {
         self.backendSummary = backendSummary
         self.backendInfo = backendInfo
         self.resolvedVideoInfo = resolvedVideoInfo
+        self.executionDetails = nil
+    }
+
+    package init(
+        outputURL: URL,
+        diagnosticsLogURL: URL?,
+        backendSummary: String?,
+        backendInfo: RenderBackendInfo? = nil,
+        resolvedVideoInfo: ResolvedRenderVideoInfo? = nil,
+        executionDetails: RenderExecutionDetails?
+    ) {
+        self.outputURL = outputURL
+        self.diagnosticsLogURL = diagnosticsLogURL
+        self.backendSummary = backendSummary
+        self.backendInfo = backendInfo
+        self.resolvedVideoInfo = resolvedVideoInfo
+        self.executionDetails = executionDetails
     }
 }
 
@@ -125,6 +157,28 @@ public final class RenderCoordinator: @unchecked Sendable {
         statusHandler: (@MainActor @Sendable (String) -> Void)? = nil,
         systemFFmpegFallbackHandler: SystemFFmpegFallbackHandler? = nil
     ) async throws -> RenderResult {
+        try await render(
+            preparation: preparation,
+            request: request,
+            photoMaterializer: photoMaterializer,
+            writeDiagnosticsLog: writeDiagnosticsLog,
+            progressHandler: progressHandler,
+            statusHandler: statusHandler,
+            systemFFmpegFallbackHandler: systemFFmpegFallbackHandler,
+            executionOptions: .default
+        )
+    }
+
+    package func render(
+        preparation: RenderPreparation,
+        request: RenderRequest,
+        photoMaterializer: PhotoAssetMaterializing?,
+        writeDiagnosticsLog: Bool,
+        progressHandler: (@MainActor @Sendable (Double) -> Void)?,
+        statusHandler: (@MainActor @Sendable (String) -> Void)? = nil,
+        systemFFmpegFallbackHandler: SystemFFmpegFallbackHandler? = nil,
+        executionOptions: RenderExecutionOptions
+    ) async throws -> RenderResult {
         try await renderEngine.render(
             timeline: preparation.timeline,
             style: request.style,
@@ -136,7 +190,8 @@ public final class RenderCoordinator: @unchecked Sendable {
             writeDiagnosticsLog: writeDiagnosticsLog,
             progressHandler: progressHandler,
             statusHandler: statusHandler,
-            systemFFmpegFallbackHandler: systemFFmpegFallbackHandler
+            systemFFmpegFallbackHandler: systemFFmpegFallbackHandler,
+            executionOptions: executionOptions
         )
     }
 

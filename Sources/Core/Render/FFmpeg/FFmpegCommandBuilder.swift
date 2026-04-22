@@ -350,7 +350,7 @@ struct FFmpegCommandBuilder {
             case .h264VideoToolbox:
                 return "intent=finalDelivery encoder=h264_videotoolbox bitrate=\(estimatedBitrate(for: plan.renderSize, frameRate: plan.frameRate, bitrateMode: plan.bitrateMode, encoder: encoder, dynamicRange: plan.dynamicRange)) audio=aac"
             case .libx265:
-                var summary = "intent=finalDelivery encoder=libx265 preset=\(x265Preset(for: plan.bitrateMode)) crf=\(x265CRF(for: plan.bitrateMode, dynamicRange: plan.dynamicRange))"
+                var summary = "intent=finalDelivery encoder=libx265 preset=\(effectiveX265Preset(for: plan)) crf=\(effectiveX265CRF(for: plan))"
                 summary += " x265_profile=\(plan.x265ThreadProfile.rawValue)"
                 if let threadLimit = ffmpegThreadLimit(for: encoder, plan: plan) {
                     let frameThreads = x265FrameThreadLimit(for: plan)
@@ -376,7 +376,7 @@ struct FFmpegCommandBuilder {
         case .finalBatch:
             switch encoder {
             case .libx265:
-                var summary = "intent=finalBatch encoder=libx265 preset=\(x265Preset(for: plan.bitrateMode)) crf=\(x265CRF(for: plan.bitrateMode, dynamicRange: plan.dynamicRange)) audio=pcm_s16le"
+                var summary = "intent=finalBatch encoder=libx265 preset=\(effectiveX265Preset(for: plan)) crf=\(effectiveX265CRF(for: plan)) audio=pcm_s16le"
                 summary += " x265_profile=\(plan.x265ThreadProfile.rawValue)"
                 if let threadLimit = ffmpegThreadLimit(for: encoder, plan: plan) {
                     let frameThreads = x265FrameThreadLimit(for: plan)
@@ -671,6 +671,13 @@ struct FFmpegCommandBuilder {
         }
     }
 
+    private func effectiveX265Preset(for plan: FFmpegRenderPlan) -> String {
+        guard let override = finalHEVCTuningOverride(for: plan) else {
+            return x265Preset(for: plan.bitrateMode)
+        }
+        return override.preset
+    }
+
     private func x264Preset(for mode: BitrateMode) -> String {
         switch mode {
         case .qualityFirst:
@@ -708,6 +715,22 @@ struct FFmpegCommandBuilder {
         case (.sdr, .sizeFirst):
             return "23"
         }
+    }
+
+    private func effectiveX265CRF(for plan: FFmpegRenderPlan) -> String {
+        guard let override = finalHEVCTuningOverride(for: plan) else {
+            return x265CRF(for: plan.bitrateMode, dynamicRange: plan.dynamicRange)
+        }
+        return String(override.crf)
+    }
+
+    private func finalHEVCTuningOverride(for plan: FFmpegRenderPlan) -> FinalHEVCTuningOverride? {
+        guard plan.dynamicRange == .hdr,
+              plan.videoCodec == .hevc,
+              plan.renderIntent == .finalDelivery || plan.renderIntent == .finalBatch else {
+            return nil
+        }
+        return plan.finalHEVCTuningOverride
     }
 
     private func estimatedBitrate(
@@ -787,8 +810,8 @@ struct FFmpegCommandBuilder {
         case .libx265:
             var values = [
                 "-c:v", "libx265",
-                "-preset", x265Preset(for: plan.bitrateMode),
-                "-crf", x265CRF(for: plan.bitrateMode, dynamicRange: plan.dynamicRange),
+                "-preset", effectiveX265Preset(for: plan),
+                "-crf", effectiveX265CRF(for: plan),
                 "-pix_fmt", plan.dynamicRange == .hdr ? "yuv420p10le" : "yuv420p",
                 "-tag:v", "hvc1"
             ]
@@ -1087,6 +1110,7 @@ private extension FFmpegRenderPlan {
             dynamicRange: dynamicRange,
             hdrHEVCEncoderMode: hdrHEVCEncoderMode,
             x265ThreadProfile: x265ThreadProfile,
+            finalHEVCTuningOverride: finalHEVCTuningOverride,
             embeddedMetadata: embeddedMetadata,
             chapters: chapters,
             chapterMetadataURL: chapterMetadataURL,

@@ -15,6 +15,12 @@ public struct RunReport: Equatable {
     public let openingTitleTreatment: String?
     public let openingTitleVariationSeed: UInt64?
     public let openingTitlePreviewCount: Int?
+    public let outputFileSizeBytes: Int64?
+    public let renderElapsedSeconds: Double?
+    public let renderBackendInfo: RenderBackendInfo?
+    public let resolvedVideoInfo: ResolvedRenderVideoInfo?
+    public let finalHEVCTuningPreset: String?
+    public let finalHEVCTuningCRF: Int?
 
     public init(
         generatedAt: Date,
@@ -30,7 +36,13 @@ public struct RunReport: Equatable {
         chapters: [RenderChapter],
         openingTitleTreatment: String? = nil,
         openingTitleVariationSeed: UInt64? = nil,
-        openingTitlePreviewCount: Int? = nil
+        openingTitlePreviewCount: Int? = nil,
+        outputFileSizeBytes: Int64? = nil,
+        renderElapsedSeconds: Double? = nil,
+        renderBackendInfo: RenderBackendInfo? = nil,
+        resolvedVideoInfo: ResolvedRenderVideoInfo? = nil,
+        finalHEVCTuningPreset: String? = nil,
+        finalHEVCTuningCRF: Int? = nil
     ) {
         self.generatedAt = generatedAt
         self.sourceDescription = sourceDescription
@@ -46,6 +58,12 @@ public struct RunReport: Equatable {
         self.openingTitleTreatment = openingTitleTreatment
         self.openingTitleVariationSeed = openingTitleVariationSeed
         self.openingTitlePreviewCount = openingTitlePreviewCount
+        self.outputFileSizeBytes = outputFileSizeBytes
+        self.renderElapsedSeconds = renderElapsedSeconds
+        self.renderBackendInfo = renderBackendInfo
+        self.resolvedVideoInfo = resolvedVideoInfo
+        self.finalHEVCTuningPreset = finalHEVCTuningPreset
+        self.finalHEVCTuningCRF = finalHEVCTuningCRF
     }
 }
 
@@ -58,6 +76,12 @@ public final class RunReportService {
         outputURL: URL,
         diagnosticsLogURL: URL?,
         renderBackendSummary: String?,
+        outputFileSizeBytes: Int64? = nil,
+        renderElapsedSeconds: Double? = nil,
+        renderBackendInfo: RenderBackendInfo? = nil,
+        resolvedVideoInfo: ResolvedRenderVideoInfo? = nil,
+        finalHEVCTuningPreset: String? = nil,
+        finalHEVCTuningCRF: Int? = nil,
         generatedAt: Date = Date()
     ) -> RunReport {
         let sourceDescription: String
@@ -89,7 +113,13 @@ public final class RunReportService {
             chapters: request.chapters,
             openingTitleTreatment: openingTitleDescriptor?.treatment.rawValue,
             openingTitleVariationSeed: openingTitleDescriptor?.variationSeed,
-            openingTitlePreviewCount: openingTitleDescriptor?.previewItems.count
+            openingTitlePreviewCount: openingTitleDescriptor?.previewItems.count,
+            outputFileSizeBytes: outputFileSizeBytes,
+            renderElapsedSeconds: renderElapsedSeconds,
+            renderBackendInfo: renderBackendInfo,
+            resolvedVideoInfo: resolvedVideoInfo,
+            finalHEVCTuningPreset: finalHEVCTuningPreset,
+            finalHEVCTuningCRF: finalHEVCTuningCRF
         )
     }
 
@@ -116,6 +146,12 @@ public final class RunReportService {
         let openingTitleTreatment: String?
         let openingTitleVariationSeed: UInt64?
         let openingTitlePreviewCount: Int?
+        let outputFileSizeBytes: Int64?
+        let renderElapsedSeconds: Double?
+        let renderBackendInfo: RenderBackendInfo?
+        let resolvedVideoInfo: ResolvedRenderVideoInfo?
+        let finalHEVCTuningPreset: String?
+        let finalHEVCTuningCRF: Int?
 
         init(report: RunReport) {
             generatedAt = report.generatedAt
@@ -132,6 +168,12 @@ public final class RunReportService {
             openingTitleTreatment = report.openingTitleTreatment
             openingTitleVariationSeed = report.openingTitleVariationSeed
             openingTitlePreviewCount = report.openingTitlePreviewCount
+            outputFileSizeBytes = report.outputFileSizeBytes
+            renderElapsedSeconds = report.renderElapsedSeconds
+            renderBackendInfo = report.renderBackendInfo
+            resolvedVideoInfo = report.resolvedVideoInfo
+            finalHEVCTuningPreset = report.finalHEVCTuningPreset
+            finalHEVCTuningCRF = report.finalHEVCTuningCRF
         }
     }
 }
