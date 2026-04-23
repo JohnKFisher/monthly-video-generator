@@ -84,7 +84,7 @@ This creates a versioned DMG in `dist/`, named from the checked-in `VERSION` and
 
 ## GitHub Release Flow
 
-This repo is being prepared for first-time GitHub publication with two GitHub Actions workflows:
+This repo uses two GitHub Actions workflows for shipping from committed source:
 
 - `build.yml` builds, tests, packages, and uploads macOS artifacts from committed source.
 - `release.yml` treats a committed version/build bump on `main` as the publish signal and creates or updates the matching GitHub Release.

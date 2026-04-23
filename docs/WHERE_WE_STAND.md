@@ -1,11 +1,11 @@
 # Monthly Video Generator
 
 Current version/build:
-- `1.4.0`
-- Latest checked-in build identity: `209`
+- `2.0.0`
+- Latest checked-in build identity: `210`
 
 Current overall status:
-- The app is usable now for local folder-based and Apple Photos-based monthly video exports, and this `1.2.0` release is the first intended public GitHub-published cut after the repo cleanup and CI/release alignment work.
+- The app is usable now for local folder-based and Apple Photos-based monthly video exports, and this `2.0.0` release keeps the protected HDR/export path intact while removing the in-app HEVC bakeoff feature and its unpromoted experimental plumbing.
 - Opening title cards now randomize per export job across the corrected `21`-variant collage-family set, including queued exports and full-year runs.
 - Fresh/reset defaults now use a `10.0s` opening title card, and release identity now comes from the checked-in `VERSION` plus `BUILD_NUMBER` files.
 - The default Plex/Infuse HDR export now uses the bakeoff-approved `crf21-fast` final `libx265` tuning.
@@ -29,7 +29,7 @@ What is working now:
 - Stable still-image handling through Apple/AVFoundation materialized intermediate clips.
 - HDR still-photo gain-map decoding that respects source-image orientation for affected rotated/oriented HDR photos.
 - Shared packaging scripts for `.app` and `.dmg` creation from committed source.
-- First-pass GitHub Actions build/release workflows checked in for the repo's first public GitHub initialization.
+- GitHub Actions build/release workflows that build and publish from committed `VERSION` and `BUILD_NUMBER` changes on `main`.
 - Optional About-style repository link plumbing exists in the app, but stays hidden until a repo URL is configured.
 
 What is partially implemented:
@@ -37,7 +37,7 @@ What is partially implemented:
 - Progress reporting exists and is materially better than before, but the longest HDR jobs still need a more polished ETA/cancellation experience.
 - Resumable HDR execution exists for large jobs, but the UX around recovery remains technical.
 - The window shell is materially more Mac-native now, but it is still a single primary window backed by one large render-oriented view model; more shell/controller splitting remains possible if future work justifies the churn.
-- The public GitHub repository and release automation are in place, but the first remote release run exposed a GitHub runner toolchain mismatch and still needs a clean passing rerun on `macos-15`.
+- The audit-only progressive presentation timing data is in place, but no still/title fast path earned promotion and the protected export path remains intentionally conservative.
 
 What is not implemented yet:
 - Final S4 completion and sign-off.
@@ -67,13 +67,12 @@ Important operational risks:
 - The app is safest when treated as local-only and single-user; it is not designed around shared/networked coordination.
 
 Recommended next priorities:
-- Verify the rerun `build.yml` and `release.yml` runs end-to-end for `1.2.0` on `macos-15`, then fix any remaining CI-only packaging drift without disturbing render behavior.
 - Manually smoke-test the new Mac shell: menus, keyboard shortcuts, Settings, About window, output-folder persistence, and the split main-window workflow with real exports.
 - Manually smoke-test several real exports and confirm the randomized collage-family openers stay readable and free of hollow photo-box artifacts.
 - Spot-check the new `crf21-fast` default on a few real-world 4K60 HDR exports before pushing to even higher compression.
 - Improve progress/cancel/resume UX for long-running FFmpeg/HDR jobs.
 - Add a lightweight inspectable UI hint or export-summary note for which title treatment was chosen, if that would help review iteration.
-- Use the new progressive presentation audit data to decide whether any still/title-path optimization is worth a bakeoff-only prototype before touching protected defaults.
+- Keep future performance work tightly scoped to output-identical candidates unless a new bakeoff path is explicitly approved again.
 
 Most recent durable known-good anchor:
 - `known-good/20260320-v1-1-0-collage-titles`
