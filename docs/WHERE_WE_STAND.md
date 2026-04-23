@@ -22,7 +22,6 @@ What is working now:
 - Deterministic collage preview selection that fills up to `10` visible photo slots and only repeats images when the source batch is too small.
 - Safe output naming, JSON run reports, and optional diagnostics logs.
 - Audit-only progressive HDR presentation timing rollups now record `title` / `still` / `video` clip counts plus capture-date-overlay state in diagnostics and structured run reports.
-- An explicit in-app `Run HEVC Bakeoff` command that renders the `Test Export` Photos album into a timestamped comparison bundle with `index.html`, `manifest.json`, per-candidate videos, diagnostics, run reports, and extracted still frames for human review.
 - FFmpeg-based final exports with bundled FFmpeg support.
 - HDR `HEVC` output for the current Plex/Infuse/Apple TV 4K workflow.
 - Default Plex/Infuse HDR exports now ship with the `crf21-fast` final software HEVC tuning that won the local bakeoff review.
@@ -37,7 +36,6 @@ What is partially implemented:
 - Stage 4 export controls are in place, but some advanced choices are still constrained by renderer/backend reality.
 - Progress reporting exists and is materially better than before, but the longest HDR jobs still need a more polished ETA/cancellation experience.
 - Resumable HDR execution exists for large jobs, but the UX around recovery remains technical.
-- The new bakeoff flow exists in the app, but it still depends on Photos authorization being granted to the app process and on manual review of the generated comparison bundle afterward.
 - The window shell is materially more Mac-native now, but it is still a single primary window backed by one large render-oriented view model; more shell/controller splitting remains possible if future work justifies the churn.
 - The public GitHub repository and release automation are in place, but the first remote release run exposed a GitHub runner toolchain mismatch and still needs a clean passing rerun on `macos-15`.
 
@@ -51,7 +49,6 @@ Known limitations and trust warnings:
 - The stable still-image path is intentionally conservative and can be slow because it materializes stills into intermediate `.mov` clips before final assembly.
 - Large HDR `HEVC` exports can take a long time and use substantial CPU, memory, disk, and temporary storage.
 - Apple Photos exports depend on Photos permissions and can be affected by PhotoKit/iCloud materialization latency.
-- The HEVC bakeoff command is intentionally manual and local-only; it does not auto-pick a winner or change export defaults.
 - The bundled `third_party/ffmpeg/bin/ffprobe` artifact is currently stale on this machine; auto-mode probe resolution now rejects unusable bundled probes and falls back to a working system probe for diagnostics/reporting instead of trusting the broken binary.
 - The new `crf21-fast` HDR default was approved from local bakeoff artifacts, but especially demanding motion-heavy material may still justify future spot checks before pushing compression further.
 - The chosen randomized opening-title treatment is recorded in the JSON run report, not surfaced in the main UI yet.
@@ -72,7 +69,6 @@ Important operational risks:
 Recommended next priorities:
 - Verify the rerun `build.yml` and `release.yml` runs end-to-end for `1.2.0` on `macos-15`, then fix any remaining CI-only packaging drift without disturbing render behavior.
 - Manually smoke-test the new Mac shell: menus, keyboard shortcuts, Settings, About window, output-folder persistence, and the split main-window workflow with real exports.
-- If future file-size or speed pressure returns, run the in-app `Run HEVC Bakeoff` command against `Test Export` before changing final HEVC defaults again.
 - Manually smoke-test several real exports and confirm the randomized collage-family openers stay readable and free of hollow photo-box artifacts.
 - Spot-check the new `crf21-fast` default on a few real-world 4K60 HDR exports before pushing to even higher compression.
 - Improve progress/cancel/resume UX for long-running FFmpeg/HDR jobs.

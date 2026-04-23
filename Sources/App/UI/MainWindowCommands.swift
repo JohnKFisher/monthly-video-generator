@@ -60,13 +60,6 @@ struct MainWindowCommands: Commands {
 
             Divider()
 
-            Button("Run HEVC Bakeoff") {
-                viewModel.runHEVCBakeoff()
-            }
-            .disabled(!viewModel.canRunHEVCBakeoff)
-
-            Divider()
-
             Button(viewModel.addCurrentSettingsToQueueLabel) {
                 viewModel.addCurrentSettingsToQueue()
             }

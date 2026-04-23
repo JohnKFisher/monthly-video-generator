@@ -678,14 +678,11 @@ struct FFmpegCommandBuilder {
     }
 
     private func effectiveX265Preset(for plan: FFmpegRenderPlan) -> String {
-        guard let override = finalHEVCTuningOverride(for: plan) else {
-            return x265Preset(
-                for: plan.bitrateMode,
-                dynamicRange: plan.dynamicRange,
-                x265ThreadProfile: plan.x265ThreadProfile
-            )
-        }
-        return override.preset
+        x265Preset(
+            for: plan.bitrateMode,
+            dynamicRange: plan.dynamicRange,
+            x265ThreadProfile: plan.x265ThreadProfile
+        )
     }
 
     private func x264Preset(for mode: BitrateMode) -> String {
@@ -728,19 +725,7 @@ struct FFmpegCommandBuilder {
     }
 
     private func effectiveX265CRF(for plan: FFmpegRenderPlan) -> String {
-        guard let override = finalHEVCTuningOverride(for: plan) else {
-            return x265CRF(for: plan.bitrateMode, dynamicRange: plan.dynamicRange)
-        }
-        return String(override.crf)
-    }
-
-    private func finalHEVCTuningOverride(for plan: FFmpegRenderPlan) -> FinalHEVCTuningOverride? {
-        guard plan.dynamicRange == .hdr,
-              plan.videoCodec == .hevc,
-              plan.renderIntent == .finalDelivery || plan.renderIntent == .finalBatch else {
-            return nil
-        }
-        return plan.finalHEVCTuningOverride
+        x265CRF(for: plan.bitrateMode, dynamicRange: plan.dynamicRange)
     }
 
     private func estimatedBitrate(
@@ -1120,7 +1105,6 @@ private extension FFmpegRenderPlan {
             dynamicRange: dynamicRange,
             hdrHEVCEncoderMode: hdrHEVCEncoderMode,
             x265ThreadProfile: x265ThreadProfile,
-            finalHEVCTuningOverride: finalHEVCTuningOverride,
             embeddedMetadata: embeddedMetadata,
             chapters: chapters,
             chapterMetadataURL: chapterMetadataURL,

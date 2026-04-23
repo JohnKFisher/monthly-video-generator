@@ -277,45 +277,6 @@ final class FFmpegProgressivePipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("-crf 21"))
     }
 
-    func testBakeoffOverrideOnlyChangesFinalSoftwareHEVCCommands() throws {
-        let builder = FFmpegHDRProgressivePipelineBuilder()
-        let commandBuilder = FFmpegCommandBuilder()
-        let plan = FFmpegRenderPlan(
-            clips: makeHDRPlan(clipCount: 22, clipDuration: 4.0, transitionDuration: 0.75).clips,
-            transitionDurationSeconds: 0.75,
-            endFadeToBlackDurationSeconds: 1.5,
-            outputURL: URL(fileURLWithPath: "/tmp/final.mp4"),
-            renderSize: CGSize(width: 3840, height: 2160),
-            frameRate: 60,
-            audioLayout: .stereo,
-            bitrateMode: .balanced,
-            container: .mp4,
-            videoCodec: .hevc,
-            dynamicRange: .hdr,
-            hdrHEVCEncoderMode: .automatic,
-            finalHEVCTuningOverride: FinalHEVCTuningOverride(preset: "slow", crf: 18),
-            renderIntent: .finalDelivery
-        )
-
-        let executionPlan = try XCTUnwrap(makeExecutionPlan(builder: builder, plan: plan))
-        let presentationCommand = try commandBuilder.buildCommand(
-            plan: try XCTUnwrap(executionPlan.presentationPlans.first),
-            resolution: makeSoftwareOnlyResolution()
-        )
-        let batchCommand = try commandBuilder.buildCommand(
-            plan: try XCTUnwrap(executionPlan.batchPlans.first?.plan),
-            resolution: makeSoftwareOnlyResolution()
-        )
-
-        let presentationJoined = presentationCommand.arguments.joined(separator: " ")
-        let batchJoined = batchCommand.arguments.joined(separator: " ")
-
-        XCTAssertTrue(presentationJoined.contains("-preset medium"))
-        XCTAssertFalse(presentationJoined.contains("-crf 18"))
-        XCTAssertTrue(batchJoined.contains("-preset slow"))
-        XCTAssertTrue(batchJoined.contains("-crf 18"))
-    }
-
     private func makeExecutionPlan(
         builder: FFmpegHDRProgressivePipelineBuilder,
         plan: FFmpegRenderPlan

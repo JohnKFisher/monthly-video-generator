@@ -543,7 +543,6 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                 dynamicRange: exportProfile.dynamicRange,
                 videoCodec: exportProfile.videoCodec
             ),
-            finalHEVCTuningOverride: executionOptions.finalHEVCTuningOverride,
             embeddedMetadata: embeddedMetadata,
             chapters: chapters,
             chapterMetadataURL: chapterMetadataURL,

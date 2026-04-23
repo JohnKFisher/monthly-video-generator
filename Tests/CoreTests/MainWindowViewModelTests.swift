@@ -339,47 +339,8 @@ final class MainWindowViewModelTests: XCTestCase {
 
         viewModel.isRendering = true
         XCTAssertFalse(viewModel.canStartRender)
-        XCTAssertFalse(viewModel.canRunHEVCBakeoff)
         XCTAssertFalse(viewModel.canChooseInputFolder)
         XCTAssertFalse(viewModel.canChooseOutputFolder)
-    }
-
-    func testRunHEVCBakeoffCompletesAndSurfacesReviewIndex() async throws {
-        let bundleRoot = makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: bundleRoot) }
-
-        let summary = HEVCBakeoffCompletionSummary(
-            albumTitle: "Test Export",
-            bundleRootURL: bundleRoot,
-            manifestURL: bundleRoot.appendingPathComponent("manifest.json"),
-            indexURL: bundleRoot.appendingPathComponent("index.html"),
-            candidates: []
-        )
-        let runner = HEVCBakeoffRunnerSpy(summary: summary)
-        let viewModel = makeViewModel(
-            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
-            preferencesStore: makePreferencesStore(),
-            hevcBakeoffRunner: runner
-        )
-
-        viewModel.runHEVCBakeoff()
-
-        await waitUntil(message: "Timed out waiting for HEVC bakeoff to finish.") {
-            runner.runCallCount == 1 && !viewModel.isRendering
-        }
-
-        XCTAssertEqual(viewModel.renderCompleteAlertTitle, "Bakeoff Complete")
-        XCTAssertTrue(viewModel.showRenderCompleteAlert)
-        XCTAssertEqual(viewModel.lastOutputPath, summary.indexURL.path)
-        XCTAssertEqual(
-            viewModel.renderCompleteAlertMessage,
-            """
-            Comparison bundle: \(summary.bundleRootURL.path)
-
-            Review index: \(summary.indexURL.path)
-            """
-        )
-        XCTAssertTrue(viewModel.statusMessage.contains(summary.bundleRootURL.path))
     }
 
     func testShowTitlePersistsAcrossLaunchesAndResetRestoresDefault() {
@@ -1625,7 +1586,6 @@ final class MainWindowViewModelTests: XCTestCase {
         shellPreferences: AppShellPreferencesStore? = nil,
         folderSelector: any FolderSelecting = OpenPanelFolderSelector(),
         workspaceCoordinator: any FileWorkspaceOpening = AppKitWorkspaceCoordinator(),
-        hevcBakeoffRunner: any HEVCBakeoffRunning = HEVCBakeoffRunnerSpy(),
         exportProvenanceIdentity: OutputProvenanceAppIdentity = AppMetadata.exportProvenanceIdentity,
         calendar: Calendar = .current,
         nowProvider: @escaping () -> Date = Date.init
@@ -1637,7 +1597,6 @@ final class MainWindowViewModelTests: XCTestCase {
             shellPreferences: shellPreferences,
             folderSelector: folderSelector,
             workspaceCoordinator: workspaceCoordinator,
-            hevcBakeoffRunner: hevcBakeoffRunner,
             filenameGenerator: PlexTVFilenameGenerator(),
             exportProvenanceIdentity: exportProvenanceIdentity,
             calendar: calendar,
@@ -1811,40 +1770,6 @@ private final class PhotoLibraryDiscoveringSpy: PhotoLibraryDiscovering, @unchec
 
     func discoverAlbums() async throws -> [PhotoAlbumSummary] {
         []
-    }
-}
-
-@MainActor
-private final class HEVCBakeoffRunnerSpy: HEVCBakeoffRunning, @unchecked Sendable {
-    var summary: HEVCBakeoffCompletionSummary
-    var error: Error?
-    private(set) var runCallCount: Int = 0
-
-    init(
-        summary: HEVCBakeoffCompletionSummary = HEVCBakeoffCompletionSummary(
-            albumTitle: "Test Export",
-            bundleRootURL: URL(fileURLWithPath: "/tmp/hevc-bakeoff"),
-            manifestURL: URL(fileURLWithPath: "/tmp/hevc-bakeoff/manifest.json"),
-            indexURL: URL(fileURLWithPath: "/tmp/hevc-bakeoff/index.html"),
-            candidates: []
-        ),
-        error: Error? = nil
-    ) {
-        self.summary = summary
-        self.error = error
-    }
-
-    func run(
-        statusHandler: HEVCBakeoffStatusHandler,
-        progressHandler: HEVCBakeoffProgressHandler
-    ) async throws -> HEVCBakeoffCompletionSummary {
-        runCallCount += 1
-        statusHandler?("Running HEVC bakeoff")
-        progressHandler?(1.0)
-        if let error {
-            throw error
-        }
-        return summary
     }
 }
 

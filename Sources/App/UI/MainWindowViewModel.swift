@@ -394,7 +394,6 @@ final class MainWindowViewModel: ObservableObject {
     @Published var lastDiagnosticsPath: String = ""
     @Published var lastBackendSummary: String = ""
     @Published private(set) var lastSingleRenderCompletionSummary: RenderCompletionSummary?
-    @Published private(set) var lastBakeoffCompletionMessage: String?
     @Published private(set) var queuedRenderJobs: [QueuedRenderJob] = []
     @Published private(set) var isQueueRunning: Bool = false
     @Published private(set) var isPreparingYearQueue: Bool = false
@@ -416,7 +415,6 @@ final class MainWindowViewModel: ObservableObject {
     private let shellPreferences: AppShellPreferencesStore
     private let folderSelector: any FolderSelecting
     private let workspaceCoordinator: any FileWorkspaceOpening
-    private let hevcBakeoffRunner: any HEVCBakeoffRunning
     private let filenameGenerator: PlexTVFilenameGenerator
     private let exportProvenanceIdentity: OutputProvenanceAppIdentity
     private let calendar: Calendar
@@ -456,7 +454,6 @@ final class MainWindowViewModel: ObservableObject {
         shellPreferences: AppShellPreferencesStore? = nil,
         folderSelector: any FolderSelecting = OpenPanelFolderSelector(),
         workspaceCoordinator: any FileWorkspaceOpening = AppKitWorkspaceCoordinator(),
-        hevcBakeoffRunner: any HEVCBakeoffRunning = HEVCBakeoffRunner(),
         filenameGenerator: PlexTVFilenameGenerator = PlexTVFilenameGenerator(),
         exportProvenanceIdentity: OutputProvenanceAppIdentity = AppMetadata.exportProvenanceIdentity,
         calendar: Calendar = .current,
@@ -473,7 +470,6 @@ final class MainWindowViewModel: ObservableObject {
         self.shellPreferences = resolvedShellPreferences
         self.folderSelector = folderSelector
         self.workspaceCoordinator = workspaceCoordinator
-        self.hevcBakeoffRunner = hevcBakeoffRunner
         self.filenameGenerator = filenameGenerator
         self.exportProvenanceIdentity = exportProvenanceIdentity
         self.calendar = calendar
@@ -666,10 +662,6 @@ final class MainWindowViewModel: ObservableObject {
         !isRendering && !isPreparingYearQueue && renderTask == nil
     }
 
-    var canRunHEVCBakeoff: Bool {
-        !isRendering && !isPreparingYearQueue && renderTask == nil
-    }
-
     var canChooseInputFolder: Bool {
         !isRendering && !isPreparingYearQueue
     }
@@ -753,9 +745,6 @@ final class MainWindowViewModel: ObservableObject {
         }
         if let lastSingleRenderCompletionSummary {
             return lastSingleRenderCompletionSummary.alertMessage
-        }
-        if let lastBakeoffCompletionMessage {
-            return lastBakeoffCompletionMessage
         }
         if lastOutputPath.isEmpty {
             return "The slideshow was exported successfully."
@@ -884,32 +873,6 @@ final class MainWindowViewModel: ObservableObject {
                 snapshot: snapshot,
                 completionSummarySnapshot: completionSummarySnapshot
             )
-            await MainActor.run {
-                self.renderTask = nil
-            }
-        }
-    }
-
-    func runHEVCBakeoff() {
-        guard canRunHEVCBakeoff else { return }
-
-        renderTask = Task {
-            beginRenderRun(status: "Preparing HEVC bakeoff...", initialProgress: 0.01)
-
-            do {
-                let summary = try await hevcBakeoffRunner.run(
-                    statusHandler: { [weak self] status in
-                        self?.applyReportedRenderStatus(status)
-                    },
-                    progressHandler: { [weak self] reportedProgress in
-                        self?.applyReportedRenderProgress(reportedProgress)
-                    }
-                )
-                finishSuccessfulBakeoffRun(summary)
-            } catch {
-                finishFailedRun(error)
-            }
-
             await MainActor.run {
                 self.renderTask = nil
             }
@@ -1724,7 +1687,6 @@ final class MainWindowViewModel: ObservableObject {
         lastDiagnosticsPath = ""
         lastBackendSummary = ""
         lastSingleRenderCompletionSummary = nil
-        lastBakeoffCompletionMessage = nil
         lastQueueCompletionSummary = nil
         renderCompleteAlertTitle = "Render Complete"
         showRenderCompleteAlert = false
@@ -1749,7 +1711,6 @@ final class MainWindowViewModel: ObservableObject {
         pendingSystemFFmpegFallbackConfirmation = nil
         systemFFmpegFallbackContinuation = nil
         hasApprovedSystemFFmpegFallbackForCurrentRun = false
-        lastBakeoffCompletionMessage = nil
         isPauseRequested = false
         isQueueRunning = false
         isCancellingRender = false
@@ -1762,7 +1723,6 @@ final class MainWindowViewModel: ObservableObject {
         progress = 0
         statusMessage = formatErrorForDisplay(error)
         lastSingleRenderCompletionSummary = nil
-        lastBakeoffCompletionMessage = nil
         lastQueueCompletionSummary = nil
         renderCompleteAlertTitle = "Render Complete"
         showRenderCompleteAlert = false
@@ -1781,7 +1741,6 @@ final class MainWindowViewModel: ObservableObject {
         progress = 0
         statusMessage = message
         lastSingleRenderCompletionSummary = nil
-        lastBakeoffCompletionMessage = nil
         lastQueueCompletionSummary = nil
         renderCompleteAlertTitle = "Render Complete"
         showRenderCompleteAlert = false
@@ -1807,7 +1766,6 @@ final class MainWindowViewModel: ObservableObject {
         )
         lastQueueCompletionSummary = summary
         lastSingleRenderCompletionSummary = nil
-        lastBakeoffCompletionMessage = nil
         renderCompleteAlertTitle = "Queue Complete"
         statusMessage = "Queue complete"
         if !lastDiagnosticsPath.isEmpty {
@@ -1832,7 +1790,6 @@ final class MainWindowViewModel: ObservableObject {
         progress = 0
         statusMessage = "Queue paused after failure\n\(failedJob.sourceSummary)\n\(errorMessage)"
         lastSingleRenderCompletionSummary = nil
-        lastBakeoffCompletionMessage = nil
         lastQueueCompletionSummary = nil
         renderCompleteAlertTitle = "Queue Complete"
         showRenderCompleteAlert = false
@@ -1851,7 +1808,6 @@ final class MainWindowViewModel: ObservableObject {
         progress = 0
         statusMessage = "Queue paused by user\n\(pausedJob.sourceSummary)\n\(message)"
         lastSingleRenderCompletionSummary = nil
-        lastBakeoffCompletionMessage = nil
         lastQueueCompletionSummary = nil
         renderCompleteAlertTitle = "Queue Complete"
         showRenderCompleteAlert = false
@@ -1870,7 +1826,6 @@ final class MainWindowViewModel: ObservableObject {
         progress = 0
         statusMessage = "Render cancelled"
         lastSingleRenderCompletionSummary = nil
-        lastBakeoffCompletionMessage = nil
         lastQueueCompletionSummary = nil
         renderCompleteAlertTitle = "Queue Complete"
         showRenderCompleteAlert = false
@@ -2119,32 +2074,6 @@ final class MainWindowViewModel: ObservableObject {
             },
             executionOptions: executionOptions
         )
-    }
-
-    private func finishSuccessfulBakeoffRun(_ summary: HEVCBakeoffCompletionSummary) {
-        renderStatusDetail = nil
-        queueRunContext = nil
-        progress = 1.0
-        lastOutputPath = summary.indexURL.path
-        lastDiagnosticsPath = ""
-        lastBackendSummary = ""
-        lastSingleRenderCompletionSummary = nil
-        lastQueueCompletionSummary = nil
-        lastBakeoffCompletionMessage = """
-        Comparison bundle: \(summary.bundleRootURL.path)
-
-        Review index: \(summary.indexURL.path)
-        """
-        statusMessage = "HEVC bakeoff complete\nBundle: \(summary.bundleRootURL.path)"
-        renderCompleteAlertTitle = "Bakeoff Complete"
-        showRenderCompleteAlert = true
-        pendingSystemFFmpegFallbackConfirmation = nil
-        systemFFmpegFallbackContinuation = nil
-        hasApprovedSystemFFmpegFallbackForCurrentRun = false
-        isPauseRequested = false
-        isQueueRunning = false
-        isCancellingRender = false
-        isRendering = false
     }
 
     private func recordSuccessfulRender(
