@@ -34,8 +34,9 @@ final class RenderPipelineTests: XCTestCase {
         XCTAssertEqual(profile.dynamicRange, .hdr)
         XCTAssertEqual(profile.hdrFFmpegBinaryMode, .bundledPreferred)
         XCTAssertEqual(profile.hdrHEVCEncoderMode, .automatic)
+        XCTAssertEqual(profile.hdrX265Speed, .fast)
         XCTAssertEqual(profile.audioLayout, .smart)
-        XCTAssertEqual(profile.bitrateMode, .balanced)
+        XCTAssertEqual(profile.bitrateMode, .sizeFirst)
     }
 
     func testExportProfileManagerDefaultProfileUsesPlexInfuseAppleTV4KDefault() {

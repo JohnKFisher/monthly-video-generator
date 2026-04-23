@@ -32,6 +32,45 @@ public struct ResolvedRenderVideoInfo: Equatable, Codable, Sendable {
     }
 }
 
+public enum RenderClipKind: String, Codable, Sendable {
+    case title
+    case still
+    case video
+}
+
+package struct RenderClipAuditInfo: Equatable, Hashable, Sendable {
+    package let kind: RenderClipKind
+    package let hasCaptureDateOverlay: Bool
+}
+
+package struct RenderClipAuditBreakdown: Equatable, Sendable {
+    package let kind: RenderClipKind
+    package let hasCaptureDateOverlay: Bool
+    package let clipCount: Int
+}
+
+public struct ProgressivePresentationTimingAudit: Equatable, Codable, Sendable {
+    public let clipKind: RenderClipKind
+    public let hasCaptureDateOverlay: Bool
+    public let commandCount: Int
+    public let clipCount: Int
+    public let totalElapsedSeconds: Double
+
+    public init(
+        clipKind: RenderClipKind,
+        hasCaptureDateOverlay: Bool,
+        commandCount: Int,
+        clipCount: Int,
+        totalElapsedSeconds: Double
+    ) {
+        self.clipKind = clipKind
+        self.hasCaptureDateOverlay = hasCaptureDateOverlay
+        self.commandCount = commandCount
+        self.clipCount = clipCount
+        self.totalElapsedSeconds = totalElapsedSeconds
+    }
+}
+
 public struct RenderPreparation: @unchecked Sendable {
     public let items: [MediaItem]
     public let timeline: Timeline
@@ -50,12 +89,14 @@ package struct RenderCommandSummary: Equatable, Sendable {
     package let encoder: String
     package let elapsedSeconds: TimeInterval
     package let outputFileSizeBytes: UInt64
+    package let clipAuditBreakdown: [RenderClipAuditBreakdown]
 }
 
 package struct RenderExecutionDetails: Equatable, Sendable {
     package let elapsedSeconds: TimeInterval
     package let outputFileSizeBytes: Int64?
     package let commandSummaries: [RenderCommandSummary]
+    package let presentationTimingAudits: [ProgressivePresentationTimingAudit]
 }
 
 public struct RenderResult: Sendable {

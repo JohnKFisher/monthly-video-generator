@@ -1,24 +1,32 @@
 import Foundation
 
 struct FFmpegBinaryResolver {
+    private struct ProbeBinaryEvaluation {
+        let binary: FFmpegBinary?
+        let failureReason: String?
+    }
+
     private let probe: FFmpegCapabilityProbe
     private let fileManager: FileManager
     private let systemBinaryOverride: FFmpegBinary?
     private let bundledBinaryOverride: FFmpegBinary?
     private let probeOverride: ((FFmpegBinary) throws -> FFmpegCapabilities)?
+    private let probeBinaryValidator: ((FFmpegBinary) throws -> Void)?
 
     init(
         probe: FFmpegCapabilityProbe = FFmpegCapabilityProbe(),
         fileManager: FileManager = .default,
         systemBinaryOverride: FFmpegBinary? = nil,
         bundledBinaryOverride: FFmpegBinary? = nil,
-        probeOverride: ((FFmpegBinary) throws -> FFmpegCapabilities)? = nil
+        probeOverride: ((FFmpegBinary) throws -> FFmpegCapabilities)? = nil,
+        probeBinaryValidator: ((FFmpegBinary) throws -> Void)? = nil
     ) {
         self.probe = probe
         self.fileManager = fileManager
         self.systemBinaryOverride = systemBinaryOverride
         self.bundledBinaryOverride = bundledBinaryOverride
         self.probeOverride = probeOverride
+        self.probeBinaryValidator = probeBinaryValidator
     }
 
     func resolve(
@@ -64,30 +72,54 @@ struct FFmpegBinaryResolver {
     }
 
     func resolveProbeBinary(mode: HDRFFmpegBinaryMode) throws -> FFmpegBinary {
-        let systemBinary = systemBinaryOverride ?? discoverSystemBinary()
-        let bundledBinary = bundledBinaryOverride ?? discoverBundledBinary()
+        let validateProbeBinary = probeBinaryValidator ?? Self.validateProbeBinary
+        let systemProbe = evaluateProbeBinary(
+            systemBinaryOverride ?? discoverSystemBinary(),
+            validator: validateProbeBinary
+        )
+        let bundledProbe = evaluateProbeBinary(
+            bundledBinaryOverride ?? discoverBundledBinary(),
+            validator: validateProbeBinary
+        )
 
         switch mode {
         case .bundledPreferred:
-            if let bundledBinary {
+            if let bundledBinary = bundledProbe.binary {
                 return bundledBinary
+            }
+            if let systemBinary = systemProbe.binary {
+                return systemBinary
+            }
+            if let failureReason = bundledProbe.failureReason {
+                throw RenderError.exportFailed("Bundled FFmpeg probe binary is present but unusable: \(failureReason)")
             }
             throw RenderError.exportFailed("Bundled FFmpeg probe binary was not found in app resources or third_party/ffmpeg.")
         case .autoSystemThenBundled:
-            if let systemBinary {
+            if let systemBinary = systemProbe.binary {
                 return systemBinary
             }
-            if let bundledBinary {
+            if let bundledBinary = bundledProbe.binary {
                 return bundledBinary
             }
-            throw RenderError.exportFailed("No ffprobe binary was found in PATH/common locations or bundled FFmpeg resources.")
+            let failureDetails = [systemProbe.failureReason, bundledProbe.failureReason]
+                .compactMap { $0 }
+            if failureDetails.isEmpty {
+                throw RenderError.exportFailed("No ffprobe binary was found in PATH/common locations or bundled FFmpeg resources.")
+            }
+            throw RenderError.exportFailed("No usable ffprobe binary pair was found. \(failureDetails.joined(separator: " "))")
         case .systemOnly:
-            guard let systemBinary else {
+            guard let systemBinary = systemProbe.binary else {
+                if let failureReason = systemProbe.failureReason {
+                    throw RenderError.exportFailed("FFmpeg engine is set to System Only, but system ffprobe is present and unusable: \(failureReason)")
+                }
                 throw RenderError.exportFailed("FFmpeg engine is set to System Only, but no system ffprobe was found in PATH/common locations.")
             }
             return systemBinary
         case .bundledOnly:
-            guard let bundledBinary else {
+            guard let bundledBinary = bundledProbe.binary else {
+                if let failureReason = bundledProbe.failureReason {
+                    throw RenderError.exportFailed("FFmpeg engine is set to Bundled Only, but bundled ffprobe is present and unusable: \(failureReason)")
+                }
                 throw RenderError.exportFailed("FFmpeg engine is set to Bundled Only, but bundled ffprobe was not found in app resources or third_party/ffmpeg.")
             }
             return bundledBinary
@@ -353,5 +385,67 @@ struct FFmpegBinaryResolver {
 
     private func isExecutable(_ url: URL) -> Bool {
         fileManager.isExecutableFile(atPath: url.path)
+    }
+
+    private func evaluateProbeBinary(
+        _ binary: FFmpegBinary?,
+        validator: (FFmpegBinary) throws -> Void
+    ) -> ProbeBinaryEvaluation {
+        guard let binary else {
+            return ProbeBinaryEvaluation(binary: nil, failureReason: nil)
+        }
+        do {
+            try validator(binary)
+            return ProbeBinaryEvaluation(binary: binary, failureReason: nil)
+        } catch {
+            return ProbeBinaryEvaluation(
+                binary: nil,
+                failureReason: describeProbeValidationFailure(binary: binary, error: error)
+            )
+        }
+    }
+
+    private func describeProbeValidationFailure(binary: FFmpegBinary, error: Error) -> String {
+        let renderedError: String
+        if case let RenderError.exportFailed(message) = error {
+            renderedError = message
+        } else {
+            renderedError = String(describing: error)
+        }
+        return "\(binary.ffprobeURL.path) failed launch validation. \(renderedError)"
+    }
+
+    private static func validateProbeBinary(_ binary: FFmpegBinary) throws {
+        try validateToolLaunch(toolURL: binary.ffmpegURL, label: "ffmpeg")
+        try validateToolLaunch(toolURL: binary.ffprobeURL, label: "ffprobe")
+    }
+
+    private static func validateToolLaunch(toolURL: URL, label: String) throws {
+        let process = Process()
+        process.executableURL = toolURL
+        process.arguments = ["-version"]
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        do {
+            try process.run()
+        } catch {
+            throw RenderError.exportFailed("\(label) failed to launch: \(error.localizedDescription)")
+        }
+
+        let stdout = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        let stderr = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            let stderrText = String(data: stderr, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let stdoutText = String(data: stdout, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let detail = stderrText?.isEmpty == false ? stderrText : stdoutText
+            throw RenderError.exportFailed("\(label) exited with status \(process.terminationStatus). \(detail ?? "No additional details.")")
+        }
     }
 }

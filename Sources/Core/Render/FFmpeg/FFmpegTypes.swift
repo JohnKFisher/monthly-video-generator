@@ -342,6 +342,7 @@ struct FFmpegRenderClip: Equatable, Sendable {
     let colorInfo: ColorInfo
     let sourceDescription: String
     let captureDateOverlayURL: URL?
+    let auditInfo: RenderClipAuditInfo
 
     init(
         url: URL,
@@ -350,7 +351,8 @@ struct FFmpegRenderClip: Equatable, Sendable {
         hasAudioTrack: Bool,
         colorInfo: ColorInfo,
         sourceDescription: String,
-        captureDateOverlayURL: URL? = nil
+        captureDateOverlayURL: URL? = nil,
+        auditInfo: RenderClipAuditInfo = RenderClipAuditInfo(kind: .video, hasCaptureDateOverlay: false)
     ) {
         self.url = url
         self.durationSeconds = durationSeconds
@@ -359,6 +361,7 @@ struct FFmpegRenderClip: Equatable, Sendable {
         self.colorInfo = colorInfo
         self.sourceDescription = sourceDescription
         self.captureDateOverlayURL = captureDateOverlayURL
+        self.auditInfo = auditInfo
     }
 }
 

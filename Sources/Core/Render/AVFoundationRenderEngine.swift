@@ -374,9 +374,11 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                         renderIntent: summary.renderIntent,
                         encoder: summary.encoder,
                         elapsedSeconds: summary.elapsedSeconds,
-                        outputFileSizeBytes: summary.finalOutputSizeBytes
+                        outputFileSizeBytes: summary.finalOutputSizeBytes,
+                        clipAuditBreakdown: summary.clipAuditBreakdown
                     )
                 }
+                let presentationTimingAudits = aggregatePresentationTimingAudits(from: commandSummaries)
                 let outputFileSizeBytes = currentFileSizeBytes(at: outputURL).flatMap(int64Value(for:))
                 let diagnosticsLogURL: URL?
                 if writeDiagnosticsLog {
@@ -409,7 +411,8 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                     executionDetails: RenderExecutionDetails(
                         elapsedSeconds: Date().timeIntervalSince(renderStartedAt),
                         outputFileSizeBytes: outputFileSizeBytes,
-                        commandSummaries: commandSummaries
+                        commandSummaries: commandSummaries,
+                        presentationTimingAudits: presentationTimingAudits
                     )
                 )
             }
@@ -517,7 +520,8 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                 hasAudioTrack: $0.audioTrack != nil,
                 colorInfo: $0.colorInfo,
                 sourceDescription: $0.sourceDescription,
-                captureDateOverlayURL: $0.captureDateOverlayURL
+                captureDateOverlayURL: $0.captureDateOverlayURL,
+                auditInfo: $0.auditInfo
             )
         }
         let transitionDurationSeconds = max(transitionDuration.seconds, 0)
@@ -889,6 +893,7 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                     requiresHDRToSDRToneMapping: false,
                     hdrToSDRToneMapClips: [],
                     captureDateOverlayCount: 0,
+                    clipAuditBreakdown: [],
                     summaryLine:
                         "FFmpeg concat summary: output=\(executionPlan.concatOutputURL.path), clips=\(executionPlan.batchPlans.count), chapters=0, " +
                         "renderSize=\(Int(finalPlan.renderSize.width.rounded()))x\(Int(finalPlan.renderSize.height.rounded())), frameRate=\(finalPlan.frameRate), " +
@@ -942,6 +947,7 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                 requiresHDRToSDRToneMapping: false,
                 hdrToSDRToneMapClips: [],
                 captureDateOverlayCount: 0,
+                clipAuditBreakdown: [],
                 summaryLine:
                     "FFmpeg packaging summary: output=\(finalPlan.outputURL.path), clips=1, chapters=\(finalPlan.chapters.count), " +
                     "renderSize=\(Int(finalPlan.renderSize.width.rounded()))x\(Int(finalPlan.renderSize.height.rounded())), frameRate=\(finalPlan.frameRate), " +
@@ -1336,6 +1342,7 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                     sourceColorInfo: .unknown,
                     captureDateOverlayText: nil,
                     captureDateOverlayURL: nil,
+                    auditInfo: RenderClipAuditInfo(kind: .title, hasCaptureDateOverlay: false),
                     diagnostics: diagnostics,
                     isTemporary: true,
                     exportDynamicRange: exportDynamicRange,
@@ -1393,7 +1400,8 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                     .clipProbe,
                     detail: "image \(item.filename)"
                 ) {
-                    try await makeClip(
+                    let hasCaptureDateOverlay = captureDateOverlayURL != nil
+                    return try await makeClip(
                         assetURL: imageClipURL,
                         fallbackDuration: segment.duration,
                         includeAudio: false,
@@ -1401,6 +1409,7 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                         sourceColorInfo: sourceColorInfo,
                         captureDateOverlayText: captureDateOverlayText,
                         captureDateOverlayURL: captureDateOverlayURL,
+                        auditInfo: RenderClipAuditInfo(kind: .still, hasCaptureDateOverlay: hasCaptureDateOverlay),
                         diagnostics: diagnostics,
                         isTemporary: true,
                         exportDynamicRange: exportDynamicRange,
@@ -1439,7 +1448,8 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                     .clipProbe,
                     detail: "video \(item.filename)"
                 ) {
-                    try await makeClip(
+                    let hasCaptureDateOverlay = captureDateOverlayURL != nil
+                    return try await makeClip(
                         assetURL: sourceURL,
                         fallbackDuration: segment.duration,
                         includeAudio: true,
@@ -1447,6 +1457,7 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                         sourceColorInfo: item.colorInfo,
                         captureDateOverlayText: captureDateOverlayText,
                         captureDateOverlayURL: captureDateOverlayURL,
+                        auditInfo: RenderClipAuditInfo(kind: .video, hasCaptureDateOverlay: hasCaptureDateOverlay),
                         diagnostics: diagnostics,
                         isTemporary: false,
                         exportDynamicRange: exportDynamicRange,
@@ -1591,6 +1602,7 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
         sourceColorInfo: ColorInfo,
         captureDateOverlayText: String?,
         captureDateOverlayURL: URL?,
+        auditInfo: RenderClipAuditInfo,
         diagnostics: RenderDiagnostics,
         isTemporary: Bool,
         exportDynamicRange: DynamicRange,
@@ -1674,7 +1686,8 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
             includeAudio: includeAudio,
             colorInfo: resolvedColorInfo,
             captureDateOverlayText: captureDateOverlayText,
-            captureDateOverlayURL: captureDateOverlayURL
+            captureDateOverlayURL: captureDateOverlayURL,
+            auditInfo: auditInfo
         )
     }
 
@@ -2314,6 +2327,7 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
         let colorInfo: ColorInfo
         let captureDateOverlayText: String?
         let captureDateOverlayURL: URL?
+        let auditInfo: RenderClipAuditInfo
     }
 
     private func describe(_ error: Error) -> String {
@@ -2419,6 +2433,50 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
             return text
         }
         return "0x" + bytes.map { String(format: "%02X", $0) }.joined()
+    }
+
+    private func aggregatePresentationTimingAudits(
+        from commandSummaries: [RenderCommandSummary]
+    ) -> [ProgressivePresentationTimingAudit] {
+        struct AuditKey: Hashable {
+            let kind: RenderClipKind
+            let hasCaptureDateOverlay: Bool
+        }
+
+        var aggregates: [AuditKey: (commandCount: Int, clipCount: Int, elapsedSeconds: Double)] = [:]
+        for summary in commandSummaries where summary.renderIntent == .presentationIntermediate {
+            for breakdown in summary.clipAuditBreakdown {
+                let key = AuditKey(
+                    kind: breakdown.kind,
+                    hasCaptureDateOverlay: breakdown.hasCaptureDateOverlay
+                )
+                var aggregate = aggregates[key] ?? (0, 0, 0)
+                aggregate.commandCount += 1
+                aggregate.clipCount += breakdown.clipCount
+                aggregate.elapsedSeconds += summary.elapsedSeconds
+                aggregates[key] = aggregate
+            }
+        }
+
+        return aggregates
+            .map { key, aggregate in
+                ProgressivePresentationTimingAudit(
+                    clipKind: key.kind,
+                    hasCaptureDateOverlay: key.hasCaptureDateOverlay,
+                    commandCount: aggregate.commandCount,
+                    clipCount: aggregate.clipCount,
+                    totalElapsedSeconds: aggregate.elapsedSeconds
+                )
+            }
+            .sorted {
+                if $0.totalElapsedSeconds == $1.totalElapsedSeconds {
+                    if $0.clipKind == $1.clipKind {
+                        return $0.hasCaptureDateOverlay && !$1.hasCaptureDateOverlay
+                    }
+                    return $0.clipKind.rawValue < $1.clipKind.rawValue
+                }
+                return $0.totalElapsedSeconds > $1.totalElapsedSeconds
+            }
     }
 
     private func smallestPositiveDuration(_ values: [CMTime?]) -> CMTime? {
@@ -2772,6 +2830,9 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
             reportLines.append("FFmpeg Command Summary")
             reportLines.append(contentsOf: FFmpegHDRRenderer.commandSummaryLines(from: snapshot.ffmpegCommandSummaries))
             reportLines.append("")
+            reportLines.append("Progressive Presentation Clip Audit")
+            reportLines.append(contentsOf: progressivePresentationAuditLines(from: snapshot.ffmpegCommandSummaries))
+            reportLines.append("")
             reportLines.append(contentsOf: snapshot.lines)
             reportLines.append("")
             reportLines.append("end_of_report")
@@ -2832,6 +2893,44 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
             return operations.enumerated().map { index, operation in
                 "- \(index + 1). \(operation.kind.label): \(operation.detail) | elapsed=\(formatSeconds(operation.elapsedSeconds))"
             }
+        }
+
+        private func progressivePresentationAuditLines(
+            from commandStats: [FFmpegHDRRenderer.CommandExecutionStats]
+        ) -> [String] {
+            struct AuditKey: Hashable {
+                let kind: RenderClipKind
+                let hasCaptureDateOverlay: Bool
+            }
+
+            var aggregates: [AuditKey: (commandCount: Int, clipCount: Int, elapsedSeconds: Double)] = [:]
+            for summary in commandStats where summary.renderIntent == .presentationIntermediate {
+                for breakdown in summary.clipAuditBreakdown {
+                    let key = AuditKey(kind: breakdown.kind, hasCaptureDateOverlay: breakdown.hasCaptureDateOverlay)
+                    var aggregate = aggregates[key] ?? (0, 0, 0)
+                    aggregate.commandCount += 1
+                    aggregate.clipCount += breakdown.clipCount
+                    aggregate.elapsedSeconds += summary.elapsedSeconds
+                    aggregates[key] = aggregate
+                }
+            }
+
+            let lines = aggregates
+                .map { key, aggregate in
+                    let overlayLabel = key.hasCaptureDateOverlay ? "overlay" : "plain"
+                    return (
+                        key: key,
+                        line: "- \(key.kind.rawValue) / \(overlayLabel): commands=\(aggregate.commandCount) | clips=\(aggregate.clipCount) | total=\(formatSeconds(aggregate.elapsedSeconds))"
+                    )
+                }
+                .sorted {
+                    if $0.key.kind == $1.key.kind {
+                        return $0.key.hasCaptureDateOverlay && !$1.key.hasCaptureDateOverlay
+                    }
+                    return $0.key.kind.rawValue < $1.key.kind.rawValue
+                }
+                .map(\.line)
+            return lines.isEmpty ? ["- none recorded"] : lines
         }
 
         private func sanitizeHeaderValue(_ value: String) -> String {

@@ -125,13 +125,13 @@ public final class ExportProfileManager {
             case .medium:
                 warnings.append(
                     ExportCompatibilityWarning(
-                        "HDR libx265 speed Medium uses balanced thread caps and is the default setting."
+                        "HDR libx265 speed Medium uses balanced thread caps."
                     )
                 )
             case .fast:
                 warnings.append(
                     ExportCompatibilityWarning(
-                        "HDR libx265 speed Fast increases CPU and memory demand and may change the encoded bitstream even when the visible result looks the same."
+                        "HDR libx265 speed Fast is the default for Plex/Infuse HDR exports, increases CPU and memory demand, and may change the encoded bitstream even when the visible result looks the same."
                     )
                 )
             }

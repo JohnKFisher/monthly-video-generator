@@ -21,6 +21,7 @@ public struct RunReport: Equatable {
     public let resolvedVideoInfo: ResolvedRenderVideoInfo?
     public let finalHEVCTuningPreset: String?
     public let finalHEVCTuningCRF: Int?
+    public let presentationTimingAudits: [ProgressivePresentationTimingAudit]
 
     public init(
         generatedAt: Date,
@@ -42,7 +43,8 @@ public struct RunReport: Equatable {
         renderBackendInfo: RenderBackendInfo? = nil,
         resolvedVideoInfo: ResolvedRenderVideoInfo? = nil,
         finalHEVCTuningPreset: String? = nil,
-        finalHEVCTuningCRF: Int? = nil
+        finalHEVCTuningCRF: Int? = nil,
+        presentationTimingAudits: [ProgressivePresentationTimingAudit] = []
     ) {
         self.generatedAt = generatedAt
         self.sourceDescription = sourceDescription
@@ -64,6 +66,7 @@ public struct RunReport: Equatable {
         self.resolvedVideoInfo = resolvedVideoInfo
         self.finalHEVCTuningPreset = finalHEVCTuningPreset
         self.finalHEVCTuningCRF = finalHEVCTuningCRF
+        self.presentationTimingAudits = presentationTimingAudits
     }
 }
 
@@ -82,6 +85,7 @@ public final class RunReportService {
         resolvedVideoInfo: ResolvedRenderVideoInfo? = nil,
         finalHEVCTuningPreset: String? = nil,
         finalHEVCTuningCRF: Int? = nil,
+        presentationTimingAudits: [ProgressivePresentationTimingAudit] = [],
         generatedAt: Date = Date()
     ) -> RunReport {
         let sourceDescription: String
@@ -119,7 +123,8 @@ public final class RunReportService {
             renderBackendInfo: renderBackendInfo,
             resolvedVideoInfo: resolvedVideoInfo,
             finalHEVCTuningPreset: finalHEVCTuningPreset,
-            finalHEVCTuningCRF: finalHEVCTuningCRF
+            finalHEVCTuningCRF: finalHEVCTuningCRF,
+            presentationTimingAudits: presentationTimingAudits
         )
     }
 
@@ -152,6 +157,7 @@ public final class RunReportService {
         let resolvedVideoInfo: ResolvedRenderVideoInfo?
         let finalHEVCTuningPreset: String?
         let finalHEVCTuningCRF: Int?
+        let presentationTimingAudits: [ProgressivePresentationTimingAudit]
 
         init(report: RunReport) {
             generatedAt = report.generatedAt
@@ -174,6 +180,7 @@ public final class RunReportService {
             resolvedVideoInfo = report.resolvedVideoInfo
             finalHEVCTuningPreset = report.finalHEVCTuningPreset
             finalHEVCTuningCRF = report.finalHEVCTuningCRF
+            presentationTimingAudits = report.presentationTimingAudits
         }
     }
 }

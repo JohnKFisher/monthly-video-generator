@@ -660,20 +660,30 @@ struct FFmpegCommandBuilder {
         "\(bitrate / 1_000)k"
     }
 
-    private func x265Preset(for mode: BitrateMode) -> String {
-        switch mode {
-        case .qualityFirst:
+    private func x265Preset(
+        for mode: BitrateMode,
+        dynamicRange: DynamicRange,
+        x265ThreadProfile: FFmpegX265ThreadProfile
+    ) -> String {
+        switch (dynamicRange, mode, x265ThreadProfile) {
+        case (.hdr, .sizeFirst, .shortJobBoost):
+            return "fast"
+        case (_, .qualityFirst, _):
             return "slow"
-        case .balanced:
+        case (_, .balanced, _):
             return "medium"
-        case .sizeFirst:
+        case (_, .sizeFirst, _):
             return "faster"
         }
     }
 
     private func effectiveX265Preset(for plan: FFmpegRenderPlan) -> String {
         guard let override = finalHEVCTuningOverride(for: plan) else {
-            return x265Preset(for: plan.bitrateMode)
+            return x265Preset(
+                for: plan.bitrateMode,
+                dynamicRange: plan.dynamicRange,
+                x265ThreadProfile: plan.x265ThreadProfile
+            )
         }
         return override.preset
     }

@@ -34,29 +34,84 @@ struct HEVCBakeoffCompletionSummary: Sendable {
 
 enum HEVCBakeoffError: LocalizedError {
     case unauthorized(PHAuthorizationStatus)
-    case albumResolutionFailed(matchCount: Int)
+    case albumResolutionFailed(title: String, matchCount: Int)
     case missingDiagnosticsLog(String)
     case missingExecutionDetails(String)
     case missingOutputFileSize(String)
+    case duplicateRequestedCandidateLabel(String)
+    case unknownCandidateLabel(String)
+    case missingReuseManifest(URL)
+    case duplicateReuseManifestCandidateLabel(String)
+    case missingReusableCandidate(String)
+    case missingReusableCandidateDirectory(String)
 
     var errorDescription: String? {
         switch self {
         case let .unauthorized(status):
             return "Photos access is not authorized for the app (status: \(status.rawValue))."
-        case let .albumResolutionFailed(matchCount):
-            return "Expected exactly one Photos album matching Test Export, found \(matchCount)."
+        case let .albumResolutionFailed(title, matchCount):
+            return "Expected exactly one Photos album matching \(title), found \(matchCount)."
         case let .missingDiagnosticsLog(label):
             return "Bakeoff candidate \(label) finished without a diagnostics log."
         case let .missingExecutionDetails(label):
             return "Bakeoff candidate \(label) finished without execution details."
         case let .missingOutputFileSize(label):
             return "Bakeoff candidate \(label) finished without a measurable final file size."
+        case let .duplicateRequestedCandidateLabel(label):
+            return "Bakeoff configuration requested candidate \(label) more than once."
+        case let .unknownCandidateLabel(label):
+            return "Bakeoff configuration requested unknown candidate \(label)."
+        case let .missingReuseManifest(url):
+            return "Bakeoff reuse manifest is missing at \(url.path)."
+        case let .duplicateReuseManifestCandidateLabel(label):
+            return "Reuse manifest contains duplicate candidate label \(label)."
+        case let .missingReusableCandidate(label):
+            return "Reuse manifest does not include candidate \(label)."
+        case let .missingReusableCandidateDirectory(label):
+            return "Reusable candidate directory for \(label) is missing."
         }
     }
 }
 
 @MainActor
 struct HEVCBakeoffRunner {
+    struct BakeoffConfiguration {
+        let albumTitle: String
+        let requestedCandidateLabels: [String]
+        let reuseBundleURL: URL?
+
+        static func fullComparison(albumTitle: String = "Test Export") -> BakeoffConfiguration {
+            BakeoffConfiguration(
+                albumTitle: albumTitle,
+                requestedCandidateLabels: [
+                    "baseline-crf17-medium",
+                    "candidate-crf18-medium",
+                    "candidate-crf19-medium",
+                    "candidate-crf20-medium",
+                    "candidate-crf21-medium",
+                    "candidate-crf20-fast",
+                    "candidate-crf21-fast"
+                ],
+                reuseBundleURL: nil
+            )
+        }
+
+        static func targetedCRF21FastFollowUp(
+            albumTitle: String = "Test Export",
+            reuseBundleURL: URL
+        ) -> BakeoffConfiguration {
+            BakeoffConfiguration(
+                albumTitle: albumTitle,
+                requestedCandidateLabels: [
+                    "baseline-crf17-medium",
+                    "candidate-crf20-fast",
+                    "candidate-crf21-fast"
+                ],
+                reuseBundleURL: reuseBundleURL
+            )
+        }
+    }
+
     private struct CandidateDefinition {
         let label: String
         let preset: String
@@ -95,6 +150,7 @@ struct HEVCBakeoffRunner {
         let progressiveIntermediateUsage: ProgressiveIntermediateUsage
         let intermediateEncoders: [String]
         let commandSummaries: [CandidateCommandSummaryManifest]
+        let presentationTimingAudits: [ProgressivePresentationTimingAudit]
     }
 
     private struct BakeoffManifest: Codable {
@@ -106,6 +162,11 @@ struct HEVCBakeoffRunner {
         let candidates: [CandidateManifestEntry]
     }
 
+    private struct ReuseManifestContext {
+        let bundleRootURL: URL
+        let candidatesByLabel: [String: CandidateManifestEntry]
+    }
+
     private let normalizedFramePositions: [Double] = [0.05, 0.20, 0.50, 0.80, 0.95]
     private let reportService: RunReportService
     private let exportProfileManager: ExportProfileManager
@@ -113,6 +174,7 @@ struct HEVCBakeoffRunner {
     private let photoDiscovery: PhotoKitMediaDiscoveryService
     private let photoMaterializer: PhotoKitAssetMaterializer
     private let fileManager: FileManager
+    private let configuration: BakeoffConfiguration
 
     init(
         reportService: RunReportService = RunReportService(),
@@ -120,7 +182,8 @@ struct HEVCBakeoffRunner {
         coordinator: RenderCoordinator = RenderCoordinator(),
         photoDiscovery: PhotoKitMediaDiscoveryService = PhotoKitMediaDiscoveryService(),
         photoMaterializer: PhotoKitAssetMaterializer = PhotoKitAssetMaterializer(),
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        configuration: BakeoffConfiguration? = nil
     ) {
         self.reportService = reportService
         self.exportProfileManager = exportProfileManager
@@ -128,6 +191,7 @@ struct HEVCBakeoffRunner {
         self.photoDiscovery = photoDiscovery
         self.photoMaterializer = photoMaterializer
         self.fileManager = fileManager
+        self.configuration = configuration ?? Self.defaultConfiguration(fileManager: fileManager)
     }
 
     func run(
@@ -139,15 +203,15 @@ struct HEVCBakeoffRunner {
             throw HEVCBakeoffError.unauthorized(authorizationStatus)
         }
 
-        statusHandler?("Resolving Photos album Test Export...")
+        statusHandler?("Resolving Photos album \(configuration.albumTitle)...")
         progressHandler?(0.01)
 
         let albums = try await photoDiscovery.discoverAlbums()
         let matchingAlbums = albums.filter {
-            $0.title.compare("Test Export", options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+            $0.title.compare(configuration.albumTitle, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
         }
         guard matchingAlbums.count == 1, let album = matchingAlbums.first else {
-            throw HEVCBakeoffError.albumResolutionFailed(matchCount: matchingAlbums.count)
+            throw HEVCBakeoffError.albumResolutionFailed(title: configuration.albumTitle, matchCount: matchingAlbums.count)
         }
 
         let items = try await photoDiscovery.discover(albumLocalIdentifier: album.localIdentifier)
@@ -166,134 +230,44 @@ struct HEVCBakeoffRunner {
 
         var candidateEntries: [CandidateManifestEntry] = []
         var candidateArtifacts: [HEVCBakeoffCompletionSummary.CandidateArtifact] = []
-        let candidateDefinitions = makeCandidateDefinitions()
+        let candidateDefinitions = try resolveCandidateDefinitions(for: configuration.requestedCandidateLabels)
+        let reuseManifest = try loadReuseManifestIfAvailable(from: configuration.reuseBundleURL)
 
         for (candidateIndex, candidate) in candidateDefinitions.enumerated() {
             let candidateStartProgress = Double(candidateIndex) / Double(candidateDefinitions.count)
             let candidateEndProgress = Double(candidateIndex + 1) / Double(candidateDefinitions.count)
-            statusHandler?("Rendering bakeoff candidate \(candidateIndex + 1)/\(candidateDefinitions.count): \(candidate.label)")
             progressHandler?(candidateStartProgress)
 
-            let candidateDirectory = bundleRoot.appendingPathComponent(candidate.label, isDirectory: true)
-            try fileManager.createDirectory(at: candidateDirectory, withIntermediateDirectories: true)
+            if let reuseManifest, let reusedEntry = reuseManifest.candidatesByLabel[candidate.label] {
+                statusHandler?("Reusing bakeoff candidate \(candidateIndex + 1)/\(candidateDefinitions.count): \(candidate.label)")
+                let artifacts = try importReusableCandidate(
+                    entry: reusedEntry,
+                    from: reuseManifest.bundleRootURL,
+                    into: bundleRoot
+                )
+                candidateEntries.append(reusedEntry)
+                candidateArtifacts.append(artifacts)
+                progressHandler?(candidateEndProgress)
+                continue
+            }
 
-            let request = RenderRequest(
-                source: .photosLibrary(scope: .album(localIdentifier: album.localIdentifier, title: album.title)),
-                monthYear: nil,
-                ordering: .captureDateAscendingStable,
+            statusHandler?("Rendering bakeoff candidate \(candidateIndex + 1)/\(candidateDefinitions.count): \(candidate.label)")
+            let renderedCandidate = try await renderCandidate(
+                candidate,
+                album: album,
+                items: items,
                 style: style,
-                export: exportResolution.effectiveProfile,
-                output: OutputTarget(directory: candidateDirectory, baseFilename: candidate.label)
+                exportResolution: exportResolution,
+                bundleRoot: bundleRoot,
+                candidateIndex: candidateIndex,
+                candidateCount: candidateDefinitions.count,
+                candidateStartProgress: candidateStartProgress,
+                candidateEndProgress: candidateEndProgress,
+                statusHandler: statusHandler,
+                progressHandler: progressHandler
             )
-            let preparation = coordinator.prepareFromItems(
-                items,
-                request: request,
-                additionalWarnings: exportResolution.warnings.map(\.message)
-            )
-            let result = try await coordinator.render(
-                preparation: preparation,
-                request: request,
-                photoMaterializer: photoMaterializer,
-                writeDiagnosticsLog: true,
-                progressHandler: { reportedProgress in
-                    let clamped = min(max(reportedProgress, 0), 1)
-                    let mapped = candidateStartProgress + (candidateEndProgress - candidateStartProgress) * clamped
-                    Task { @MainActor in
-                        progressHandler?(mapped)
-                    }
-                },
-                statusHandler: { candidateStatus in
-                    let message = "Bakeoff \(candidateIndex + 1)/\(candidateDefinitions.count): \(candidateStatus)"
-                    Task { @MainActor in
-                        statusHandler?(message)
-                    }
-                },
-                executionOptions: RenderExecutionOptions(finalHEVCTuningOverride: candidate.tuningOverride)
-            )
-
-            guard let executionDetails = result.executionDetails else {
-                throw HEVCBakeoffError.missingExecutionDetails(candidate.label)
-            }
-            guard let diagnosticsLogURL = result.diagnosticsLogURL else {
-                throw HEVCBakeoffError.missingDiagnosticsLog(candidate.label)
-            }
-
-            statusHandler?("Extracting stills for \(candidate.label)...")
-            let preservedDiagnosticsURL = try preserveArtifact(
-                diagnosticsLogURL,
-                preferredDestination: candidateDirectory.appendingPathComponent("diagnostics.log")
-            )
-            let frameURLs = try await extractStillFrames(
-                from: result.outputURL,
-                normalizedPositions: normalizedFramePositions,
-                into: candidateDirectory
-            )
-            let outputFileSizeBytes = executionDetails.outputFileSizeBytes ?? fileSizeBytes(at: result.outputURL)
-            guard let resolvedOutputFileSizeBytes = outputFileSizeBytes else {
-                throw HEVCBakeoffError.missingOutputFileSize(candidate.label)
-            }
-
-            let report = reportService.makeReport(
-                request: request,
-                preparation: preparation,
-                outputURL: result.outputURL,
-                diagnosticsLogURL: preservedDiagnosticsURL,
-                renderBackendSummary: result.backendSummary,
-                outputFileSizeBytes: resolvedOutputFileSizeBytes,
-                renderElapsedSeconds: executionDetails.elapsedSeconds,
-                renderBackendInfo: result.backendInfo,
-                resolvedVideoInfo: result.resolvedVideoInfo,
-                finalHEVCTuningPreset: candidate.preset,
-                finalHEVCTuningCRF: candidate.crf
-            )
-            let reportURL = candidateDirectory.appendingPathComponent("run-report.json")
-            try reportService.write(report, to: reportURL)
-
-            let commandSummaries = executionDetails.commandSummaries.map {
-                CandidateCommandSummaryManifest(
-                    stageLabel: $0.stageLabel,
-                    renderIntent: $0.renderIntent.rawValue,
-                    encoder: $0.encoder,
-                    elapsedSeconds: $0.elapsedSeconds,
-                    outputFileSizeBytes: $0.outputFileSizeBytes
-                )
-            }
-            let intermediateCommandSummaries = executionDetails.commandSummaries.filter { summary in
-                if summary.renderIntent == .presentationIntermediate {
-                    return true
-                }
-                return summary.renderIntent == .intermediateChunk
-            }
-            let intermediateEncoders = Array(
-                Set(intermediateCommandSummaries.map { commandSummary in commandSummary.encoder })
-            ).sorted()
-            candidateEntries.append(
-                CandidateManifestEntry(
-                    label: candidate.label,
-                    preset: candidate.preset,
-                    crf: candidate.crf,
-                    finalVideoPath: relativePath(from: bundleRoot, to: result.outputURL),
-                    runReportPath: relativePath(from: bundleRoot, to: reportURL),
-                    diagnosticsLogPath: relativePath(from: bundleRoot, to: preservedDiagnosticsURL),
-                    framePaths: frameURLs.map { relativePath(from: bundleRoot, to: $0) },
-                    outputFileSizeBytes: resolvedOutputFileSizeBytes,
-                    renderElapsedSeconds: executionDetails.elapsedSeconds,
-                    renderBackendSummary: result.backendSummary,
-                    renderBackendInfo: result.backendInfo,
-                    resolvedVideoInfo: result.resolvedVideoInfo,
-                    progressiveIntermediateUsage: progressiveIntermediateUsage(for: intermediateCommandSummaries),
-                    intermediateEncoders: intermediateEncoders,
-                    commandSummaries: commandSummaries
-                )
-            )
-            candidateArtifacts.append(
-                HEVCBakeoffCompletionSummary.CandidateArtifact(
-                    label: candidate.label,
-                    outputURL: result.outputURL,
-                    reportURL: reportURL,
-                    diagnosticsLogURL: preservedDiagnosticsURL
-                )
-            )
+            candidateEntries.append(renderedCandidate.entry)
+            candidateArtifacts.append(renderedCandidate.artifact)
             progressHandler?(candidateEndProgress)
         }
 
@@ -329,7 +303,32 @@ struct HEVCBakeoffRunner {
         return currentStatus
     }
 
-    private func makeCandidateDefinitions() -> [CandidateDefinition] {
+    private static func defaultConfiguration(fileManager: FileManager) -> BakeoffConfiguration {
+        let followUpBundleURL = repositoryRootURL()
+            .appendingPathComponent("tmp/export-bakeoffs", isDirectory: true)
+            .appendingPathComponent("20260422-082554-test-export", isDirectory: true)
+        if fileManager.fileExists(atPath: followUpBundleURL.path) {
+            return .targetedCRF21FastFollowUp(reuseBundleURL: followUpBundleURL)
+        }
+        return .fullComparison()
+    }
+
+    private func resolveCandidateDefinitions(for labels: [String]) throws -> [CandidateDefinition] {
+        let catalog = Dictionary(uniqueKeysWithValues: candidateCatalog().map { ($0.label, $0) })
+        var seenLabels: Set<String> = []
+
+        return try labels.map { label in
+            guard seenLabels.insert(label).inserted else {
+                throw HEVCBakeoffError.duplicateRequestedCandidateLabel(label)
+            }
+            guard let definition = catalog[label] else {
+                throw HEVCBakeoffError.unknownCandidateLabel(label)
+            }
+            return definition
+        }
+    }
+
+    private func candidateCatalog() -> [CandidateDefinition] {
         [
             CandidateDefinition(label: "baseline-crf17-medium", preset: "medium", crf: 17, tuningOverride: nil),
             CandidateDefinition(
@@ -345,23 +344,232 @@ struct HEVCBakeoffRunner {
                 tuningOverride: FinalHEVCTuningOverride(preset: "medium", crf: 19)
             ),
             CandidateDefinition(
-                label: "candidate-crf18-slow",
-                preset: "slow",
-                crf: 18,
-                tuningOverride: FinalHEVCTuningOverride(preset: "slow", crf: 18)
+                label: "candidate-crf20-medium",
+                preset: "medium",
+                crf: 20,
+                tuningOverride: FinalHEVCTuningOverride(preset: "medium", crf: 20)
+            ),
+            CandidateDefinition(
+                label: "candidate-crf21-medium",
+                preset: "medium",
+                crf: 21,
+                tuningOverride: FinalHEVCTuningOverride(preset: "medium", crf: 21)
+            ),
+            CandidateDefinition(
+                label: "candidate-crf20-fast",
+                preset: "fast",
+                crf: 20,
+                tuningOverride: FinalHEVCTuningOverride(preset: "fast", crf: 20)
+            ),
+            CandidateDefinition(
+                label: "candidate-crf21-fast",
+                preset: "fast",
+                crf: 21,
+                tuningOverride: FinalHEVCTuningOverride(preset: "fast", crf: 21)
             )
         ]
     }
 
+    private func loadReuseManifestIfAvailable(from bundleRootURL: URL?) throws -> ReuseManifestContext? {
+        guard let bundleRootURL else {
+            return nil
+        }
+
+        let manifestURL = bundleRootURL.appendingPathComponent("manifest.json")
+        guard fileManager.fileExists(atPath: manifestURL.path) else {
+            throw HEVCBakeoffError.missingReuseManifest(manifestURL)
+        }
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let manifest = try decoder.decode(BakeoffManifest.self, from: Data(contentsOf: manifestURL))
+
+        var candidatesByLabel: [String: CandidateManifestEntry] = [:]
+        for candidate in manifest.candidates {
+            if candidatesByLabel[candidate.label] != nil {
+                throw HEVCBakeoffError.duplicateReuseManifestCandidateLabel(candidate.label)
+            }
+            candidatesByLabel[candidate.label] = candidate
+        }
+
+        for label in configuration.requestedCandidateLabels where candidatesByLabel[label] == nil {
+            if configuration.reuseBundleURL != nil && label != "candidate-crf21-fast" {
+                throw HEVCBakeoffError.missingReusableCandidate(label)
+            }
+        }
+
+        return ReuseManifestContext(bundleRootURL: bundleRootURL, candidatesByLabel: candidatesByLabel)
+    }
+
+    private func renderCandidate(
+        _ candidate: CandidateDefinition,
+        album: PhotoAlbumSummary,
+        items: [MediaItem],
+        style: StyleProfile,
+        exportResolution: ExportProfileResolution,
+        bundleRoot: URL,
+        candidateIndex: Int,
+        candidateCount: Int,
+        candidateStartProgress: Double,
+        candidateEndProgress: Double,
+        statusHandler: HEVCBakeoffStatusHandler,
+        progressHandler: HEVCBakeoffProgressHandler
+    ) async throws -> (entry: CandidateManifestEntry, artifact: HEVCBakeoffCompletionSummary.CandidateArtifact) {
+        let candidateDirectory = bundleRoot.appendingPathComponent(candidate.label, isDirectory: true)
+        try fileManager.createDirectory(at: candidateDirectory, withIntermediateDirectories: true)
+
+        let request = RenderRequest(
+            source: .photosLibrary(scope: .album(localIdentifier: album.localIdentifier, title: album.title)),
+            monthYear: nil,
+            ordering: .captureDateAscendingStable,
+            style: style,
+            export: exportResolution.effectiveProfile,
+            output: OutputTarget(directory: candidateDirectory, baseFilename: candidate.label)
+        )
+        let preparation = coordinator.prepareFromItems(
+            items,
+            request: request,
+            additionalWarnings: exportResolution.warnings.map(\.message)
+        )
+        let result = try await coordinator.render(
+            preparation: preparation,
+            request: request,
+            photoMaterializer: photoMaterializer,
+            writeDiagnosticsLog: true,
+            progressHandler: { reportedProgress in
+                let clamped = min(max(reportedProgress, 0), 1)
+                let mapped = candidateStartProgress + (candidateEndProgress - candidateStartProgress) * clamped
+                Task { @MainActor in
+                    progressHandler?(mapped)
+                }
+            },
+            statusHandler: { candidateStatus in
+                let message = "Bakeoff \(candidateIndex + 1)/\(candidateCount): \(candidateStatus)"
+                Task { @MainActor in
+                    statusHandler?(message)
+                }
+            },
+            executionOptions: RenderExecutionOptions(finalHEVCTuningOverride: candidate.tuningOverride)
+        )
+
+        guard let executionDetails = result.executionDetails else {
+            throw HEVCBakeoffError.missingExecutionDetails(candidate.label)
+        }
+        guard let diagnosticsLogURL = result.diagnosticsLogURL else {
+            throw HEVCBakeoffError.missingDiagnosticsLog(candidate.label)
+        }
+
+        statusHandler?("Extracting stills for \(candidate.label)...")
+        let preservedDiagnosticsURL = try preserveArtifact(
+            diagnosticsLogURL,
+            preferredDestination: candidateDirectory.appendingPathComponent("diagnostics.log")
+        )
+        let frameURLs = try await extractStillFrames(
+            from: result.outputURL,
+            normalizedPositions: normalizedFramePositions,
+            into: candidateDirectory
+        )
+        let outputFileSizeBytes = executionDetails.outputFileSizeBytes ?? fileSizeBytes(at: result.outputURL)
+        guard let resolvedOutputFileSizeBytes = outputFileSizeBytes else {
+            throw HEVCBakeoffError.missingOutputFileSize(candidate.label)
+        }
+
+        let report = reportService.makeReport(
+            request: request,
+            preparation: preparation,
+            outputURL: result.outputURL,
+            diagnosticsLogURL: preservedDiagnosticsURL,
+            renderBackendSummary: result.backendSummary,
+            outputFileSizeBytes: resolvedOutputFileSizeBytes,
+            renderElapsedSeconds: executionDetails.elapsedSeconds,
+            renderBackendInfo: result.backendInfo,
+            resolvedVideoInfo: result.resolvedVideoInfo,
+            finalHEVCTuningPreset: candidate.preset,
+            finalHEVCTuningCRF: candidate.crf,
+            presentationTimingAudits: executionDetails.presentationTimingAudits
+        )
+        let reportURL = candidateDirectory.appendingPathComponent("run-report.json")
+        try reportService.write(report, to: reportURL)
+
+        let commandSummaries = executionDetails.commandSummaries.map {
+            CandidateCommandSummaryManifest(
+                stageLabel: $0.stageLabel,
+                renderIntent: $0.renderIntent.rawValue,
+                encoder: $0.encoder,
+                elapsedSeconds: $0.elapsedSeconds,
+                outputFileSizeBytes: $0.outputFileSizeBytes
+            )
+        }
+        let intermediateCommandSummaries = executionDetails.commandSummaries.filter { summary in
+            if summary.renderIntent == .presentationIntermediate {
+                return true
+            }
+            return summary.renderIntent == .intermediateChunk
+        }
+        let intermediateEncoders = Array(
+            Set(intermediateCommandSummaries.map { commandSummary in commandSummary.encoder })
+        ).sorted()
+
+        let entry = CandidateManifestEntry(
+            label: candidate.label,
+            preset: candidate.preset,
+            crf: candidate.crf,
+            finalVideoPath: relativePath(from: bundleRoot, to: result.outputURL),
+            runReportPath: relativePath(from: bundleRoot, to: reportURL),
+            diagnosticsLogPath: relativePath(from: bundleRoot, to: preservedDiagnosticsURL),
+            framePaths: frameURLs.map { relativePath(from: bundleRoot, to: $0) },
+            outputFileSizeBytes: resolvedOutputFileSizeBytes,
+            renderElapsedSeconds: executionDetails.elapsedSeconds,
+            renderBackendSummary: result.backendSummary,
+            renderBackendInfo: result.backendInfo,
+            resolvedVideoInfo: result.resolvedVideoInfo,
+            progressiveIntermediateUsage: progressiveIntermediateUsage(for: intermediateCommandSummaries),
+            intermediateEncoders: intermediateEncoders,
+            commandSummaries: commandSummaries,
+            presentationTimingAudits: executionDetails.presentationTimingAudits
+        )
+        let artifact = HEVCBakeoffCompletionSummary.CandidateArtifact(
+            label: candidate.label,
+            outputURL: result.outputURL,
+            reportURL: reportURL,
+            diagnosticsLogURL: preservedDiagnosticsURL
+        )
+        return (entry, artifact)
+    }
+
+    private func importReusableCandidate(
+        entry: CandidateManifestEntry,
+        from sourceBundleRoot: URL,
+        into destinationBundleRoot: URL
+    ) throws -> HEVCBakeoffCompletionSummary.CandidateArtifact {
+        let sourceDirectory = sourceBundleRoot.appendingPathComponent(entry.label, isDirectory: true)
+        guard fileManager.fileExists(atPath: sourceDirectory.path) else {
+            throw HEVCBakeoffError.missingReusableCandidateDirectory(entry.label)
+        }
+
+        let destinationDirectory = destinationBundleRoot.appendingPathComponent(entry.label, isDirectory: true)
+        if fileManager.fileExists(atPath: destinationDirectory.path) {
+            try fileManager.removeItem(at: destinationDirectory)
+        }
+        try fileManager.copyItem(at: sourceDirectory, to: destinationDirectory)
+
+        return HEVCBakeoffCompletionSummary.CandidateArtifact(
+            label: entry.label,
+            outputURL: destinationBundleRoot.appendingPathComponent(entry.finalVideoPath),
+            reportURL: destinationBundleRoot.appendingPathComponent(entry.runReportPath),
+            diagnosticsLogURL: destinationBundleRoot.appendingPathComponent(entry.diagnosticsLogPath)
+        )
+    }
+
     private func makeBakeoffBundleRoot(albumTitle: String) throws -> URL {
-        let bundleRoot = repositoryRootURL()
+        let bundleRoot = Self.repositoryRootURL()
             .appendingPathComponent("tmp/export-bakeoffs", isDirectory: true)
             .appendingPathComponent("\(timestamp())-\(sanitizePathComponent(albumTitle))", isDirectory: true)
         try fileManager.createDirectory(at: bundleRoot, withIntermediateDirectories: true)
         return bundleRoot
     }
 
-    private func repositoryRootURL() -> URL {
+    private static func repositoryRootURL() -> URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()

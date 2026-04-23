@@ -250,6 +250,33 @@ final class FFmpegProgressivePipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("-crf 17"))
     }
 
+    func testHDRSizeFirstFastProfileUsesCRF21FastPresetWithoutOverride() throws {
+        let commandBuilder = FFmpegCommandBuilder()
+        let command = try commandBuilder.buildCommand(
+            plan: FFmpegRenderPlan(
+                clips: makeHDRPlan(clipCount: 4, clipDuration: 4.0, transitionDuration: 0.75).clips,
+                transitionDurationSeconds: 0.75,
+                endFadeToBlackDurationSeconds: 1.5,
+                outputURL: URL(fileURLWithPath: "/tmp/final.mp4"),
+                renderSize: CGSize(width: 3840, height: 2160),
+                frameRate: 60,
+                audioLayout: .stereo,
+                bitrateMode: .sizeFirst,
+                container: .mp4,
+                videoCodec: .hevc,
+                dynamicRange: .hdr,
+                hdrHEVCEncoderMode: .automatic,
+                x265ThreadProfile: .shortJobBoost,
+                renderIntent: .finalDelivery
+            ),
+            resolution: makeCapableResolution()
+        )
+        let joined = command.arguments.joined(separator: " ")
+
+        XCTAssertTrue(joined.contains("-preset fast"))
+        XCTAssertTrue(joined.contains("-crf 21"))
+    }
+
     func testBakeoffOverrideOnlyChangesFinalSoftwareHEVCCommands() throws {
         let builder = FFmpegHDRProgressivePipelineBuilder()
         let commandBuilder = FFmpegCommandBuilder()

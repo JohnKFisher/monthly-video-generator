@@ -358,7 +358,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(resolution.fallbackReason?.contains("Bundled FFmpeg missing required features") ?? false)
     }
 
-    func testBinaryResolverBundledPreferredProbeRequiresBundledBinary() {
+    func testBinaryResolverBundledPreferredProbeFallsBackToSystemWhenBundledIsMissing() throws {
         let systemBinary = FFmpegBinary(
             ffmpegURL: URL(fileURLWithPath: "/tmp/system/ffmpeg"),
             ffprobeURL: URL(fileURLWithPath: "/tmp/system/ffprobe"),
@@ -369,14 +369,66 @@ final class HDRFFmpegPipelineTests: XCTestCase {
             fileManager: ResolverFileManagerStub(),
             systemBinaryOverride: systemBinary,
             bundledBinaryOverride: nil,
-            probeOverride: nil
+            probeOverride: nil,
+            probeBinaryValidator: { _ in }
         )
 
-        XCTAssertThrowsError(try resolver.resolveProbeBinary(mode: .bundledPreferred)) { error in
+        let resolvedBinary = try resolver.resolveProbeBinary(mode: .bundledPreferred)
+
+        XCTAssertEqual(resolvedBinary.source, .system)
+    }
+
+    func testBinaryResolverBundledPreferredProbeFallsBackToSystemWhenBundledIsBroken() throws {
+        let systemBinary = FFmpegBinary(
+            ffmpegURL: URL(fileURLWithPath: "/tmp/system/ffmpeg"),
+            ffprobeURL: URL(fileURLWithPath: "/tmp/system/ffprobe"),
+            source: .system
+        )
+        let bundledBinary = FFmpegBinary(
+            ffmpegURL: URL(fileURLWithPath: "/tmp/bundled/ffmpeg"),
+            ffprobeURL: URL(fileURLWithPath: "/tmp/bundled/ffprobe"),
+            source: .bundled
+        )
+
+        let resolver = FFmpegBinaryResolver(
+            fileManager: ResolverFileManagerStub(),
+            systemBinaryOverride: systemBinary,
+            bundledBinaryOverride: bundledBinary,
+            probeOverride: nil,
+            probeBinaryValidator: { binary in
+                if binary.source == .bundled {
+                    throw RenderError.exportFailed("simulated bundled probe launch failure")
+                }
+            }
+        )
+
+        let resolvedBinary = try resolver.resolveProbeBinary(mode: .bundledPreferred)
+
+        XCTAssertEqual(resolvedBinary.source, .system)
+    }
+
+    func testBinaryResolverBundledOnlyProbeFailsWhenBundledIsBroken() {
+        let bundledBinary = FFmpegBinary(
+            ffmpegURL: URL(fileURLWithPath: "/tmp/bundled/ffmpeg"),
+            ffprobeURL: URL(fileURLWithPath: "/tmp/bundled/ffprobe"),
+            source: .bundled
+        )
+
+        let resolver = FFmpegBinaryResolver(
+            fileManager: ResolverFileManagerStub(),
+            systemBinaryOverride: nil,
+            bundledBinaryOverride: bundledBinary,
+            probeOverride: nil,
+            probeBinaryValidator: { _ in
+                throw RenderError.exportFailed("simulated bundled probe launch failure")
+            }
+        )
+
+        XCTAssertThrowsError(try resolver.resolveProbeBinary(mode: .bundledOnly)) { error in
             guard case let RenderError.exportFailed(message) = error else {
                 return XCTFail("Expected exportFailed, got \(error)")
             }
-            XCTAssertTrue(message.contains("Bundled FFmpeg probe binary was not found"))
+            XCTAssertTrue(message.contains("bundled ffprobe is present and unusable"))
         }
     }
 

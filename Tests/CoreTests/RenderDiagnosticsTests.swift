@@ -13,6 +13,32 @@ final class RenderDiagnosticsTests: XCTestCase {
         diagnostics.recordPreparationOperation(.captureDateOverlayGeneration, detail: "photo-a.jpg", elapsedSeconds: 0.2)
         diagnostics.recordFFmpegCommandSummary(
             FFmpegHDRRenderer.CommandExecutionStats(
+                stageLabel: "Presentation intermediate",
+                renderIntent: .presentationIntermediate,
+                encoder: "hevc_videotoolbox",
+                clipAuditBreakdown: [
+                    RenderClipAuditBreakdown(
+                        kind: .still,
+                        hasCaptureDateOverlay: false,
+                        clipCount: 1
+                    )
+                ],
+                expectedDurationSeconds: 12,
+                elapsedSeconds: 9,
+                startupLatencySeconds: 1.2,
+                firstOutputGrowthLatencySeconds: 1.5,
+                finalOutputSizeBytes: 12_345_678,
+                latestOutTimeMicroseconds: 12_000_000,
+                latestSpeed: 1.10,
+                latestFrameCount: 720,
+                effectiveRealtimeFactor: 1.33,
+                longestInactivityGapSeconds: 2.4,
+                terminationSummary: "exit 0",
+                outputPath: "/tmp/presentation-output.mov"
+            )
+        )
+        diagnostics.recordFFmpegCommandSummary(
+            FFmpegHDRRenderer.CommandExecutionStats(
                 stageLabel: "Final delivery",
                 renderIntent: .finalDelivery,
                 encoder: "libx265",
@@ -38,12 +64,15 @@ final class RenderDiagnosticsTests: XCTestCase {
         XCTAssertTrue(report.contains("Clip Preparation Breakdown"))
         XCTAssertTrue(report.contains("Slowest Preparation Operations"))
         XCTAssertTrue(report.contains("FFmpeg Command Summary"))
+        XCTAssertTrue(report.contains("Progressive Presentation Clip Audit"))
         XCTAssertTrue(report.contains("- Render setup: count=2 | total=2.00s | avg=1.00s"))
         XCTAssertTrue(report.contains("- FFmpeg/direct export: count=1 | total=12.50s | avg=12.50s"))
         XCTAssertTrue(report.contains("- Still clip generation: count=2 | total=2.00s | avg=1.00s | max=1.50s"))
         XCTAssertTrue(report.contains("- Capture-date overlay generation: count=1 | total=0.20s | avg=0.20s | max=0.20s"))
         XCTAssertTrue(report.contains("By intent:"))
         XCTAssertTrue(report.contains("Commands:"))
+        XCTAssertTrue(report.contains("clip_audit=still:plain:1"))
+        XCTAssertTrue(report.contains("- still / plain: commands=1 | clips=1 | total=9.00s"))
         XCTAssertTrue(report.contains("Final delivery"))
         XCTAssertTrue(report.contains("output_path=/tmp/final-output.mov"))
         XCTAssertTrue(report.contains("Render started"))

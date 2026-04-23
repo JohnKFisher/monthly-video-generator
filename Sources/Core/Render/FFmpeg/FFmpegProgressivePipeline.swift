@@ -81,7 +81,8 @@ struct FFmpegHDRProgressivePipelineBuilder {
                 includeAudio: true,
                 hasAudioTrack: true,
                 colorInfo: .hlgBT2020Intermediate,
-                sourceDescription: clip.sourceDescription
+                sourceDescription: clip.sourceDescription,
+                auditInfo: clip.auditInfo
             )
         }
 

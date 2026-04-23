@@ -96,6 +96,7 @@ final class FFmpegHDRRenderer {
         let stageLabel: String
         let renderIntent: FFmpegRenderIntent
         let encoder: String
+        let clipAuditBreakdown: [RenderClipAuditBreakdown]
         let expectedDurationSeconds: Double
         let elapsedSeconds: TimeInterval
         let startupLatencySeconds: TimeInterval?
@@ -108,6 +109,42 @@ final class FFmpegHDRRenderer {
         let longestInactivityGapSeconds: TimeInterval
         let terminationSummary: String
         let outputPath: String
+
+        init(
+            stageLabel: String,
+            renderIntent: FFmpegRenderIntent,
+            encoder: String,
+            clipAuditBreakdown: [RenderClipAuditBreakdown] = [],
+            expectedDurationSeconds: Double,
+            elapsedSeconds: TimeInterval,
+            startupLatencySeconds: TimeInterval?,
+            firstOutputGrowthLatencySeconds: TimeInterval?,
+            finalOutputSizeBytes: UInt64,
+            latestOutTimeMicroseconds: Int64,
+            latestSpeed: Double?,
+            latestFrameCount: Int64?,
+            effectiveRealtimeFactor: Double?,
+            longestInactivityGapSeconds: TimeInterval,
+            terminationSummary: String,
+            outputPath: String
+        ) {
+            self.stageLabel = stageLabel
+            self.renderIntent = renderIntent
+            self.encoder = encoder
+            self.clipAuditBreakdown = clipAuditBreakdown
+            self.expectedDurationSeconds = expectedDurationSeconds
+            self.elapsedSeconds = elapsedSeconds
+            self.startupLatencySeconds = startupLatencySeconds
+            self.firstOutputGrowthLatencySeconds = firstOutputGrowthLatencySeconds
+            self.finalOutputSizeBytes = finalOutputSizeBytes
+            self.latestOutTimeMicroseconds = latestOutTimeMicroseconds
+            self.latestSpeed = latestSpeed
+            self.latestFrameCount = latestFrameCount
+            self.effectiveRealtimeFactor = effectiveRealtimeFactor
+            self.longestInactivityGapSeconds = longestInactivityGapSeconds
+            self.terminationSummary = terminationSummary
+            self.outputPath = outputPath
+        }
     }
 
     struct CommandExecutionContext {
@@ -129,6 +166,7 @@ final class FFmpegHDRRenderer {
         let requiresHDRToSDRToneMapping: Bool
         let hdrToSDRToneMapClips: [FFmpegHDRToSDRToneMapClip]
         let captureDateOverlayCount: Int
+        let clipAuditBreakdown: [RenderClipAuditBreakdown]
         let summaryLine: String
         let endpointLine: String?
     }
@@ -828,6 +866,7 @@ final class FFmpegHDRRenderer {
             requiresHDRToSDRToneMapping: plan.requiresHDRToSDRToneMapping,
             hdrToSDRToneMapClips: plan.hdrToSDRToneMapClips,
             captureDateOverlayCount: overlayCount,
+            clipAuditBreakdown: Self.clipAuditBreakdown(for: plan.clips),
             summaryLine:
                 "FFmpeg plan summary: output=\(plan.outputURL.path), clips=\(plan.clips.count), chapters=\(plan.chapters.count), " +
                 "renderSize=\(Int(plan.renderSize.width.rounded()))x\(Int(plan.renderSize.height.rounded())), frameRate=\(plan.frameRate), " +
@@ -1524,6 +1563,7 @@ final class FFmpegHDRRenderer {
             stageLabel: context.stageLabel,
             renderIntent: context.renderIntent,
             encoder: context.encoderDescription,
+            clipAuditBreakdown: context.clipAuditBreakdown,
             expectedDurationSeconds: context.expectedDurationSeconds,
             elapsedSeconds: elapsedSeconds,
             startupLatencySeconds: activitySnapshot.firstMeaningfulProgressLatencySeconds,
@@ -1593,10 +1633,46 @@ final class FFmpegHDRRenderer {
             "max_idle=\(formatSummarySeconds(stats.longestInactivityGapSeconds))",
             "termination=\(stats.terminationSummary)"
         ]
+        if !stats.clipAuditBreakdown.isEmpty {
+            parts.append("clip_audit=\(formatClipAuditBreakdown(stats.clipAuditBreakdown))")
+        }
         if !stats.outputPath.isEmpty {
             parts.append("output_path=\(stats.outputPath)")
         }
         return parts.joined(separator: " | ")
+    }
+
+    private static func clipAuditBreakdown(for clips: [FFmpegRenderClip]) -> [RenderClipAuditBreakdown] {
+        var counts: [RenderClipAuditInfo: Int] = [:]
+        for clip in clips {
+            counts[clip.auditInfo, default: 0] += 1
+        }
+        return counts
+            .map { info, count in
+                RenderClipAuditBreakdown(
+                    kind: info.kind,
+                    hasCaptureDateOverlay: info.hasCaptureDateOverlay,
+                    clipCount: count
+                )
+            }
+            .sorted {
+                if $0.kind == $1.kind {
+                    if $0.hasCaptureDateOverlay == $1.hasCaptureDateOverlay {
+                        return $0.clipCount > $1.clipCount
+                    }
+                    return $0.hasCaptureDateOverlay && !$1.hasCaptureDateOverlay
+                }
+                return $0.kind.rawValue < $1.kind.rawValue
+            }
+    }
+
+    private static func formatClipAuditBreakdown(_ breakdown: [RenderClipAuditBreakdown]) -> String {
+        breakdown
+            .map { entry in
+                let overlayLabel = entry.hasCaptureDateOverlay ? "overlay" : "plain"
+                return "\(entry.kind.rawValue):\(overlayLabel):\(entry.clipCount)"
+            }
+            .joined(separator: ",")
     }
 
     private static func formatSummarySeconds(_ value: Double) -> String {

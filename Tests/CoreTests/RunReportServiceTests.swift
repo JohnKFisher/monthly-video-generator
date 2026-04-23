@@ -101,7 +101,16 @@ final class RunReportServiceTests: XCTestCase {
             renderBackendInfo: RenderBackendInfo(binarySource: .bundled, encoder: "libx265"),
             resolvedVideoInfo: ResolvedRenderVideoInfo(width: 3840, height: 2160, frameRate: 60),
             finalHEVCTuningPreset: "slow",
-            finalHEVCTuningCRF: 18
+            finalHEVCTuningCRF: 18,
+            presentationTimingAudits: [
+                ProgressivePresentationTimingAudit(
+                    clipKind: .still,
+                    hasCaptureDateOverlay: false,
+                    commandCount: 3,
+                    clipCount: 3,
+                    totalElapsedSeconds: 18.75
+                )
+            ]
         )
 
         XCTAssertEqual(report.outputFileSizeBytes, 987_654_321)
@@ -110,6 +119,18 @@ final class RunReportServiceTests: XCTestCase {
         XCTAssertEqual(report.resolvedVideoInfo, ResolvedRenderVideoInfo(width: 3840, height: 2160, frameRate: 60))
         XCTAssertEqual(report.finalHEVCTuningPreset, "slow")
         XCTAssertEqual(report.finalHEVCTuningCRF, 18)
+        XCTAssertEqual(
+            report.presentationTimingAudits,
+            [
+                ProgressivePresentationTimingAudit(
+                    clipKind: .still,
+                    hasCaptureDateOverlay: false,
+                    commandCount: 3,
+                    clipCount: 3,
+                    totalElapsedSeconds: 18.75
+                )
+            ]
+        )
 
         let reportURL = outputDirectory.appendingPathComponent("bakeoff-report.json")
         try RunReportService().write(report, to: reportURL)
@@ -127,6 +148,17 @@ final class RunReportServiceTests: XCTestCase {
         XCTAssertEqual(resolvedVideoInfo["frameRate"] as? Int, 60)
         XCTAssertEqual(json["finalHEVCTuningPreset"] as? String, "slow")
         XCTAssertEqual(json["finalHEVCTuningCRF"] as? Int, 18)
+        let presentationTimingAudits = try XCTUnwrap(json["presentationTimingAudits"] as? [[String: Any]])
+        XCTAssertEqual(presentationTimingAudits.count, 1)
+        XCTAssertEqual(presentationTimingAudits.first?["clipKind"] as? String, "still")
+        XCTAssertEqual(presentationTimingAudits.first?["hasCaptureDateOverlay"] as? Bool, false)
+        XCTAssertEqual(presentationTimingAudits.first?["commandCount"] as? Int, 3)
+        XCTAssertEqual(presentationTimingAudits.first?["clipCount"] as? Int, 3)
+        XCTAssertEqual(
+            try XCTUnwrap((presentationTimingAudits.first?["totalElapsedSeconds"] as? NSNumber)?.doubleValue),
+            18.75,
+            accuracy: 0.0001
+        )
     }
 
     private func makeItems(count: Int) -> [MediaItem] {

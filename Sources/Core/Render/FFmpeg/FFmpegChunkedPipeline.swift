@@ -160,7 +160,8 @@ struct FFmpegHDRChunkPipelineBuilder {
                 includeAudio: true,
                 hasAudioTrack: true,
                 colorInfo: .hlgBT2020Intermediate,
-                sourceDescription: "HDR chunk \(chunk.sequenceIndex + 1) of \(chunkPlan.chunks.count)"
+                sourceDescription: "HDR chunk \(chunk.sequenceIndex + 1) of \(chunkPlan.chunks.count)",
+                auditInfo: RenderClipAuditInfo(kind: .video, hasCaptureDateOverlay: false)
             )
         }
 

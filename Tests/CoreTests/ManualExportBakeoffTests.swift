@@ -9,6 +9,11 @@ import XCTest
 @testable import Core
 
 final class ManualExportBakeoffTests: XCTestCase {
+    private enum TestError: Error, Equatable {
+        case duplicateRequestedCandidateLabel(String)
+        case unknownCandidateLabel(String)
+    }
+
     private struct CandidateDefinition {
         let label: String
         let preset: String
@@ -47,6 +52,7 @@ final class ManualExportBakeoffTests: XCTestCase {
         let progressiveIntermediateUsage: ProgressiveIntermediateUsage
         let intermediateEncoders: [String]
         let commandSummaries: [CandidateCommandSummaryManifest]
+        let presentationTimingAudits: [ProgressivePresentationTimingAudit]
     }
 
     private struct BakeoffManifest: Codable, Equatable {
@@ -133,6 +139,15 @@ final class ManualExportBakeoffTests: XCTestCase {
                             elapsedSeconds: 22.0,
                             outputFileSizeBytes: 10_000_000
                         )
+                    ],
+                    presentationTimingAudits: [
+                        ProgressivePresentationTimingAudit(
+                            clipKind: .still,
+                            hasCaptureDateOverlay: false,
+                            commandCount: 1,
+                            clipCount: 1,
+                            totalElapsedSeconds: 8.5
+                        )
                     ]
                 )
             ]
@@ -157,6 +172,102 @@ final class ManualExportBakeoffTests: XCTestCase {
         XCTAssertTrue(indexHTML.contains("baseline-crf17-medium"))
         XCTAssertTrue(indexHTML.contains("run-report.json"))
         XCTAssertTrue(indexHTML.contains("frame-50.png"))
+    }
+
+    func testCandidateCatalogResolvesRequestedLabelsInOrderIncludingCRF21Fast() throws {
+        let definitions = try resolveCandidateDefinitions(
+            for: ["baseline-crf17-medium", "candidate-crf20-fast", "candidate-crf21-fast"]
+        )
+
+        XCTAssertEqual(definitions.map(\.label), ["baseline-crf17-medium", "candidate-crf20-fast", "candidate-crf21-fast"])
+        XCTAssertEqual(definitions.map(\.preset), ["medium", "fast", "fast"])
+        XCTAssertEqual(definitions.map(\.crf), [17, 20, 21])
+    }
+
+    func testResolveCandidateDefinitionsRejectsDuplicateAndUnknownLabels() throws {
+        XCTAssertThrowsError(
+            try resolveCandidateDefinitions(
+                for: ["baseline-crf17-medium", "baseline-crf17-medium"]
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? TestError,
+                .duplicateRequestedCandidateLabel("baseline-crf17-medium")
+            )
+        }
+
+        XCTAssertThrowsError(
+            try resolveCandidateDefinitions(
+                for: ["candidate-crf99-medium"]
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? TestError,
+                .unknownCandidateLabel("candidate-crf99-medium")
+            )
+        }
+    }
+
+    func testReusableCandidateImportCopiesSelfContainedDirectoryAndPreservesOrder() throws {
+        let sourceBundle = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ManualExportBakeoffReuseSource-\(UUID().uuidString)", isDirectory: true)
+        let destinationBundle = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ManualExportBakeoffReuseDest-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: sourceBundle, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: destinationBundle, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: sourceBundle)
+            try? FileManager.default.removeItem(at: destinationBundle)
+        }
+
+        let baselineEntry = try makeFixtureCandidateEntry(
+            bundleRoot: sourceBundle,
+            label: "baseline-crf17-medium",
+            preset: "medium",
+            crf: 17
+        )
+        let fastEntry = try makeFixtureCandidateEntry(
+            bundleRoot: sourceBundle,
+            label: "candidate-crf20-fast",
+            preset: "fast",
+            crf: 20
+        )
+
+        try importReusableCandidate(baselineEntry, from: sourceBundle, into: destinationBundle)
+        try importReusableCandidate(fastEntry, from: sourceBundle, into: destinationBundle)
+
+        let manifest = BakeoffManifest(
+            generatedAt: Date(timeIntervalSince1970: 1_700_000_001),
+            albumTitle: "Test Export",
+            albumLocalIdentifier: "album-123",
+            bundleRootPath: destinationBundle.path,
+            normalizedFramePositions: normalizedFramePositions,
+            candidates: [baselineEntry, fastEntry]
+        )
+
+        try writeBakeoffBundleArtifacts(manifest: manifest, bundleRoot: destinationBundle)
+
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: destinationBundle.appendingPathComponent(baselineEntry.finalVideoPath).path
+            )
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: destinationBundle.appendingPathComponent(fastEntry.finalVideoPath).path
+            )
+        )
+
+        let indexHTML = try String(
+            contentsOf: destinationBundle.appendingPathComponent("index.html"),
+            encoding: .utf8
+        )
+        let baselineIndex = try XCTUnwrap(indexHTML.range(of: "baseline-crf17-medium")?.lowerBound)
+        let fastIndex = try XCTUnwrap(indexHTML.range(of: "candidate-crf20-fast")?.lowerBound)
+        XCTAssertLessThan(
+            indexHTML.distance(from: indexHTML.startIndex, to: baselineIndex),
+            indexHTML.distance(from: indexHTML.startIndex, to: fastIndex)
+        )
     }
 
     func testBakeoffFromTestExportAlbum() async throws {
@@ -259,7 +370,8 @@ final class ManualExportBakeoffTests: XCTestCase {
                 renderBackendInfo: result.backendInfo,
                 resolvedVideoInfo: result.resolvedVideoInfo,
                 finalHEVCTuningPreset: candidate.preset,
-                finalHEVCTuningCRF: candidate.crf
+                finalHEVCTuningCRF: candidate.crf,
+                presentationTimingAudits: executionDetails.presentationTimingAudits
             )
             let reportURL = candidateDirectory.appendingPathComponent("run-report.json")
             try reportService.write(report, to: reportURL)
@@ -291,7 +403,8 @@ final class ManualExportBakeoffTests: XCTestCase {
                 resolvedVideoInfo: result.resolvedVideoInfo,
                 progressiveIntermediateUsage: progressiveIntermediateUsage(for: intermediateCommandSummaries),
                 intermediateEncoders: Array(Set(intermediateCommandSummaries.map(\.encoder))).sorted(),
-                commandSummaries: commandSummaries
+                commandSummaries: commandSummaries,
+                presentationTimingAudits: executionDetails.presentationTimingAudits
             )
             candidateEntries.append(manifestEntry)
 
@@ -341,12 +454,136 @@ final class ManualExportBakeoffTests: XCTestCase {
                 tuningOverride: FinalHEVCTuningOverride(preset: "medium", crf: 19)
             ),
             CandidateDefinition(
-                label: "candidate-crf18-slow",
-                preset: "slow",
-                crf: 18,
-                tuningOverride: FinalHEVCTuningOverride(preset: "slow", crf: 18)
+                label: "candidate-crf20-medium",
+                preset: "medium",
+                crf: 20,
+                tuningOverride: FinalHEVCTuningOverride(preset: "medium", crf: 20)
+            ),
+            CandidateDefinition(
+                label: "candidate-crf21-medium",
+                preset: "medium",
+                crf: 21,
+                tuningOverride: FinalHEVCTuningOverride(preset: "medium", crf: 21)
+            ),
+            CandidateDefinition(
+                label: "candidate-crf20-fast",
+                preset: "fast",
+                crf: 20,
+                tuningOverride: FinalHEVCTuningOverride(preset: "fast", crf: 20)
+            ),
+            CandidateDefinition(
+                label: "candidate-crf21-fast",
+                preset: "fast",
+                crf: 21,
+                tuningOverride: FinalHEVCTuningOverride(preset: "fast", crf: 21)
             )
         ]
+    }
+
+    private func resolveCandidateDefinitions(for labels: [String]) throws -> [CandidateDefinition] {
+        let catalog = Dictionary(uniqueKeysWithValues: makeCandidateDefinitions().map { ($0.label, $0) })
+        var seenLabels: Set<String> = []
+
+        return try labels.map { label in
+            guard seenLabels.insert(label).inserted else {
+                throw TestError.duplicateRequestedCandidateLabel(label)
+            }
+            guard let definition = catalog[label] else {
+                throw TestError.unknownCandidateLabel(label)
+            }
+            return definition
+        }
+    }
+
+    private func importReusableCandidate(
+        _ entry: CandidateManifestEntry,
+        from sourceBundleRoot: URL,
+        into destinationBundleRoot: URL
+    ) throws {
+        let sourceDirectory = sourceBundleRoot.appendingPathComponent(entry.label, isDirectory: true)
+        let destinationDirectory = destinationBundleRoot.appendingPathComponent(entry.label, isDirectory: true)
+        if FileManager.default.fileExists(atPath: destinationDirectory.path) {
+            try FileManager.default.removeItem(at: destinationDirectory)
+        }
+        try FileManager.default.copyItem(at: sourceDirectory, to: destinationDirectory)
+    }
+
+    private func makeFixtureCandidateEntry(
+        bundleRoot: URL,
+        label: String,
+        preset: String,
+        crf: Int
+    ) throws -> CandidateManifestEntry {
+        let candidateDirectory = bundleRoot.appendingPathComponent(label, isDirectory: true)
+        try FileManager.default.createDirectory(at: candidateDirectory, withIntermediateDirectories: true)
+
+        let finalVideoURL = candidateDirectory.appendingPathComponent("\(label).mp4")
+        let reportURL = candidateDirectory.appendingPathComponent("run-report.json")
+        let diagnosticsURL = candidateDirectory.appendingPathComponent("diagnostics.log")
+        try Data("video".utf8).write(to: finalVideoURL)
+        try Data("{}".utf8).write(to: reportURL)
+        try Data("diagnostics".utf8).write(to: diagnosticsURL)
+
+        let frameURLs = [
+            candidateDirectory.appendingPathComponent("frame-05.png"),
+            candidateDirectory.appendingPathComponent("frame-20.png"),
+            candidateDirectory.appendingPathComponent("frame-50.png"),
+            candidateDirectory.appendingPathComponent("frame-80.png"),
+            candidateDirectory.appendingPathComponent("frame-95.png")
+        ]
+        for (index, frameURL) in frameURLs.enumerated() {
+            try writeSolidPNG(
+                color: CGColor(
+                    red: CGFloat(index) / 5.0,
+                    green: 0.4,
+                    blue: 0.8,
+                    alpha: 1
+                ),
+                to: frameURL
+            )
+        }
+
+        return CandidateManifestEntry(
+            label: label,
+            preset: preset,
+            crf: crf,
+            finalVideoPath: relativePath(from: bundleRoot, to: finalVideoURL),
+            runReportPath: relativePath(from: bundleRoot, to: reportURL),
+            diagnosticsLogPath: relativePath(from: bundleRoot, to: diagnosticsURL),
+            framePaths: frameURLs.map { relativePath(from: bundleRoot, to: $0) },
+            outputFileSizeBytes: 12_345_678,
+            renderElapsedSeconds: 42.5,
+            renderBackendSummary: "FFmpeg HDR backend: bundled ffmpeg + libx265",
+            renderBackendInfo: RenderBackendInfo(binarySource: .bundled, encoder: "libx265"),
+            resolvedVideoInfo: ResolvedRenderVideoInfo(width: 3840, height: 2160, frameRate: 30),
+            progressiveIntermediateUsage: .hardwareOnly,
+            intermediateEncoders: ["hevc_videotoolbox"],
+            commandSummaries: [
+                CandidateCommandSummaryManifest(
+                    stageLabel: "HDR prep 1/2",
+                    renderIntent: FFmpegRenderIntent.presentationIntermediate.rawValue,
+                    encoder: "hevc_videotoolbox",
+                    elapsedSeconds: 8.5,
+                    outputFileSizeBytes: 1_500_000
+                ),
+                CandidateCommandSummaryManifest(
+                    stageLabel: "HDR batch 1/1",
+                    renderIntent: FFmpegRenderIntent.finalBatch.rawValue,
+                    encoder: "libx265",
+                    elapsedSeconds: 22.0,
+                    outputFileSizeBytes: 10_000_000
+                )
+            ],
+            presentationTimingAudits: [
+                ProgressivePresentationTimingAudit(
+                    clipKind: .still,
+                    hasCaptureDateOverlay: false,
+                    commandCount: 1,
+                    clipCount: 1,
+                    totalElapsedSeconds: 8.5
+                )
+            ]
+        )
     }
 
     private func resolvedAuthorizationStatus(for discovery: PhotoKitMediaDiscoveryService) async -> PHAuthorizationStatus {

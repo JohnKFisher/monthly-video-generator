@@ -202,6 +202,7 @@ Operational updates after first packaged run:
 
 ## Changes Since Last Update
 
+- 2026-04-21: Modernized the app shell into a more Mac-native shape without changing the render pipeline: added a real `WindowGroup(..., id:)` main scene, command menus and keyboard shortcuts, a dedicated Settings scene, an About window, toolbar-owned primary actions, bookmark-backed output-folder persistence with fallback, extracted AppKit file-panel/Finder helpers, and split the main UI into left/right workflow panes for input/style/export versus queue/status/warnings.
 - 2026-04-21: The first real GitHub Actions push for `1.2.0 (207)` started both `build.yml` and `release.yml`, but both failed immediately on `macos-14` because the runner defaulted to Swift `5.10` while the package requires Swift tools `6.0`; both workflows now target `macos-15` for the rerun.
 - 2026-04-21: Bumped the checked-in release identity to `1.2.0 (207)` as the first intended public GitHub release line after the pre-push history cleanup, with the next step being remote Actions verification on the real `origin/main` push.
 - 2026-04-21: Created the public GitHub repository `JohnKFisher/monthly-video-generator`, but intentionally paused the first push so disposable `tmp/hdr_sdr_iter` experiment artifacts can be removed from tracked history before publication; `tmp/` is now a scratch-only ignored path.

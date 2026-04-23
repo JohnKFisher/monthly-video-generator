@@ -615,9 +615,9 @@ final class MainWindowViewModel: ObservableObject {
         case .slow:
             return "Slow uses the most conservative HDR libx265 thread caps (4 pools / 2 frame threads)."
         case .medium:
-            return "Medium uses balanced HDR libx265 thread caps (5 pools / 2 frame threads) and is the default."
+            return "Medium uses balanced HDR libx265 thread caps (5 pools / 2 frame threads)."
         case .fast:
-            return "Fast uses the most aggressive HDR libx265 thread caps (6 pools / 3 frame threads) for shorter renders on capable Macs."
+            return "Fast uses the most aggressive HDR libx265 thread caps (6 pools / 3 frame threads) and is the default for Plex/Infuse HDR exports."
         }
     }
 
@@ -2159,7 +2159,8 @@ final class MainWindowViewModel: ObservableObject {
             preparation: preparation,
             outputURL: outputURL,
             diagnosticsLogURL: renderResult.diagnosticsLogURL,
-            renderBackendSummary: renderResult.backendSummary
+            renderBackendSummary: renderResult.backendSummary,
+            presentationTimingAudits: renderResult.executionDetails?.presentationTimingAudits ?? []
         )
         let reportURL = outputURL.deletingPathExtension().appendingPathExtension("json")
         try? runReportService.write(report, to: reportURL)

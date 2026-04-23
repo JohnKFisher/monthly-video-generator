@@ -245,9 +245,9 @@ public struct ExportProfile: Equatable, Codable, Sendable {
         dynamicRange: .hdr,
         hdrFFmpegBinaryMode: .bundledPreferred,
         hdrHEVCEncoderMode: .automatic,
-        hdrX265Speed: .medium,
+        hdrX265Speed: .fast,
         audioLayout: .smart,
-        bitrateMode: .balanced
+        bitrateMode: .sizeFirst
     )
 
     private enum CodingKeys: String, CodingKey {

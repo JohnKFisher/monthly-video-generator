@@ -44,13 +44,13 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedYear, 2025)
     }
 
-    func testHDRX265SpeedDefaultsToMedium() {
+    func testHDRX265SpeedDefaultsToFast() {
         let viewModel = makeViewModel(
             coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
             preferencesStore: makePreferencesStore()
         )
 
-        XCTAssertEqual(viewModel.selectedHDRX265Speed, .medium)
+        XCTAssertEqual(viewModel.selectedHDRX265Speed, .fast)
     }
 
     func testPersistedAlbumFilterIsOverriddenBackToMonthYearOnLaunch() throws {
@@ -695,7 +695,7 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertEqual(value(in: summary, forRowNamed: "Codec"), "HEVC")
         XCTAssertEqual(value(in: summary, forRowNamed: "HDR HEVC Encoder"), "Default (VideoToolbox)")
         XCTAssertEqual(value(in: summary, forRowNamed: "Audio"), "Smart (5.1)")
-        XCTAssertEqual(value(in: summary, forRowNamed: "Bitrate"), "Balanced")
+        XCTAssertEqual(value(in: summary, forRowNamed: "Bitrate"), "Size First")
         XCTAssertEqual(value(in: summary, forRowNamed: "Resolution"), "Smart (720p)")
         XCTAssertEqual(value(in: summary, forRowNamed: "Frame Rate"), "Smart (60 fps)")
         XCTAssertEqual(value(in: summary, forRowNamed: "Range"), "HDR")
@@ -771,7 +771,7 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertEqual(request.plexTVMetadata?.embedded.provenance?.version, "0.5.0 (20260307200552)")
         XCTAssertEqual(
             request.plexTVMetadata?.embedded.provenance?.information,
-            "1280x720, 60 fps, HDR (HLG), HEVC, AAC Stereo, MP4, Balanced bitrate"
+            "1280x720, 60 fps, HDR (HLG), HEVC, AAC Stereo, MP4, Size-first bitrate"
         )
 
         viewModel.plexShowTitle = "Changed After Start"
@@ -920,7 +920,7 @@ final class MainWindowViewModelTests: XCTestCase {
 
         restoredViewModel.resetExportSettingsToPlexDefaults()
 
-        XCTAssertEqual(restoredViewModel.selectedHDRX265Speed, .medium)
+        XCTAssertEqual(restoredViewModel.selectedHDRX265Speed, .fast)
     }
 
     func testCaptureDateOverlayDefaultsToEnabled() {
