@@ -91,9 +91,14 @@ This repo uses two GitHub Actions workflows for shipping from committed source:
 
 The release workflow publishes the DMG built from committed source and keeps distribution notes honest: ad-hoc signing is supported now, notarization is not.
 
-## Optional: Bundle FFmpeg For Final Export
+## Bundled FFmpeg For Final Export
 
-To install pinned FFmpeg/ffprobe binaries into `third_party/ffmpeg/bin`:
+Release packaging requires the committed FFmpeg/ffprobe slices under
+`third_party/ffmpeg/darwin-arm64` and `third_party/ffmpeg/darwin-x64`.
+`./scripts/build_app.sh` fails before packaging if the bundle is missing, cannot
+launch, or does not include the requested app architectures.
+
+To refresh a local FFmpeg/ffprobe pair under ignored `third_party/ffmpeg/bin`:
 
 ```bash
 FFMPEG_BUNDLE_URL="https://example.com/ffmpeg-arm64-gpl.zip" \
@@ -106,13 +111,16 @@ FFMPEG_BUNDLE_SHA256="<sha256>" \
 For strict version matching, set both `FFPROBE_BUNDLE_URL` and `FFPROBE_BUNDLE_SHA256`
 from the same release/source as `FFMPEG_BUNDLE_URL`.
 
-Then run:
+The fetch helper is useful for local experiments, but the normal release bundle
+comes from the committed macOS architecture slices. After refreshing those
+committed slices, verify the bundle, update `third_party/ffmpeg/PROVENANCE.txt`,
+and run:
 
 ```bash
 ./scripts/build_app.sh
 ```
 
-If binaries are present, they are copied into:
+The binaries are copied into:
 
 - `dist/Monthly Video Generator.app/Contents/Resources/FFmpeg/`
 

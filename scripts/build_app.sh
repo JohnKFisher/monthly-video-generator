@@ -14,7 +14,7 @@ CONTENTS_DIR=""
 MACOS_DIR=""
 RESOURCES_DIR=""
 FRAMEWORKS_DIR=""
-THIRD_PARTY_FFMPEG_BIN_DIR="$ROOT_DIR/third_party/ffmpeg/bin"
+THIRD_PARTY_FFMPEG_ROOT="$ROOT_DIR/third_party/ffmpeg"
 ICON_NAME="AppIcon"
 ICON_GENERATOR_SCRIPT="$ROOT_DIR/scripts/generate_app_icon.swift"
 MINIMUM_SYSTEM_VERSION="15.0"
@@ -139,7 +139,60 @@ codesign_target() {
   codesign "${codesign_args[@]}" "$target"
 }
 
+validate_tool_launch() {
+  local tool_path="$1"
+  local label="$2"
+  shift 2
+  local -a required_archs=("$@")
+
+  if [[ ! -x "$tool_path" ]]; then
+    echo "Error: required bundled $label is missing or not executable at $tool_path." >&2
+    exit 1
+  fi
+
+  if ! "$tool_path" -version >/dev/null 2>&1; then
+    echo "Error: required bundled $label exists but failed to launch at $tool_path." >&2
+    "$tool_path" -version >&2 || true
+    exit 1
+  fi
+
+  if command -v lipo >/dev/null 2>&1; then
+    if ! lipo "$tool_path" -verify_arch "${required_archs[@]}" >/dev/null 2>&1; then
+      echo "Error: required bundled $label at $tool_path does not contain architectures: ${required_archs[*]}." >&2
+      lipo -info "$tool_path" >&2 || true
+      exit 1
+    fi
+  fi
+}
+
+ffmpeg_arch_dir() {
+  local arch="$1"
+  case "$arch" in
+    arm64)
+      printf '%s\n' "$THIRD_PARTY_FFMPEG_ROOT/darwin-arm64"
+      ;;
+    x86_64)
+      printf '%s\n' "$THIRD_PARTY_FFMPEG_ROOT/darwin-x64"
+      ;;
+    *)
+      echo "Error: no bundled FFmpeg slice is configured for architecture '$arch'." >&2
+      exit 1
+      ;;
+  esac
+}
+
+ffmpeg_slice_path() {
+  local arch="$1"
+  local tool="$2"
+  printf '%s/%s\n' "$(ffmpeg_arch_dir "$arch")" "$tool"
+}
+
 cd "$ROOT_DIR"
+
+for arch in "${BUILD_ARCHS[@]}"; do
+  validate_tool_launch "$(ffmpeg_slice_path "$arch" ffmpeg)" "ffmpeg $arch" "$arch"
+  validate_tool_launch "$(ffmpeg_slice_path "$arch" ffprobe)" "ffprobe $arch" "$arch"
+done
 
 for arch in "${BUILD_ARCHS[@]}"; do
   build_release_slice "$arch"
@@ -172,15 +225,24 @@ swift "$ICON_GENERATOR_SCRIPT" \
 iconutil --convert icns "$ICONSET_DIR" --output "$ICON_OUTPUT"
 ditto --noextattr --noqtn "$ICON_OUTPUT" "$RESOURCES_DIR/${ICON_NAME}.icns"
 
-if [[ -x "$THIRD_PARTY_FFMPEG_BIN_DIR/ffmpeg" && -x "$THIRD_PARTY_FFMPEG_BIN_DIR/ffprobe" ]]; then
-  mkdir -p "$RESOURCES_DIR/FFmpeg"
-  ditto --noextattr --noqtn "$THIRD_PARTY_FFMPEG_BIN_DIR/ffmpeg" "$RESOURCES_DIR/FFmpeg/ffmpeg"
-  ditto --noextattr --noqtn "$THIRD_PARTY_FFMPEG_BIN_DIR/ffprobe" "$RESOURCES_DIR/FFmpeg/ffprobe"
-  chmod +x "$RESOURCES_DIR/FFmpeg/ffmpeg" "$RESOURCES_DIR/FFmpeg/ffprobe"
-  echo "Bundled FFmpeg binaries from: $THIRD_PARTY_FFMPEG_BIN_DIR"
+mkdir -p "$RESOURCES_DIR/FFmpeg"
+FFMPEG_SLICE_PATHS=()
+FFPROBE_SLICE_PATHS=()
+for arch in "${BUILD_ARCHS[@]}"; do
+  FFMPEG_SLICE_PATHS+=("$(ffmpeg_slice_path "$arch" ffmpeg)")
+  FFPROBE_SLICE_PATHS+=("$(ffmpeg_slice_path "$arch" ffprobe)")
+done
+if [[ "${#BUILD_ARCHS[@]}" -eq 1 ]]; then
+  ditto --noextattr --noqtn "${FFMPEG_SLICE_PATHS[0]}" "$RESOURCES_DIR/FFmpeg/ffmpeg"
+  ditto --noextattr --noqtn "${FFPROBE_SLICE_PATHS[0]}" "$RESOURCES_DIR/FFmpeg/ffprobe"
 else
-  echo "No bundled FFmpeg binaries found at $THIRD_PARTY_FFMPEG_BIN_DIR (the app will require explicit approval before any system FFmpeg fallback)."
+  lipo -create "${FFMPEG_SLICE_PATHS[@]}" -output "$RESOURCES_DIR/FFmpeg/ffmpeg"
+  lipo -create "${FFPROBE_SLICE_PATHS[@]}" -output "$RESOURCES_DIR/FFmpeg/ffprobe"
 fi
+chmod +x "$RESOURCES_DIR/FFmpeg/ffmpeg" "$RESOURCES_DIR/FFmpeg/ffprobe"
+validate_tool_launch "$RESOURCES_DIR/FFmpeg/ffmpeg" "packaged ffmpeg" "${BUILD_ARCHS[@]}"
+validate_tool_launch "$RESOURCES_DIR/FFmpeg/ffprobe" "packaged ffprobe" "${BUILD_ARCHS[@]}"
+echo "Bundled FFmpeg binaries from: $THIRD_PARTY_FFMPEG_ROOT"
 
 if [[ -n "$RESOURCE_SOURCE_DIR" ]]; then
   while IFS= read -r resource_bundle; do
@@ -251,6 +313,7 @@ codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
 rm -rf "$FINAL_APP_BUNDLE"
 mkdir -p "$DIST_DIR"
 ditto "$APP_BUNDLE" "$FINAL_APP_BUNDLE"
+xattr -cr "$FINAL_APP_BUNDLE"
 
 echo "Built app bundle: $FINAL_APP_BUNDLE"
 echo "Version: $APP_VERSION ($CURRENT_BUILD_NUMBER)"

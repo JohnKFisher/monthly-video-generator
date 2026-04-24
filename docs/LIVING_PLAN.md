@@ -49,6 +49,7 @@ Implemented now:
 - Added a second offline title-treatment preview collection, `current-collage-family`, centered on the winning `current-collage` opener: `21` playable collage-focused variants (`1` control + `20` new variations) grouped into `close` and `wide` contact sheets, with deterministic larger preview pools and `--collection` CLI selection.
 - Repo governance now includes `docs/DECISIONS.md`, with root/conditional agent-rule alignment documented separately from shipping app behavior.
 - Release identity now comes from committed `VERSION` + `BUILD_NUMBER`, while `scripts/build_app.sh` stays packaging-only and `scripts/prepare_release.sh` handles intentional patch/build bumps.
+- Bundled FFmpeg/ffprobe are now committed release inputs, and `scripts/build_app.sh` fails early if the bundle is absent, cannot launch, or lacks the requested app architectures.
 - Shared `.dmg` packaging now lives in `scripts/create_dmg.sh`, and first-pass GitHub Actions build/release workflows are checked in for initial GitHub publication.
 - README/license/About-style surfaces now disclose the personal-use nature of the app, MIT licensing, current ad-hoc-signed/non-notarized macOS distribution state, and an optional repository link that stays hidden until configured.
 
@@ -207,6 +208,7 @@ Operational updates after first packaged run:
 - 2026-04-21: The first real GitHub Actions push for `1.2.0 (207)` started both `build.yml` and `release.yml`, but both failed immediately on `macos-14` because the runner defaulted to Swift `5.10` while the package requires Swift tools `6.0`; both workflows now target `macos-15` for the rerun.
 - 2026-04-21: Bumped the checked-in release identity to `1.2.0 (207)` as the first intended public GitHub release line after the pre-push history cleanup, with the next step being remote Actions verification on the real `origin/main` push.
 - 2026-04-24: Bumped the checked-in release identity to `2.1.0 (211)` for the richer Status panel and Live Snapshot release.
+- 2026-04-24: Bumped the checked-in release identity to `2.1.1 (212)` to republish with committed bundled FFmpeg/ffprobe slices after the `2.1.0` CI artifact proved the ignored local bundle was missing from clean release builds.
 - 2026-04-21: Created the public GitHub repository `JohnKFisher/monthly-video-generator`, but intentionally paused the first push so disposable `tmp/hdr_sdr_iter` experiment artifacts can be removed from tracked history before publication; `tmp/` is now a scratch-only ignored path.
 - 2026-03-21: Final Plex-oriented MP4 exports now prefer standard MP4/iTunes-style metadata atoms for title/show/episode fields instead of QuickTime Keys so Plex is more likely to honor custom episode titles; as a tradeoff, app-specific `com.jkfisher.monthlyvideogenerator.*` custom metadata is no longer embedded in those final MP4 files.
 - 2026-03-21: Custom opening-title text now drives the Plex-facing episode title as well as the embedded MP4 `title` metadata tag for final renders, and auto-managed output filenames now use that custom title while keeping season/episode numbering month-based.
@@ -275,6 +277,7 @@ Operational updates after first packaged run:
 - 2026-04-20: Changed packaging so `scripts/build_app.sh` reads committed `VERSION` + `BUILD_NUMBER` without mutating tracked version files, added `scripts/prepare_release.sh` for intentional patch/build bumps, and added `scripts/create_dmg.sh` for shared local/CI DMG packaging.
 - 2026-04-20: Added first-pass GitHub Actions build/release workflows for future GitHub initialization, publishing through the repo's shared shell scripts and documenting that macOS distribution remains ad-hoc signed and not notarized.
 - 2026-04-20: Updated README/license/About-style surfaces for personal-use disclosure, MIT licensing, honest non-notarized distribution guidance, and an optional clickable repository link that stays hidden until configured.
+- 2026-04-24: Replaced the stale local ffprobe fallback with committed macOS `ffmpeg`/`ffprobe` slices from `descriptinc/ffmpeg-ffprobe-static` `b7.1.0-rc.1`, documented provenance, and made packaging fail instead of silently publishing an app without `Contents/Resources/FFmpeg`.
 - 2026-03-05: Force-closed FFmpeg output/error pipes after process termination to prevent post-encode completion hangs while awaiting stream readers.
 - 2026-03-05: Added an FFmpeg HDR stall watchdog that monitors both `out_time` advancement and output-file byte growth, terminating stuck processes with explicit stall context.
 - 2026-03-05: Added phase/status callback plumbing from renderer to UI and upgraded on-screen render status with HDR encode elapsed/output-size/speed details.

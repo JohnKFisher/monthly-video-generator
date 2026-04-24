@@ -1,0 +1,16 @@
+fetched_at=2026-04-24T01:57:02Z
+source=descriptinc/ffmpeg-ffprobe-static
+release_tag=b7.1.0-rc.1
+ffmpeg_arm64_url=https://github.com/descriptinc/ffmpeg-ffprobe-static/releases/download/b7.1.0-rc.1/ffmpeg-darwin-arm64
+ffmpeg_arm64_sha256=6d175a4743ca50256e89a8cdd731100f9cee33bd79aeea46894d209410dc6617
+ffmpeg_x64_url=https://github.com/descriptinc/ffmpeg-ffprobe-static/releases/download/b7.1.0-rc.1/ffmpeg-darwin-x64
+ffmpeg_x64_sha256=4a4a968b98859588e98500ae25973d80a5ca5eed0724222b9f76360dcb72a001
+ffprobe_arm64_url=https://github.com/descriptinc/ffmpeg-ffprobe-static/releases/download/b7.1.0-rc.1/ffprobe-darwin-arm64
+ffprobe_arm64_sha256=df2684842eca145bd72f4724ce9cecbf38558a4d64b2aef7846680f877702baa
+ffprobe_x64_url=https://github.com/descriptinc/ffmpeg-ffprobe-static/releases/download/b7.1.0-rc.1/ffprobe-darwin-x64
+ffprobe_x64_sha256=ce5414269f0efa1e88b5e23b57f801d5b9a40be554716544936e0332b4601a62
+committed_ffmpeg_arm64=third_party/ffmpeg/darwin-arm64/ffmpeg
+committed_ffmpeg_x64=third_party/ffmpeg/darwin-x64/ffmpeg
+committed_ffprobe_arm64=third_party/ffmpeg/darwin-arm64/ffprobe
+committed_ffprobe_x64=third_party/ffmpeg/darwin-x64/ffprobe
+packaging=The app bundle assembles requested architectures into Contents/Resources/FFmpeg using lipo during scripts/build_app.sh.
