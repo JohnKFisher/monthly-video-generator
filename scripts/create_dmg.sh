@@ -50,6 +50,19 @@ if [[ ! -d "$APP_PATH" ]]; then
   exit 1
 fi
 
+clear_code_signing_detritus() {
+  local target="$1"
+
+  xattr -cr "$target" 2>/dev/null || true
+  dot_clean -m "$target" 2>/dev/null || true
+  while IFS= read -r path; do
+    xattr -d com.apple.FinderInfo "$path" 2>/dev/null || true
+    xattr -d com.apple.ResourceFork "$path" 2>/dev/null || true
+  done < <(find "$target" -print)
+  xattr -d com.apple.FinderInfo "$target" 2>/dev/null || true
+  xattr -d com.apple.ResourceFork "$target" 2>/dev/null || true
+}
+
 architecture_label() {
   local executable_path="$1"
   local archs
@@ -86,9 +99,9 @@ staging_dir="$(mktemp -d "${TMPDIR:-/tmp}/monthly-video-generator-dmg.XXXXXX")"
 trap 'rm -rf "$staging_dir"' EXIT
 
 STAGED_APP_PATH="$staging_dir/$(basename "$APP_PATH")"
-ditto "$APP_PATH" "$STAGED_APP_PATH"
+ditto --noextattr --noqtn "$APP_PATH" "$STAGED_APP_PATH"
 chmod -R u+w "$STAGED_APP_PATH"
-xattr -cr "$STAGED_APP_PATH"
+clear_code_signing_detritus "$STAGED_APP_PATH"
 codesign --verify --deep --strict --verbose=2 "$STAGED_APP_PATH" >/dev/null
 
 hdiutil create \

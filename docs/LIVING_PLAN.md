@@ -330,6 +330,7 @@ Operational updates after first packaged run:
 - 2026-03-08: Retuned SDR-to-HLG uplift to use a highlight-preserving shoulder curve in linear light instead of a hard `2 x` clamp, keeping the brighter HDR SDR fallback while recovering blown highlight detail in SDR stills and videos.
 - 2026-03-09: Replaced the SDR HDR per-channel uplift with a luma-driven `lut3d` recovery path plus contrast compensation, preserving bright SDR color/detail much better than the earlier shoulder/vibrance tuning while avoiding the prohibitive runtime cost of a raw `geq` implementation.
 - 2026-03-09: Retagged Display P3 SDR still intermediates to `IEC_sRGB` transfer semantics and replaced the shared SDR-to-HLG uplift branch with a transfer-aware display-referred HLG mapping (`bt709` for SDR video, `iec61966-2-1` for Display P3 stills). Follow-up same day: nudged SDR HLG nominal peak from `203` to `225` after a full `VideoTest` pass showed the new mapping preserved color much better but left SDR sources slightly too dark overall.
+- 2026-04-24: Restored the luma-lift LUT + `npl=1000` + contrast chain for SDR sources in HDR exports after a real Photos album sample showed the display-referred `npl=225` branch landing SDR video and stills materially too dark in HLG playback; Display P3 SDR stills keep transfer-aware input tags before the restored luma lift.
 - 2026-03-09: Made opening title-card intermediates dynamic-range-aware so HDR exports now materialize title cards as HLG/BT.2020 instead of always generating SDR BT.709 intro clips.
 - 2026-03-08: Added FFprobe-based Dolby Vision side-data detection during HDR render prep and explicit diagnostics when Dolby Vision sources fall back to plain HLG final output.
 - 2026-03-09: Removed the FFmpeg engine picker from the UI, made bundled FFmpeg the default render path, and added an explicit per-render confirmation dialog before any fallback to system FFmpeg.
@@ -377,4 +378,4 @@ Durable `known-good/*` tags are not pruned by the routine checkpoint-retention p
 
 ## Last Updated
 
-2026-04-20 10:30 America/New_York by Codex
+2026-04-24 13:40 America/New_York by Codex

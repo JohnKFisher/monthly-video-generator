@@ -139,6 +139,37 @@ codesign_target() {
   codesign "${codesign_args[@]}" "$target"
 }
 
+clear_code_signing_detritus() {
+  local target="$1"
+
+  xattr -cr "$target" 2>/dev/null || true
+  dot_clean -m "$target" 2>/dev/null || true
+  while IFS= read -r path; do
+    xattr -d com.apple.FinderInfo "$path" 2>/dev/null || true
+    xattr -d com.apple.ResourceFork "$path" 2>/dev/null || true
+  done < <(find "$target" -print)
+  xattr -d com.apple.FinderInfo "$target" 2>/dev/null || true
+  xattr -d com.apple.ResourceFork "$target" 2>/dev/null || true
+}
+
+verify_codesign_strict() {
+  local target="$1"
+
+  if codesign --verify --deep --strict --verbose=2 "$target"; then
+    return 0
+  fi
+
+  for _ in 1 2 3; do
+    clear_code_signing_detritus "$target"
+    sleep 0.2
+    if codesign --verify --deep --strict --verbose=2 "$target"; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 validate_tool_launch() {
   local tool_path="$1"
   local label="$2"
@@ -312,16 +343,16 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 PLIST
 
 chmod -R u+w "$APP_BUNDLE"
-xattr -cr "$APP_BUNDLE"
+clear_code_signing_detritus "$APP_BUNDLE"
 
 codesign_target "$APP_BUNDLE"
-codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
+verify_codesign_strict "$APP_BUNDLE"
 
 rm -rf "$FINAL_APP_BUNDLE"
 mkdir -p "$DIST_DIR"
 ditto --noextattr --noqtn "$APP_BUNDLE" "$FINAL_APP_BUNDLE"
-xattr -cr "$FINAL_APP_BUNDLE"
-codesign --verify --deep --strict --verbose=2 "$FINAL_APP_BUNDLE"
+clear_code_signing_detritus "$FINAL_APP_BUNDLE"
+verify_codesign_strict "$FINAL_APP_BUNDLE"
 
 echo "Built app bundle: $FINAL_APP_BUNDLE"
 echo "Version: $APP_VERSION ($CURRENT_BUILD_NUMBER)"

@@ -19,7 +19,9 @@ struct FFmpegCommand {
 
 struct FFmpegCommandBuilder {
     static let hlgSDRNominalPeak = 1400
-    static let hdrSDRNominalPeak = 225
+    static let hdrSDRNominalPeak = 1000
+    static let hdrSDRContrastCompensation = 1.08
+    private let supportFileLocator = FFmpegSupportFileLocator()
 
     func buildCommand(plan: FFmpegRenderPlan, resolution: FFmpegBinaryResolution) throws -> FFmpegCommand {
         guard !plan.clips.isEmpty else {
@@ -591,11 +593,17 @@ struct FFmpegCommandBuilder {
     private func sdrToHLGUpliftFilter(for colorInfo: ColorInfo) throws -> String {
         let transferIn = sdrTransferInput(for: colorInfo)
         let primariesIn = sdrPrimariesInput(for: colorInfo)
-        return "\(unknownSDRInputPrelude(for: colorInfo))zscale=transferin=\(transferIn):primariesin=\(primariesIn):matrixin=bt709:transfer=linear," +
+        let prelude = unknownSDRInputPrelude(for: colorInfo)
+        let contrast = String(format: "%.2f", Self.hdrSDRContrastCompensation)
+        let lutURL = try supportFileLocator.sdrLumaLiftLUTURL()
+        return "\(prelude)zscale=transferin=\(transferIn):primariesin=\(primariesIn):matrixin=bt709:transfer=linear," +
             "format=gbrpf32le," +
-            // Map SDR into HLG with a lower nominal peak so SDR white lands in
-            // the expected HLG range instead of being pushed toward washed-out highlights.
-            "zscale=transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc:range=tv:npl=\(Self.hdrSDRNominalPeak)"
+            // Apply the SDR uplift through a precomputed luma-driven 3D LUT so
+            // SDR video remains bright in real HLG playback while preserving
+            // highlight detail better than a simple scalar boost.
+            "lut3d=file=\(lutURL.path):interp=tetrahedral," +
+            "zscale=transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc:range=tv:npl=\(Self.hdrSDRNominalPeak)," +
+            "eq=contrast=\(contrast)"
     }
 
     private func unknownSDRInputPrelude(for colorInfo: ColorInfo) -> String {
