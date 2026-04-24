@@ -49,7 +49,8 @@ Implemented now:
 - Added a second offline title-treatment preview collection, `current-collage-family`, centered on the winning `current-collage` opener: `21` playable collage-focused variants (`1` control + `20` new variations) grouped into `close` and `wide` contact sheets, with deterministic larger preview pools and `--collection` CLI selection.
 - Repo governance now includes `docs/DECISIONS.md`, with root/conditional agent-rule alignment documented separately from shipping app behavior.
 - Release identity now comes from committed `VERSION` + `BUILD_NUMBER`, while `scripts/build_app.sh` stays packaging-only and `scripts/prepare_release.sh` handles intentional patch/build bumps.
-- Bundled FFmpeg/ffprobe are now committed release inputs, and `scripts/build_app.sh` fails early if the bundle is absent, cannot launch, or lacks the requested app architectures.
+- Bundled FFmpeg/ffprobe are now committed release inputs using pinned FFmpeg 8.x static macOS builds, and `scripts/build_app.sh` fails early if the bundle is absent, cannot launch, or lacks the requested app architectures.
+- Progressive HDR `finalBatch` libx265 assembly keeps the approved `crf21-fast` default path, but now retries once with conservative x265 thread settings if FFmpeg exits before producing output.
 - Shared `.dmg` packaging now lives in `scripts/create_dmg.sh`, and first-pass GitHub Actions build/release workflows are checked in for initial GitHub publication.
 - README/license/About-style surfaces now disclose the personal-use nature of the app, MIT licensing, current ad-hoc-signed/non-notarized macOS distribution state, and an optional repository link that stays hidden until configured.
 
@@ -277,7 +278,9 @@ Operational updates after first packaged run:
 - 2026-04-20: Changed packaging so `scripts/build_app.sh` reads committed `VERSION` + `BUILD_NUMBER` without mutating tracked version files, added `scripts/prepare_release.sh` for intentional patch/build bumps, and added `scripts/create_dmg.sh` for shared local/CI DMG packaging.
 - 2026-04-20: Added first-pass GitHub Actions build/release workflows for future GitHub initialization, publishing through the repo's shared shell scripts and documenting that macOS distribution remains ad-hoc signed and not notarized.
 - 2026-04-20: Updated README/license/About-style surfaces for personal-use disclosure, MIT licensing, honest non-notarized distribution guidance, and an optional clickable repository link that stays hidden until configured.
-- 2026-04-24: Replaced the stale local ffprobe fallback with committed macOS `ffmpeg`/`ffprobe` slices from `descriptinc/ffmpeg-ffprobe-static` `b7.1.0-rc.1`, documented provenance, and made packaging fail instead of silently publishing an app without `Contents/Resources/FFmpeg`.
+- 2026-04-24: Replaced the stale local ffprobe fallback with committed macOS `ffmpeg`/`ffprobe` slices, documented provenance, and made packaging fail instead of silently publishing an app without `Contents/Resources/FFmpeg`.
+- 2026-04-24: Moved the committed bundled toolchain forward to pinned FFmpeg/FFprobe 8.x static macOS builds and added a one-time conservative retry for zero-output progressive HDR `finalBatch` libx265 startup failures while preserving the `crf21-fast` default.
+- 2026-04-24: Bumped the checked-in release identity to `2.1.2 (213)` for the FFmpeg 8.x bundled-toolchain and final-batch retry repair.
 - 2026-03-05: Force-closed FFmpeg output/error pipes after process termination to prevent post-encode completion hangs while awaiting stream readers.
 - 2026-03-05: Added an FFmpeg HDR stall watchdog that monitors both `out_time` advancement and output-file byte growth, terminating stuck processes with explicit stall context.
 - 2026-03-05: Added phase/status callback plumbing from renderer to UI and upgraded on-screen render status with HDR encode elapsed/output-size/speed details.

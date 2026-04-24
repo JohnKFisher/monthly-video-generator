@@ -10,8 +10,9 @@ This project ships a bundled FFmpeg toolchain for HDR exports.
 ### Acquisition
 
 The current committed bundle stores separate macOS arm64 and x64 slices from
-`descriptinc/ffmpeg-ffprobe-static` `b7.1.0-rc.1`. Packaging assembles the
-requested app architectures into `Contents/Resources/FFmpeg/ffmpeg` and
+OSXExperts static macOS builds. The arm64 slice is FFmpeg/FFprobe `8.1`, and
+the x64 slice is FFmpeg/FFprobe `8.0`. Packaging assembles the requested app
+architectures into `Contents/Resources/FFmpeg/ffmpeg` and
 `Contents/Resources/FFmpeg/ffprobe`.
 `scripts/build_app.sh` treats the bundle as required and fails before packaging
 if either tool is missing, not executable, not launchable, or missing one of the

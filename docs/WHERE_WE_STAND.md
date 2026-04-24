@@ -1,16 +1,17 @@
 # Monthly Video Generator
 
 Current version/build:
-- `2.1.1`
-- Latest checked-in build identity: `212`
+- `2.1.2`
+- Latest checked-in build identity: `213`
 
 Current overall status:
-- The app is usable now for local folder-based and Apple Photos-based monthly video exports, and this `2.1.1` release keeps the protected HDR/export path intact while fixing release packaging so bundled FFmpeg/ffprobe are present in clean CI-built DMGs.
-- The bundled FFmpeg/ffprobe toolchain is now committed as validated macOS architecture slices, and packaging fails before producing an app if either tool is missing, not launchable, or missing a requested architecture.
-- The `2.1.0` GitHub DMG was published without bundled FFmpeg because the local `third_party/ffmpeg/bin` inputs were ignored; use `2.1.1` or later for packaged HDR exports.
+- The app is usable now for local folder-based and Apple Photos-based monthly video exports, and this `2.1.2` release keeps the protected HDR/export path intact while moving the bundled FFmpeg/ffprobe toolchain forward to pinned FFmpeg 8.x builds.
+- The bundled FFmpeg/ffprobe toolchain is now committed as validated macOS architecture slices using pinned FFmpeg 8.x static builds, and packaging fails before producing an app if either tool is missing, not launchable, or missing a requested architecture.
+- The `2.1.0` GitHub DMG was published without bundled FFmpeg because the local `third_party/ffmpeg/bin` inputs were ignored; use `2.1.1` or later for packaged HDR exports, and prefer `2.1.2` or later for FFmpeg 8.x packaged HDR exports.
 - Opening title cards now randomize per export job across the corrected `21`-variant collage-family set, including queued exports and full-year runs.
 - Fresh/reset defaults now use a `10.0s` opening title card, and release identity now comes from the checked-in `VERSION` plus `BUILD_NUMBER` files.
 - The default Plex/Infuse HDR export now uses the bakeoff-approved `crf21-fast` final `libx265` tuning.
+- Progressive HDR final batches now make one recovery retry with conservative x265 thread settings when FFmpeg/libx265 exits before producing any output.
 
 What is working now:
 - Local-only macOS app workflow with no telemetry or cloud requirement.
@@ -26,9 +27,9 @@ What is working now:
 - Safe output naming, JSON run reports, and optional diagnostics logs.
 - Audit-only progressive HDR presentation timing rollups now record `title` / `still` / `video` clip counts plus capture-date-overlay state in diagnostics and structured run reports.
 - The Status panel now shows richer render liveness details and an always-visible Live Snapshot area that can capture occasional still snapshots from completed/readable render artifacts without attempting live playback.
-- FFmpeg-based final exports with required bundled FFmpeg support in packaged builds.
+- FFmpeg-based final exports with required bundled FFmpeg 8.x support in packaged builds.
 - HDR `HEVC` output for the current Plex/Infuse/Apple TV 4K workflow.
-- Default Plex/Infuse HDR exports now ship with the `crf21-fast` final software HEVC tuning that won the local bakeoff review.
+- Default Plex/Infuse HDR exports now ship with the `crf21-fast` final software HEVC tuning that won the local bakeoff review, with a conservative one-time retry only for zero-output final-batch libx265 startup failures.
 - Embedded MP4 metadata and named chapters for the `Family Videos` workflow.
 - Stable still-image handling through Apple/AVFoundation materialized intermediate clips.
 - HDR still-photo gain-map decoding that respects source-image orientation for affected rotated/oriented HDR photos.
@@ -54,13 +55,14 @@ Known limitations and trust warnings:
 - Large HDR `HEVC` exports can take a long time and use substantial CPU, memory, disk, and temporary storage.
 - Apple Photos exports depend on Photos permissions and can be affected by PhotoKit/iCloud materialization latency.
 - The new `crf21-fast` HDR default was approved from local bakeoff artifacts, but especially demanding motion-heavy material may still justify future spot checks before pushing compression further.
+- The conservative final-batch retry is intentionally narrow: it only runs after a zero-output `libx265` startup failure, so it does not protect against every possible late encode or packaging failure.
 - The chosen randomized opening-title treatment is recorded in the JSON run report, not surfaced in the main UI yet.
 - Packaged builds are ad-hoc signed and not notarized, so downloaded copies may still require Finder `Open` or `System Settings -> Privacy & Security -> Open Anyway`.
 - The current bundle identifier remains mixed-case (`com.jkfisher.MonthlyVideoGenerator`) pending a separate migration decision; it was intentionally not renamed during this alignment pass.
 
 Setup/runtime requirements:
 - macOS 15-class environment for the current SwiftPM/app workflow.
-- Committed macOS FFmpeg/ffprobe slices packaged into the app for the preferred export path.
+- Committed macOS FFmpeg/ffprobe 8.x slices packaged into the app for the preferred export path.
 - Photos permission for Apple Photos exports.
 - Enough free disk space for temporary intermediates and final exports.
 

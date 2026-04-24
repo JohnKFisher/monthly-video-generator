@@ -111,6 +111,53 @@ final class FFmpegProgressivePipelineTests: XCTestCase {
         XCTAssertTrue(executionPlan.batchPlans.allSatisfy { $0.plan.x265ThreadProfile == .shortJobBoost })
     }
 
+    func testConservativeFinalBatchRetryPlanPreservesDeliverySettings() throws {
+        let builder = FFmpegHDRProgressivePipelineBuilder()
+        let commandBuilder = FFmpegCommandBuilder()
+        let plan = FFmpegRenderPlan(
+            clips: makeHDRPlan(clipCount: 22, clipDuration: 4.0, transitionDuration: 0.75).clips,
+            transitionDurationSeconds: 0.75,
+            endFadeToBlackDurationSeconds: 1.5,
+            outputURL: URL(fileURLWithPath: "/tmp/final.mp4"),
+            renderSize: CGSize(width: 3840, height: 2160),
+            frameRate: 60,
+            audioLayout: .stereo,
+            bitrateMode: .sizeFirst,
+            container: .mp4,
+            videoCodec: .hevc,
+            dynamicRange: .hdr,
+            hdrHEVCEncoderMode: .automatic,
+            x265ThreadProfile: .shortJobBoost,
+            renderIntent: .finalDelivery
+        )
+        let executionPlan = try XCTUnwrap(makeExecutionPlan(builder: builder, plan: plan))
+        let originalBatchPlan = try XCTUnwrap(executionPlan.batchPlans.first?.plan)
+
+        let retryPlan = originalBatchPlan.withX265ThreadProfile(.conservative)
+        let retryCommand = try commandBuilder.buildCommand(plan: retryPlan, resolution: makeCapableResolution())
+        let joined = retryCommand.arguments.joined(separator: " ")
+        let processorCount = max(ProcessInfo.processInfo.activeProcessorCount, 1)
+
+        XCTAssertEqual(retryPlan.clips, originalBatchPlan.clips)
+        XCTAssertEqual(retryPlan.assemblySlices, originalBatchPlan.assemblySlices)
+        XCTAssertEqual(retryPlan.outputURL, originalBatchPlan.outputURL)
+        XCTAssertEqual(retryPlan.renderIntent, .finalBatch)
+        XCTAssertEqual(retryPlan.bitrateMode, .sizeFirst)
+        XCTAssertEqual(retryPlan.dynamicRange, .hdr)
+        XCTAssertEqual(retryPlan.audioLayout, .stereo)
+        XCTAssertEqual(retryPlan.x265ThreadProfile, .conservative)
+
+        XCTAssertTrue(joined.contains("-c:v libx265"))
+        XCTAssertTrue(joined.contains("-crf 21"))
+        XCTAssertTrue(joined.contains("-c:a pcm_s16le"))
+        XCTAssertTrue(joined.contains("-tag:v hvc1"))
+        XCTAssertTrue(joined.contains("colorprim=bt2020"))
+        XCTAssertTrue(joined.contains("transfer=arib-std-b67"))
+        XCTAssertTrue(joined.contains("colormatrix=bt2020nc"))
+        XCTAssertTrue(joined.contains("pools=\(min(processorCount, 4))"))
+        XCTAssertTrue(joined.contains("frame-threads=\(min(processorCount, 2))"))
+    }
+
     func testPresentationIntermediatesKeepNormalizationButFinalBatchesAddNoNewColorMath() throws {
         let builder = FFmpegHDRProgressivePipelineBuilder()
         let commandBuilder = FFmpegCommandBuilder()

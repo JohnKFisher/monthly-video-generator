@@ -98,6 +98,10 @@ Release packaging requires the committed FFmpeg/ffprobe slices under
 `./scripts/build_app.sh` fails before packaging if the bundle is missing, cannot
 launch, or does not include the requested app architectures.
 
+The current committed bundle uses pinned OSXExperts static macOS builds:
+FFmpeg/FFprobe `8.1` for Apple Silicon and FFmpeg/FFprobe `8.0` for Intel.
+`third_party/ffmpeg/PROVENANCE.txt` records the exact source URLs and checksums.
+
 To refresh a local FFmpeg/ffprobe pair under ignored `third_party/ffmpeg/bin`:
 
 ```bash

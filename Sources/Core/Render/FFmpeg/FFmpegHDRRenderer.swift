@@ -177,6 +177,11 @@ final class FFmpegHDRRenderer {
         let context: CommandExecutionContext
     }
 
+    private struct FinalBatchConservativeRetryAttempt {
+        let command: FFmpegCommand
+        let context: CommandExecutionContext
+    }
+
     private final class ActivityTracker: @unchecked Sendable {
         private let lock = NSLock()
         private let startedAt: Date
@@ -496,30 +501,56 @@ final class FFmpegHDRRenderer {
                 commandStatsHandler: commandStatsHandler
             )
         } catch let failure as ExecutionFailure {
-            guard let fallback = makeIntermediateSoftwareFallbackAttempt(
+            if let fallback = makeIntermediateSoftwareFallbackAttempt(
                 plan: plan,
                 resolution: resolution,
                 failedContext: context,
                 failure: failure,
                 diagnostics: diagnostics,
                 statusHandler: statusHandler
-            ) else {
-                throw failure.renderError
+            ) {
+                do {
+                    try await runCommand(
+                        command: fallback.command,
+                        resolution: fallback.resolution,
+                        context: fallback.context,
+                        diagnostics: diagnostics,
+                        progressHandler: progressHandler,
+                        statusHandler: statusHandler,
+                        commandStatsHandler: commandStatsHandler
+                    )
+                } catch let retryFailure as ExecutionFailure {
+                    throw retryFailure.renderError
+                }
+                return
             }
 
-            do {
-                try await runCommand(
-                    command: fallback.command,
-                    resolution: fallback.resolution,
-                    context: fallback.context,
-                    diagnostics: diagnostics,
-                    progressHandler: progressHandler,
-                    statusHandler: statusHandler,
-                    commandStatsHandler: commandStatsHandler
-                )
-            } catch let retryFailure as ExecutionFailure {
-                throw retryFailure.renderError
+            if let retry = makeFinalBatchConservativeRetryAttempt(
+                plan: plan,
+                resolution: resolution,
+                failedContext: context,
+                failure: failure,
+                diagnostics: diagnostics,
+                statusHandler: statusHandler
+            ) {
+                do {
+                    try await runCommand(
+                        command: retry.command,
+                        resolution: resolution,
+                        context: retry.context,
+                        diagnostics: diagnostics,
+                        progressHandler: progressHandler,
+                        statusHandler: statusHandler,
+                        commandStatsHandler: commandStatsHandler
+                    )
+                    diagnostics("FFmpeg final batch retry succeeded with conservative libx265 settings.")
+                } catch let retryFailure as ExecutionFailure {
+                    throw retryFailure.renderError
+                }
+                return
             }
+
+            throw failure.renderError
         }
     }
 
@@ -798,6 +829,53 @@ final class FFmpegHDRRenderer {
         )
     }
 
+    private func makeFinalBatchConservativeRetryAttempt(
+        plan: FFmpegRenderPlan,
+        resolution: FFmpegBinaryResolution,
+        failedContext: CommandExecutionContext,
+        failure: ExecutionFailure,
+        diagnostics: @escaping (String) -> Void,
+        statusHandler: @escaping (String) -> Void
+    ) -> FinalBatchConservativeRetryAttempt? {
+        guard Self.shouldRetryFinalBatchWithConservativeX265(
+            snapshot: failure.snapshot,
+            currentProfile: plan.x265ThreadProfile
+        ) else {
+            return nil
+        }
+
+        let retryPlan = plan.withX265ThreadProfile(.conservative)
+        guard let retryCommand = try? commandBuilder.buildCommand(plan: retryPlan, resolution: resolution) else {
+            return nil
+        }
+        guard let retryEncoder = resolution.selectedCapabilities.preferredEncoder(
+            for: retryPlan.videoCodec,
+            dynamicRange: retryPlan.dynamicRange,
+            hdrHEVCEncoderMode: retryPlan.hdrHEVCEncoderMode,
+            renderIntent: retryPlan.renderIntent
+        ), retryEncoder == .libx265 else {
+            return nil
+        }
+
+        diagnostics(
+            "FFmpeg final batch retry: libx265 failed before producing output; retrying the same batch with conservative x265 thread settings."
+        )
+        diagnostics("FFmpeg final batch retry original version: \(resolution.selectedCapabilities.versionDescription)")
+        diagnostics(
+            "FFmpeg final batch retry settings: previousProfile=\(plan.x265ThreadProfile.rawValue), retryProfile=\(retryPlan.x265ThreadProfile.rawValue), output=\(retryPlan.outputURL.path)"
+        )
+        let retrySignals = Self.finalBatchConservativeRetryIndicators(from: failure.snapshot.stderrTail)
+        if !retrySignals.isEmpty {
+            diagnostics("FFmpeg final batch retry cause: \(retrySignals.joined(separator: " | "))")
+        }
+        statusHandler("\(failedContext.dynamicRange == .hdr ? "HDR" : "SDR") final batch: retrying with conservative libx265 settings...")
+
+        return FinalBatchConservativeRetryAttempt(
+            command: retryCommand,
+            context: makeExecutionContext(for: retryPlan, selectedEncoder: retryEncoder, stageLabel: failedContext.stageLabel)
+        )
+    }
+
     static func shouldRetryWithSoftwareIntermediateFallback(
         snapshot: FailureSnapshot,
         selectedCapabilities: FFmpegCapabilities
@@ -817,6 +895,25 @@ final class FFmpegHDRRenderer {
         return !videoToolboxRetryIndicators(from: snapshot.stderrTail).isEmpty
     }
 
+    static func shouldRetryFinalBatchWithConservativeX265(
+        snapshot: FailureSnapshot,
+        currentProfile: FFmpegX265ThreadProfile
+    ) -> Bool {
+        guard snapshot.renderIntent == .finalBatch else {
+            return false
+        }
+        guard snapshot.selectedEncoder == FFmpegVideoEncoder.libx265.rawValue else {
+            return false
+        }
+        guard currentProfile != .conservative else {
+            return false
+        }
+        guard snapshot.latestOutTimeMicroseconds <= 0, snapshot.latestOutputSizeBytes == 0 else {
+            return false
+        }
+        return !finalBatchConservativeRetryIndicators(from: snapshot.stderrTail).isEmpty
+    }
+
     private static func videoToolboxRetryIndicators(from stderrTail: [String]) -> [String] {
         let indicators = [
             "cannot create compression session",
@@ -824,6 +921,21 @@ final class FFmpegHDRRenderer {
             "could not open encoder before eof",
             "try -allow_sw 1",
             "kvtcouldnotfindvideoencodererr"
+        ]
+        return stderrTail.filter { line in
+            let lowered = line.lowercased()
+            return indicators.contains { lowered.contains($0) }
+        }
+    }
+
+    private static func finalBatchConservativeRetryIndicators(from stderrTail: [String]) -> [String] {
+        let indicators = [
+            "could not open encoder before eof",
+            "error while opening encoder",
+            "invalid argument",
+            "task finished with error code: -22",
+            "terminating thread with return code -22",
+            "conversion failed"
         ]
         return stderrTail.filter { line in
             let lowered = line.lowercased()

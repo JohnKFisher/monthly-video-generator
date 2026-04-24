@@ -1372,6 +1372,103 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         )
     }
 
+    func testShouldRetryConservativeFinalBatchForLibx265StartupFailure() {
+        let snapshot = makeFailureSnapshot(
+            selectedEncoder: FFmpegVideoEncoder.libx265.rawValue,
+            renderIntent: .finalBatch,
+            latestOutTimeMicroseconds: 0,
+            latestOutputSizeBytes: 0,
+            stderrTail: [
+                "[vost#0:0/libx265 @ 0x123] [enc:libx265 @ 0x456] Could not open encoder before EOF",
+                "[vf#0:0 @ 0x789] Task finished with error code: -22 (Invalid argument)",
+                "Conversion failed!"
+            ]
+        )
+
+        XCTAssertTrue(
+            FFmpegHDRRenderer.shouldRetryFinalBatchWithConservativeX265(
+                snapshot: snapshot,
+                currentProfile: .shortJobBoost
+            )
+        )
+    }
+
+    func testShouldNotRetryConservativeFinalBatchAfterOutputProgress() {
+        let snapshot = makeFailureSnapshot(
+            selectedEncoder: FFmpegVideoEncoder.libx265.rawValue,
+            renderIntent: .finalBatch,
+            latestOutTimeMicroseconds: 2_500_000,
+            latestOutputSizeBytes: 512_000,
+            stderrTail: [
+                "[vost#0:0/libx265 @ 0x123] Error while opening encoder - maybe incorrect parameters such as bit_rate, rate, width or height."
+            ]
+        )
+
+        XCTAssertFalse(
+            FFmpegHDRRenderer.shouldRetryFinalBatchWithConservativeX265(
+                snapshot: snapshot,
+                currentProfile: .shortJobBoost
+            )
+        )
+    }
+
+    func testShouldNotRetryConservativeFinalBatchForPresentationIntermediate() {
+        let snapshot = makeFailureSnapshot(
+            selectedEncoder: FFmpegVideoEncoder.libx265.rawValue,
+            renderIntent: .presentationIntermediate,
+            latestOutTimeMicroseconds: 0,
+            latestOutputSizeBytes: 0,
+            stderrTail: [
+                "[vost#0:0/libx265 @ 0x123] [enc:libx265 @ 0x456] Could not open encoder before EOF"
+            ]
+        )
+
+        XCTAssertFalse(
+            FFmpegHDRRenderer.shouldRetryFinalBatchWithConservativeX265(
+                snapshot: snapshot,
+                currentProfile: .shortJobBoost
+            )
+        )
+    }
+
+    func testShouldNotRetryConservativeFinalBatchWhenAlreadyConservative() {
+        let snapshot = makeFailureSnapshot(
+            selectedEncoder: FFmpegVideoEncoder.libx265.rawValue,
+            renderIntent: .finalBatch,
+            latestOutTimeMicroseconds: 0,
+            latestOutputSizeBytes: 0,
+            stderrTail: [
+                "[vf#0:0 @ 0x789] Task finished with error code: -22 (Invalid argument)"
+            ]
+        )
+
+        XCTAssertFalse(
+            FFmpegHDRRenderer.shouldRetryFinalBatchWithConservativeX265(
+                snapshot: snapshot,
+                currentProfile: .conservative
+            )
+        )
+    }
+
+    func testShouldNotRetryConservativeFinalBatchForNonLibx265Encoder() {
+        let snapshot = makeFailureSnapshot(
+            selectedEncoder: FFmpegVideoEncoder.hevcVideoToolbox.rawValue,
+            renderIntent: .finalBatch,
+            latestOutTimeMicroseconds: 0,
+            latestOutputSizeBytes: 0,
+            stderrTail: [
+                "[vost#0:0/hevc_videotoolbox @ 0x123] [enc:hevc_videotoolbox @ 0x456] Could not open encoder before EOF"
+            ]
+        )
+
+        XCTAssertFalse(
+            FFmpegHDRRenderer.shouldRetryFinalBatchWithConservativeX265(
+                snapshot: snapshot,
+                currentProfile: .shortJobBoost
+            )
+        )
+    }
+
     func testFailureMessageIncludesStructuredProgressSnapshot() {
         let snapshot = FFmpegHDRRenderer.FailureSnapshot(
             dynamicRange: .hdr,
@@ -2536,6 +2633,37 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertEqual(firstTags["title"] as? String, "June 2026")
         XCTAssertEqual(secondTags["title"] as? String, "June 28 (1 photo)")
         XCTAssertEqual(chapters[1]["start_time"] as? String, "0.500000")
+    }
+
+    private func makeFailureSnapshot(
+        selectedEncoder: String,
+        renderIntent: FFmpegRenderIntent,
+        latestOutTimeMicroseconds: Int64,
+        latestOutputSizeBytes: UInt64,
+        stderrTail: [String]
+    ) -> FFmpegHDRRenderer.FailureSnapshot {
+        FFmpegHDRRenderer.FailureSnapshot(
+            dynamicRange: .hdr,
+            terminationSummary: "exit 234",
+            selectedEncoder: selectedEncoder,
+            binarySource: .bundled,
+            binaryPath: "/tmp/ffmpeg",
+            renderIntent: renderIntent,
+            outputPath: "/tmp/out.mov",
+            clipCount: 12,
+            chapterCount: 0,
+            renderSize: CGSize(width: 3840, height: 2160),
+            frameRate: 30,
+            elapsedSeconds: 2.0,
+            latestOutTimeMicroseconds: latestOutTimeMicroseconds,
+            latestOutputSizeBytes: latestOutputSizeBytes,
+            latestSpeed: nil,
+            fallbackReason: nil,
+            stalledForSeconds: nil,
+            stalledOutTimeMicroseconds: nil,
+            stalledOutputSizeBytes: nil,
+            stderrTail: stderrTail
+        )
     }
 
     private func makeCapableResolution() -> FFmpegBinaryResolution {

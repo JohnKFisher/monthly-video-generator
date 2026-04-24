@@ -498,6 +498,29 @@ struct FFmpegRenderPlan: Equatable, Sendable {
         )
     }
 
+    func withX265ThreadProfile(_ profile: FFmpegX265ThreadProfile) -> FFmpegRenderPlan {
+        FFmpegRenderPlan(
+            clips: clips,
+            assemblySlices: assemblySlices,
+            transitionDurationSeconds: transitionDurationSeconds,
+            endFadeToBlackDurationSeconds: endFadeToBlackDurationSeconds,
+            outputURL: outputURL,
+            renderSize: renderSize,
+            frameRate: frameRate,
+            audioLayout: audioLayout,
+            bitrateMode: bitrateMode,
+            container: container,
+            videoCodec: videoCodec,
+            dynamicRange: dynamicRange,
+            hdrHEVCEncoderMode: hdrHEVCEncoderMode,
+            x265ThreadProfile: profile,
+            embeddedMetadata: embeddedMetadata,
+            chapters: chapters,
+            chapterMetadataURL: chapterMetadataURL,
+            renderIntent: renderIntent
+        )
+    }
+
     var requiresHDRToSDRToneMapping: Bool {
         dynamicRange == .sdr && clips.contains { $0.colorInfo.ffmpegHDRTransferFlavor != nil }
     }

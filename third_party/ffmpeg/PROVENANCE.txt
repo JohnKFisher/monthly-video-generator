@@ -1,16 +1,33 @@
-fetched_at=2026-04-24T01:57:02Z
-source=descriptinc/ffmpeg-ffprobe-static
-release_tag=b7.1.0-rc.1
-ffmpeg_arm64_url=https://github.com/descriptinc/ffmpeg-ffprobe-static/releases/download/b7.1.0-rc.1/ffmpeg-darwin-arm64
-ffmpeg_arm64_sha256=6d175a4743ca50256e89a8cdd731100f9cee33bd79aeea46894d209410dc6617
-ffmpeg_x64_url=https://github.com/descriptinc/ffmpeg-ffprobe-static/releases/download/b7.1.0-rc.1/ffmpeg-darwin-x64
-ffmpeg_x64_sha256=4a4a968b98859588e98500ae25973d80a5ca5eed0724222b9f76360dcb72a001
-ffprobe_arm64_url=https://github.com/descriptinc/ffmpeg-ffprobe-static/releases/download/b7.1.0-rc.1/ffprobe-darwin-arm64
-ffprobe_arm64_sha256=df2684842eca145bd72f4724ce9cecbf38558a4d64b2aef7846680f877702baa
-ffprobe_x64_url=https://github.com/descriptinc/ffmpeg-ffprobe-static/releases/download/b7.1.0-rc.1/ffprobe-darwin-x64
-ffprobe_x64_sha256=ce5414269f0efa1e88b5e23b57f801d5b9a40be554716544936e0332b4601a62
+Monthly Video Generator bundled FFmpeg toolchain
+
+source=OSXExperts.NET static macOS builds
+source_page=https://www.osxexperts.net/
+downloaded=2026-04-24
+
+ffmpeg_arm64_version=ffmpeg version 8.1
+ffmpeg_arm64_url=https://www.osxexperts.net/ffmpeg81arm.zip
+ffmpeg_arm64_sha256=9a08d61f9328e8164ba560ee7a79958e357307fcfeea6fe626b7d66cdc287028
+ffmpeg_x64_version=ffmpeg version 8.0
+ffmpeg_x64_url=https://www.osxexperts.net/ffmpeg80intel.zip
+ffmpeg_x64_sha256=df3f1e3facdc1ae0ad0bd898cdfb072fbc9641bf47b11f172844525a05db8d11
+ffprobe_arm64_version=ffprobe version 8.1
+ffprobe_arm64_url=https://www.osxexperts.net/ffprobe81arm.zip
+ffprobe_arm64_sha256=aab17ac7379c1178aaf400c3ef36cdb67db0b75b1a23eeef2cb9f658be8844e6
+ffprobe_x64_version=ffprobe version 8.0
+ffprobe_x64_url=https://www.osxexperts.net/ffprobe80intel.zip
+ffprobe_x64_sha256=5228e651e2bd67bb55819b27f6138351587b16d2b87446007bf35b7cf930d891
+
 committed_ffmpeg_arm64=third_party/ffmpeg/darwin-arm64/ffmpeg
 committed_ffmpeg_x64=third_party/ffmpeg/darwin-x64/ffmpeg
 committed_ffprobe_arm64=third_party/ffmpeg/darwin-arm64/ffprobe
 committed_ffprobe_x64=third_party/ffmpeg/darwin-x64/ffprobe
-packaging=The app bundle assembles requested architectures into Contents/Resources/FFmpeg using lipo during scripts/build_app.sh.
+
+Verified required capabilities on 2026-04-24:
+- filters: zscale, tonemap, xfade, acrossfade, overlay
+- encoders: libx264, h264_videotoolbox, libx265, hevc_videotoolbox
+
+Notes:
+- The arm64 and x64 source builds differ by upstream availability: arm64 is
+  FFmpeg/FFprobe 8.1 and x64 is FFmpeg/FFprobe 8.0.
+- Packaging assembles universal app-resource binaries with lipo and ad-hoc
+  signs the final tools during scripts/build_app.sh.
