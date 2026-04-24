@@ -47,8 +47,9 @@ The build now produces a release `.app` bundle, generates a custom macOS
 `Contents/Frameworks`, and ad-hoc signs the final app for local distribution
 testing.
 
-By default the script builds a universal app (`arm64` + `x86_64`). Override this
-when needed:
+By default the script builds a universal app (`arm64` + `x86_64`) and writes
+Launch Services metadata that requires native execution, so Apple Silicon Macs
+use the `arm64` slice instead of Rosetta. Override architectures when needed:
 
 ```bash
 APP_ARCHS="arm64" ./scripts/build_app.sh

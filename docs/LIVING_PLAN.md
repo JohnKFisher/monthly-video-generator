@@ -50,6 +50,7 @@ Implemented now:
 - Repo governance now includes `docs/DECISIONS.md`, with root/conditional agent-rule alignment documented separately from shipping app behavior.
 - Release identity now comes from committed `VERSION` + `BUILD_NUMBER`, while `scripts/build_app.sh` stays packaging-only and `scripts/prepare_release.sh` handles intentional patch/build bumps.
 - Bundled FFmpeg/ffprobe are now committed release inputs using pinned FFmpeg 8.x static macOS builds, and `scripts/build_app.sh` fails early if the bundle is absent, cannot launch, or lacks the requested app architectures.
+- Universal app bundles now include native-execution launch metadata (`arm64` priority plus `LSRequiresNativeExecution`) so Apple Silicon Macs should not run the app under Rosetta.
 - Progressive HDR `finalBatch` libx265 assembly keeps the approved `crf21-fast` default path, but now retries once with conservative x265 thread settings if FFmpeg exits before producing output.
 - Shared `.dmg` packaging now lives in `scripts/create_dmg.sh`, and first-pass GitHub Actions build/release workflows are checked in for initial GitHub publication.
 - README/license/About-style surfaces now disclose the personal-use nature of the app, MIT licensing, current ad-hoc-signed/non-notarized macOS distribution state, and an optional repository link that stays hidden until configured.
@@ -281,6 +282,7 @@ Operational updates after first packaged run:
 - 2026-04-24: Replaced the stale local ffprobe fallback with committed macOS `ffmpeg`/`ffprobe` slices, documented provenance, and made packaging fail instead of silently publishing an app without `Contents/Resources/FFmpeg`.
 - 2026-04-24: Moved the committed bundled toolchain forward to pinned FFmpeg/FFprobe 8.x static macOS builds and added a one-time conservative retry for zero-output progressive HDR `finalBatch` libx265 startup failures while preserving the `crf21-fast` default.
 - 2026-04-24: Bumped the checked-in release identity to `2.1.2 (213)` for the FFmpeg 8.x bundled-toolchain and final-batch retry repair.
+- 2026-04-24: Kept the release app universal but added native-execution launch metadata to prevent Apple Silicon launches from using Rosetta; bumped the checked-in release identity to `2.1.3 (214)`.
 - 2026-03-05: Force-closed FFmpeg output/error pipes after process termination to prevent post-encode completion hangs while awaiting stream readers.
 - 2026-03-05: Added an FFmpeg HDR stall watchdog that monitors both `out_time` advancement and output-file byte growth, terminating stuck processes with explicit stall context.
 - 2026-03-05: Added phase/status callback plumbing from renderer to UI and upgraded on-screen render status with HDR encode elapsed/output-size/speed details.

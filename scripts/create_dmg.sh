@@ -50,9 +50,31 @@ if [[ ! -d "$APP_PATH" ]]; then
   exit 1
 fi
 
+architecture_label() {
+  local executable_path="$1"
+  local archs
+
+  if ! archs="$(lipo -archs "$executable_path" 2>/dev/null)"; then
+    echo "unknown"
+    return
+  fi
+
+  if [[ " $archs " == *" arm64 "* && " $archs " == *" x86_64 "* ]]; then
+    echo "universal"
+  elif [[ " $archs " == *" arm64 "* ]]; then
+    echo "arm64"
+  elif [[ " $archs " == *" x86_64 "* ]]; then
+    echo "x86_64"
+  else
+    echo "${archs// /-}"
+  fi
+}
+
 if [[ -z "$OUTPUT_PATH" ]]; then
   mkdir -p "$OUTPUT_DIR"
-  OUTPUT_PATH="$OUTPUT_DIR/Monthly-Video-Generator-v${APP_VERSION}-build-${BUILD_NUMBER}-macOS-universal.dmg"
+  APP_EXECUTABLE="$APP_PATH/Contents/MacOS/MonthlyVideoGeneratorApp"
+  OUTPUT_ARCH_LABEL="$(architecture_label "$APP_EXECUTABLE")"
+  OUTPUT_PATH="$OUTPUT_DIR/Monthly-Video-Generator-v${APP_VERSION}-build-${BUILD_NUMBER}-macOS-${OUTPUT_ARCH_LABEL}.dmg"
 fi
 
 if [[ -e "$OUTPUT_PATH" ]]; then

@@ -296,6 +296,13 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <string>$CURRENT_BUILD_NUMBER</string>
   <key>LSMinimumSystemVersion</key>
   <string>$MINIMUM_SYSTEM_VERSION</string>
+  <key>LSArchitecturePriority</key>
+  <array>
+    <string>arm64</string>
+    <string>x86_64</string>
+  </array>
+  <key>LSRequiresNativeExecution</key>
+  <true/>
   <key>NSHighResolutionCapable</key>
   <true/>
   <key>NSPhotoLibraryUsageDescription</key>
@@ -312,8 +319,9 @@ codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
 
 rm -rf "$FINAL_APP_BUNDLE"
 mkdir -p "$DIST_DIR"
-ditto "$APP_BUNDLE" "$FINAL_APP_BUNDLE"
+ditto --noextattr --noqtn "$APP_BUNDLE" "$FINAL_APP_BUNDLE"
 xattr -cr "$FINAL_APP_BUNDLE"
+codesign --verify --deep --strict --verbose=2 "$FINAL_APP_BUNDLE"
 
 echo "Built app bundle: $FINAL_APP_BUNDLE"
 echo "Version: $APP_VERSION ($CURRENT_BUILD_NUMBER)"
