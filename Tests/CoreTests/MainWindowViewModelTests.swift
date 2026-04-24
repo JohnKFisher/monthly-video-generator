@@ -1325,6 +1325,78 @@ final class MainWindowViewModelTests: XCTestCase {
         }
     }
 
+    func testStatusFieldsDescribeActiveRender() async throws {
+        let coordinator = RenderCoordinatorSpy(
+            preparation: makePreparation(),
+            suspendRenderUntilResumed: true
+        )
+        let startedAt = makeDate(year: 2026, month: 4, day: 24)
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            preferencesStore: makePreferencesStore(),
+            nowProvider: { startedAt.addingTimeInterval(65) }
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.sourceMode = .folder
+        viewModel.selectedFolderURL = directory
+        viewModel.outputDirectoryURL = directory
+        viewModel.outputFilename = "Status Test"
+
+        viewModel.startRender()
+        await waitUntil(
+            message: "Timed out waiting for render status fields."
+        ) {
+            coordinator.renderRequests.count == 1 && viewModel.statusPhaseLabel == "Encoding"
+        }
+
+        XCTAssertEqual(viewModel.statusProgressLabel, "100%")
+        XCTAssertEqual(viewModel.statusQueueLabel, "Single render")
+        XCTAssertTrue(viewModel.statusOutputLabel.hasSuffix("Status Test.mp4"))
+        XCTAssertEqual(viewModel.liveSnapshotStatusMessage, "Waiting for the first completed render artifact.")
+
+        coordinator.resumeRender()
+        await waitUntil(message: "Timed out waiting for status render to finish.") {
+            !viewModel.isRendering
+        }
+    }
+
+    func testArtifactCallbackUpdatesLiveSnapshotSourceState() async throws {
+        let coordinator = RenderCoordinatorSpy(
+            preparation: makePreparation(),
+            suspendRenderUntilResumed: true,
+            artifactLabel: "HDR prep 1/2"
+        )
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            preferencesStore: makePreferencesStore()
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.sourceMode = .folder
+        viewModel.selectedFolderURL = directory
+        viewModel.outputDirectoryURL = directory
+        viewModel.outputFilename = "Artifact Test"
+
+        viewModel.startRender()
+        await waitUntil(
+            message: "Timed out waiting for artifact callback."
+        ) {
+            viewModel.currentArtifactLabel == "HDR prep 1/2"
+        }
+
+        XCTAssertTrue(viewModel.currentArtifactPath.hasSuffix("Artifact Test.mp4"))
+        XCTAssertEqual(viewModel.currentArtifactSizeLabel, "Size unavailable")
+        XCTAssertTrue(viewModel.liveSnapshotStatusMessage.contains("HDR prep 1/2"))
+
+        coordinator.resumeRender()
+        await waitUntil(message: "Timed out waiting for artifact render to finish.") {
+            !viewModel.isRendering
+        }
+    }
+
     func testQueueShowsCompletionAlertOnlyAfterFinalJob() async throws {
         let coordinator = RenderCoordinatorSpy(
             preparation: makePreparation(),
@@ -1844,6 +1916,7 @@ private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendabl
     let renderDelay: Duration?
     let renderResultBuilder: ((RenderPreparation, RenderRequest, Int) -> RenderResult)?
     let systemFallbackReason: String?
+    let artifactLabel: String?
     private(set) var prepareFolderRequests: [RenderRequest] = []
     private(set) var renderRequests: [RenderRequest] = []
     private(set) var cancelCurrentRenderCallCount: Int = 0
@@ -1857,6 +1930,7 @@ private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendabl
         suspendRenderUntilResumed: Bool = false,
         renderDelay: Duration? = nil,
         systemFallbackReason: String? = nil,
+        artifactLabel: String? = nil,
         renderResultBuilder: ((RenderPreparation, RenderRequest, Int) -> RenderResult)? = nil
     ) {
         self.preparation = preparation
@@ -1865,6 +1939,7 @@ private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendabl
         self.suspendRenderUntilResumed = suspendRenderUntilResumed
         self.renderDelay = renderDelay
         self.systemFallbackReason = systemFallbackReason
+        self.artifactLabel = artifactLabel
         self.renderResultBuilder = renderResultBuilder
     }
 
@@ -1892,6 +1967,7 @@ private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendabl
         writeDiagnosticsLog: Bool,
         progressHandler: RenderProgressHandler,
         statusHandler: RenderStatusHandler,
+        artifactHandler: RenderArtifactSnapshotHandler,
         systemFFmpegFallbackHandler: SystemFFmpegFallbackHandler?,
         executionOptions: RenderExecutionOptions
     ) async throws -> RenderResult {
@@ -1907,6 +1983,19 @@ private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendabl
             guard approved else {
                 throw RenderError.exportFailed("Render cancelled because system FFmpeg fallback was not approved.")
             }
+        }
+
+        let outputURL = request.output.directory
+            .appendingPathComponent(request.output.baseFilename)
+            .appendingPathExtension(request.export.container.fileExtension)
+        if let artifactLabel {
+            artifactHandler?(
+                RenderArtifactSnapshotCandidate(
+                    url: outputURL,
+                    label: artifactLabel,
+                    isFinalOutput: false
+                )
+            )
         }
 
         if suspendRenderUntilResumed {
@@ -1926,9 +2015,6 @@ private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendabl
             throw RenderError.paused("Render paused after a safe HDR checkpoint. Reopen the app and start the same render again to resume.")
         }
 
-        let outputURL = request.output.directory
-            .appendingPathComponent(request.output.baseFilename)
-            .appendingPathExtension(request.export.container.fileExtension)
         if let renderResultBuilder {
             return renderResultBuilder(preparation, request, index)
         }

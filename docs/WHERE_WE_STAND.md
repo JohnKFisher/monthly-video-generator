@@ -1,11 +1,11 @@
 # Monthly Video Generator
 
 Current version/build:
-- `2.0.0`
-- Latest checked-in build identity: `210`
+- `2.1.0`
+- Latest checked-in build identity: `211`
 
 Current overall status:
-- The app is usable now for local folder-based and Apple Photos-based monthly video exports, and this `2.0.0` release keeps the protected HDR/export path intact while removing the in-app HEVC bakeoff feature and its unpromoted experimental plumbing.
+- The app is usable now for local folder-based and Apple Photos-based monthly video exports, and this `2.1.0` release keeps the protected HDR/export path intact while adding a richer long-running render Status panel with live snapshot inspection.
 - Opening title cards now randomize per export job across the corrected `21`-variant collage-family set, including queued exports and full-year runs.
 - Fresh/reset defaults now use a `10.0s` opening title card, and release identity now comes from the checked-in `VERSION` plus `BUILD_NUMBER` files.
 - The default Plex/Infuse HDR export now uses the bakeoff-approved `crf21-fast` final `libx265` tuning.
@@ -23,6 +23,7 @@ What is working now:
 - Deterministic collage preview selection that fills up to `10` visible photo slots and only repeats images when the source batch is too small.
 - Safe output naming, JSON run reports, and optional diagnostics logs.
 - Audit-only progressive HDR presentation timing rollups now record `title` / `still` / `video` clip counts plus capture-date-overlay state in diagnostics and structured run reports.
+- The Status panel now shows richer render liveness details and an always-visible Live Snapshot area that can capture occasional still snapshots from completed/readable render artifacts without attempting live playback.
 - FFmpeg-based final exports with bundled FFmpeg support.
 - HDR `HEVC` output for the current Plex/Infuse/Apple TV 4K workflow.
 - Default Plex/Infuse HDR exports now ship with the `crf21-fast` final software HEVC tuning that won the local bakeoff review.
@@ -35,7 +36,7 @@ What is working now:
 
 What is partially implemented:
 - Stage 4 export controls are in place, but some advanced choices are still constrained by renderer/backend reality.
-- Progress reporting exists and is materially better than before, but the longest HDR jobs still need a more polished ETA/cancellation experience.
+- Progress reporting exists and is materially better than before, including a low-frequency live snapshot inspector, but the longest HDR jobs still need a more polished ETA/cancellation experience.
 - Resumable HDR execution exists for large jobs, but the UX around recovery remains technical.
 - The window shell is materially more Mac-native now, but it is still a single primary window backed by one large render-oriented view model; more shell/controller splitting remains possible if future work justifies the churn.
 - The audit-only progressive presentation timing data is in place, but no still/title fast path earned promotion and the protected export path remains intentionally conservative.
@@ -65,6 +66,7 @@ Setup/runtime requirements:
 Important operational risks:
 - Interrupting a long HDR export can leave behind temporary or resumable artifacts until cleanup runs.
 - Photos-backed exports may spend significant time preparing media before visible output appears.
+- Live Snapshot is opportunistic: it waits for completed/readable artifacts and may show a waiting message for long stretches during stages where only active encoder output exists.
 - The app is safest when treated as local-only and single-user; it is not designed around shared/networked coordination.
 
 Recommended next priorities:

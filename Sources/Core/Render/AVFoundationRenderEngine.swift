@@ -66,6 +66,7 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
         writeDiagnosticsLog: Bool,
         progressHandler: (@MainActor @Sendable (Double) -> Void)? = nil,
         statusHandler: (@MainActor @Sendable (String) -> Void)? = nil,
+        artifactHandler: RenderArtifactHandler? = nil,
         systemFFmpegFallbackHandler: SystemFFmpegFallbackHandler? = nil
     ) async throws -> RenderResult {
         try await render(
@@ -79,6 +80,7 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
             writeDiagnosticsLog: writeDiagnosticsLog,
             progressHandler: progressHandler,
             statusHandler: statusHandler,
+            artifactHandler: artifactHandler,
             systemFFmpegFallbackHandler: systemFFmpegFallbackHandler,
             executionOptions: .default
         )
@@ -95,6 +97,7 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
         writeDiagnosticsLog: Bool,
         progressHandler: (@MainActor @Sendable (Double) -> Void)? = nil,
         statusHandler: (@MainActor @Sendable (String) -> Void)? = nil,
+        artifactHandler: RenderArtifactHandler? = nil,
         systemFFmpegFallbackHandler: SystemFFmpegFallbackHandler? = nil,
         executionOptions: RenderExecutionOptions
     ) async throws -> RenderResult {
@@ -315,6 +318,7 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                         temporaryURLs: &temporaryURLs,
                         progressHandler: progressHandler,
                         statusHandler: statusHandler,
+                        artifactHandler: artifactHandler,
                         systemFFmpegFallbackHandler: systemFFmpegFallbackHandler
                     )
                 }
@@ -357,6 +361,7 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                         statusPrefix: nil,
                         progressHandler: progressHandler,
                         statusHandler: statusHandler,
+                        artifactHandler: artifactHandler,
                         systemFFmpegFallbackHandler: systemFFmpegFallbackHandler
                     )
                 }
@@ -368,6 +373,14 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                 diagnostics.add("Render completed successfully")
                 cleanupTemporaryFiles(&temporaryURLs, diagnostics: diagnostics)
                 let outputURL = renderedOutputURL ?? candidateOutputURL
+                reportArtifact(
+                    RenderArtifactSnapshotCandidate(
+                        url: outputURL,
+                        label: "Final output",
+                        isFinalOutput: true
+                    ),
+                    handler: artifactHandler
+                )
                 let commandSummaries = diagnostics.commandSummariesSnapshot().map { summary in
                     RenderCommandSummary(
                         stageLabel: summary.stageLabel,
@@ -644,9 +657,10 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
         statusPrefix: String?,
         progressHandler: (@MainActor @Sendable (Double) -> Void)?,
         statusHandler: (@MainActor @Sendable (String) -> Void)?,
+        artifactHandler: RenderArtifactHandler? = nil,
         systemFFmpegFallbackHandler: SystemFFmpegFallbackHandler?
     ) async throws -> FFmpegBinaryResolution {
-        try await ffmpegHDRRenderer.render(
+        let resolution = try await ffmpegHDRRenderer.render(
             plan: plan,
             binaryMode: binaryMode,
             diagnostics: { diagnostics.add($0) },
@@ -662,6 +676,15 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
             commandStatsHandler: { diagnostics.recordFFmpegCommandSummary($0) },
             systemFFmpegFallbackHandler: systemFFmpegFallbackHandler
         )
+        reportArtifact(
+            RenderArtifactSnapshotCandidate(
+                url: plan.outputURL,
+                label: statusPrefix ?? "FFmpeg output",
+                isFinalOutput: false
+            ),
+            handler: artifactHandler
+        )
+        return resolution
     }
 
     private func executeFFmpegPlan(
@@ -671,7 +694,8 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
         progressRange: ClosedRange<Double>,
         statusPrefix: String?,
         progressHandler: (@MainActor @Sendable (Double) -> Void)?,
-        statusHandler: (@MainActor @Sendable (String) -> Void)?
+        statusHandler: (@MainActor @Sendable (String) -> Void)?,
+        artifactHandler: RenderArtifactHandler? = nil
     ) async throws {
         try await ffmpegHDRRenderer.render(
             plan: plan,
@@ -688,6 +712,14 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
             stageLabel: statusPrefix,
             commandStatsHandler: { diagnostics.recordFFmpegCommandSummary($0) }
         )
+        reportArtifact(
+            RenderArtifactSnapshotCandidate(
+                url: plan.outputURL,
+                label: statusPrefix ?? "FFmpeg output",
+                isFinalOutput: false
+            ),
+            handler: artifactHandler
+        )
     }
 
     private func executeFFmpegCommand(
@@ -698,7 +730,8 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
         progressRange: ClosedRange<Double>,
         statusPrefix: String?,
         progressHandler: (@MainActor @Sendable (Double) -> Void)?,
-        statusHandler: (@MainActor @Sendable (String) -> Void)?
+        statusHandler: (@MainActor @Sendable (String) -> Void)?,
+        artifactHandler: RenderArtifactHandler? = nil
     ) async throws {
         try await ffmpegHDRRenderer.execute(
             command: command,
@@ -715,6 +748,14 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
             },
             commandStatsHandler: { diagnostics.recordFFmpegCommandSummary($0) }
         )
+        reportArtifact(
+            RenderArtifactSnapshotCandidate(
+                url: context.outputURL,
+                label: context.stageLabel,
+                isFinalOutput: context.renderIntent == .finalPackaging || context.renderIntent == .finalDelivery
+            ),
+            handler: artifactHandler
+        )
     }
 
     private func executeProgressiveFFmpegPlan(
@@ -726,6 +767,7 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
         temporaryURLs: inout [URL],
         progressHandler: (@MainActor @Sendable (Double) -> Void)?,
         statusHandler: (@MainActor @Sendable (String) -> Void)?,
+        artifactHandler: RenderArtifactHandler?,
         systemFFmpegFallbackHandler: SystemFFmpegFallbackHandler?
     ) async throws -> FFmpegBinaryResolution {
         try ffmpegProgressiveResumeStore.markActive(&resumeSession)
@@ -803,7 +845,8 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                 ),
                 statusPrefix: "HDR prep \(index + 1)/\(executionPlan.presentationPlans.count)",
                 progressHandler: progressHandler,
-                statusHandler: statusHandler
+                statusHandler: statusHandler,
+                artifactHandler: artifactHandler
             )
             diagnostics.add(
                 "HDR presentation intermediate completed: index=\(index + 1)/\(executionPlan.presentationPlans.count), output=\(plan.outputURL.path)"
@@ -841,7 +884,8 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                 ),
                 statusPrefix: "HDR final batch \(batch.sequenceIndex + 1)/\(executionPlan.batchPlans.count)",
                 progressHandler: progressHandler,
-                statusHandler: statusHandler
+                statusHandler: statusHandler,
+                artifactHandler: artifactHandler
             )
             diagnostics.add(
                 "HDR final batch completed: index=\(batch.sequenceIndex + 1)/\(executionPlan.batchPlans.count), output=\(batch.plan.outputURL.path)"
@@ -909,7 +953,8 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
                 ),
                 statusPrefix: "HDR concat copy",
                 progressHandler: progressHandler,
-                statusHandler: statusHandler
+                statusHandler: statusHandler,
+                artifactHandler: artifactHandler
             )
             try ffmpegProgressiveResumeStore.markConcatCompleted(&resumeSession)
             completedWeight += concatWeight
@@ -963,7 +1008,8 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
             ),
             statusPrefix: "HDR final package",
             progressHandler: progressHandler,
-            statusHandler: statusHandler
+            statusHandler: statusHandler,
+            artifactHandler: artifactHandler
         )
         removePersistentArtifact(executionPlan.concatOutputURL, diagnostics: diagnostics)
         diagnostics.add("HDR progressive execution completed: output=\(finalPlan.outputURL.path)")
@@ -2292,6 +2338,16 @@ public final class AVFoundationRenderEngine: @unchecked Sendable {
         guard !trimmed.isEmpty, let handler else { return }
         Task { @MainActor in
             handler(trimmed)
+        }
+    }
+
+    private func reportArtifact(
+        _ candidate: RenderArtifactSnapshotCandidate,
+        handler: RenderArtifactHandler?
+    ) {
+        guard let handler else { return }
+        Task { @MainActor in
+            handler(candidate)
         }
     }
 

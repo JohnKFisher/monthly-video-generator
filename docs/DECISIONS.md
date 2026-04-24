@@ -28,3 +28,4 @@
 ## 2026-04-24
 
 - Decision: Let Photos album renders span multiple months by using the earliest dated album item for Plex month/year identity and the album title for auto-managed episode/output naming. Rationale: album selection is an intentional user scope, so mixed-month albums should not be blocked by the stricter folder/manual month-year resolver. Status: approved.
+- Decision: Add an always-visible live snapshot/status inspector that reports completed render artifacts and extracts low-frequency still snapshots without trying to play actively growing files. Rationale: long exports need clearer liveness, but the protected render/output path should not be slowed or made brittle by decoding files that FFmpeg is still writing. Status: approved.

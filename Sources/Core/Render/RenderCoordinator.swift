@@ -139,6 +139,18 @@ public struct RenderResult: Sendable {
     }
 }
 
+public struct RenderArtifactSnapshotCandidate: Equatable, Sendable {
+    public let url: URL
+    public let label: String
+    public let isFinalOutput: Bool
+
+    public init(url: URL, label: String, isFinalOutput: Bool) {
+        self.url = url
+        self.label = label
+        self.isFinalOutput = isFinalOutput
+    }
+}
+
 public struct SystemFFmpegFallbackRequest: Equatable, Sendable {
     public let reason: String
 
@@ -148,6 +160,7 @@ public struct SystemFFmpegFallbackRequest: Equatable, Sendable {
 }
 
 public typealias SystemFFmpegFallbackHandler = @MainActor @Sendable (SystemFFmpegFallbackRequest) async -> Bool
+public typealias RenderArtifactHandler = @MainActor @Sendable (RenderArtifactSnapshotCandidate) -> Void
 
 public final class RenderCoordinator: @unchecked Sendable {
     private let folderDiscoveryService: FolderMediaDiscoveryService
@@ -196,6 +209,7 @@ public final class RenderCoordinator: @unchecked Sendable {
         writeDiagnosticsLog: Bool,
         progressHandler: (@MainActor @Sendable (Double) -> Void)?,
         statusHandler: (@MainActor @Sendable (String) -> Void)? = nil,
+        artifactHandler: RenderArtifactHandler? = nil,
         systemFFmpegFallbackHandler: SystemFFmpegFallbackHandler? = nil
     ) async throws -> RenderResult {
         try await render(
@@ -205,6 +219,7 @@ public final class RenderCoordinator: @unchecked Sendable {
             writeDiagnosticsLog: writeDiagnosticsLog,
             progressHandler: progressHandler,
             statusHandler: statusHandler,
+            artifactHandler: artifactHandler,
             systemFFmpegFallbackHandler: systemFFmpegFallbackHandler,
             executionOptions: .default
         )
@@ -217,6 +232,7 @@ public final class RenderCoordinator: @unchecked Sendable {
         writeDiagnosticsLog: Bool,
         progressHandler: (@MainActor @Sendable (Double) -> Void)?,
         statusHandler: (@MainActor @Sendable (String) -> Void)? = nil,
+        artifactHandler: RenderArtifactHandler? = nil,
         systemFFmpegFallbackHandler: SystemFFmpegFallbackHandler? = nil,
         executionOptions: RenderExecutionOptions
     ) async throws -> RenderResult {
@@ -231,6 +247,7 @@ public final class RenderCoordinator: @unchecked Sendable {
             writeDiagnosticsLog: writeDiagnosticsLog,
             progressHandler: progressHandler,
             statusHandler: statusHandler,
+            artifactHandler: artifactHandler,
             systemFFmpegFallbackHandler: systemFFmpegFallbackHandler,
             executionOptions: executionOptions
         )
