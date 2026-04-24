@@ -14,6 +14,7 @@ What is working now:
 - Local-only macOS app workflow with no telemetry or cloud requirement.
 - Folder source rendering for mixed photos and videos.
 - Apple Photos rendering using month/year filtering and album selection.
+- Apple Photos album rendering can span multiple months; album mode uses the earliest dated item for Plex month/year identity and the album title for auto-managed naming.
 - Mac-native shell surfaces for the main workflow, including command menus, keyboard shortcuts, toolbar-owned primary actions, a dedicated Settings window, and a dedicated About window.
 - Persisted default output-folder selection with bookmark-based restoration and fallback to the app's Movies folder default when a saved folder disappears.
 - Hidden serial render queue, including year-scan queue creation for non-empty Photos months.

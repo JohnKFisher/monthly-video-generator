@@ -1357,10 +1357,12 @@ final class MainWindowViewModel: ObservableObject {
             timeline: preparedSession.preparation.timeline,
             appIdentity: exportProvenanceIdentity
         )
-        let episodeTitleOverride = resolvedCustomPlexEpisodeTitleOverride(
+        let customEpisodeTitleOverride = resolvedCustomPlexEpisodeTitleOverride(
             snapshot: snapshot,
             title: preparedSession.style.openingTitle
         )
+        let episodeTitleOverride = customEpisodeTitleOverride ??
+            albumEpisodeTitleOverride(for: preparedSession.source)
         let metadata = PlexTVMetadataResolver.resolveMetadata(
             showTitle: resolvedPlexShowTitle(for: snapshot),
             monthYear: monthYearContext.monthYear,
@@ -1399,6 +1401,18 @@ final class MainWindowViewModel: ObservableObject {
                     year: snapshot.manualMonthYearOverrideYear
                 ),
                 latestCaptureDate: latestCaptureDate
+            )
+        }
+        if snapshot.sourceMode == .photos, snapshot.selectedPhotosFilterMode == .album {
+            guard let earliestCaptureDate = earliestCaptureDate(from: preparedSession.preparation.items) else {
+                throw MonthYearResolutionError.noCaptureDates
+            }
+            return ResolvedMonthYearContext(
+                monthYear: MonthYear(
+                    month: calendar.component(.month, from: earliestCaptureDate),
+                    year: calendar.component(.year, from: earliestCaptureDate)
+                ),
+                latestCaptureDate: earliestCaptureDate
             )
         }
 
@@ -1444,6 +1458,10 @@ final class MainWindowViewModel: ObservableObject {
 
     private func latestCaptureDate(from items: [MediaItem]) -> Date? {
         items.compactMap(\.captureDate).max()
+    }
+
+    private func earliestCaptureDate(from items: [MediaItem]) -> Date? {
+        items.compactMap(\.captureDate).min()
     }
 
     private func makeSingleRenderSummarySnapshot(snapshot: QueuedRenderSnapshot) -> SingleRenderSummarySnapshot {
@@ -1977,6 +1995,11 @@ final class MainWindowViewModel: ObservableObject {
 
                 let selectedAlbumTitle = snapshot.selectedPhotoAlbumTitle ??
                     photoAlbums.first(where: { $0.localIdentifier == selectedAlbumID })?.title
+                let effectiveStyle = albumStyle(
+                    from: style,
+                    snapshot: snapshot,
+                    albumTitle: selectedAlbumTitle
+                )
                 let source: MediaSource = .photosLibrary(
                     scope: .album(localIdentifier: selectedAlbumID, title: selectedAlbumTitle))
                 let discovered = try await photoDiscovery.discover(albumLocalIdentifier: selectedAlbumID)
@@ -1991,7 +2014,7 @@ final class MainWindowViewModel: ObservableObject {
                     source: source,
                     monthYear: nil,
                     ordering: .captureDateAscendingStable,
-                    style: style,
+                    style: effectiveStyle,
                     export: Self.defaultExportProfile,
                     output: OutputTarget(directory: snapshot.outputDirectoryURL, baseFilename: snapshot.outputFilename)
                 )
@@ -2003,7 +2026,7 @@ final class MainWindowViewModel: ObservableObject {
                 return PreparedRenderSession(
                     source: source,
                     monthYear: nil,
-                    style: style,
+                    style: effectiveStyle,
                     preparation: preparation,
                     usesPhotoMaterializer: true
                 )
@@ -2476,6 +2499,43 @@ final class MainWindowViewModel: ObservableObject {
         }
 
         return title?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func albumStyle(
+        from style: StyleProfile,
+        snapshot: QueuedRenderSnapshot,
+        albumTitle: String?
+    ) -> StyleProfile {
+        guard snapshot.includeOpeningTitle,
+              snapshot.isOpeningTitleAutoManaged,
+              let albumTitle = normalizedAlbumTitle(albumTitle)
+        else {
+            return style
+        }
+
+        return StyleProfile(
+            openingTitle: albumTitle,
+            titleDurationSeconds: style.titleDurationSeconds,
+            crossfadeDurationSeconds: style.crossfadeDurationSeconds,
+            stillImageDurationSeconds: style.stillImageDurationSeconds,
+            showCaptureDateOverlay: style.showCaptureDateOverlay,
+            openingTitleCaptionMode: style.openingTitleCaptionMode,
+            openingTitleCaptionText: style.openingTitleCaptionText
+        )
+    }
+
+    private func albumEpisodeTitleOverride(for source: MediaSource) -> String? {
+        guard case let .photosLibrary(scope) = source,
+              case let .album(_, title) = scope
+        else {
+            return nil
+        }
+        return normalizedAlbumTitle(title)
+    }
+
+    private func normalizedAlbumTitle(_ title: String?) -> String? {
+        let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private func applyReportedRenderProgress(_ reportedProgress: Double) {

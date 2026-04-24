@@ -592,6 +592,62 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertEqual(request.plexTVMetadata?.embedded.description, expectedDescription(monthYear: resolvedMonthYear))
     }
 
+    func testAlbumRenderUsesEarliestCaptureMonthAndAlbumTitleForAutoName() async throws {
+        let juneCaptureDate = makeDate(year: 2025, month: 6, day: 28)
+        let julyCaptureDate = makeDate(year: 2025, month: 7, day: 2)
+        let photoDiscovery = PhotoLibraryDiscoveringSpy(
+            albumItems: [
+                "album-123": [
+                    makeImageItem(id: "image-2", captureDate: julyCaptureDate),
+                    makeImageItem(id: "image-1", captureDate: juneCaptureDate)
+                ]
+            ],
+            albums: [
+                PhotoAlbumSummary(localIdentifier: "album-123", title: "Summer Trip", assetCount: 2)
+            ]
+        )
+        let coordinator = RenderCoordinatorSpy(preparation: makePreparation())
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            photoDiscovery: photoDiscovery,
+            preferencesStore: makePreferencesStore(),
+            exportProvenanceIdentity: OutputProvenanceAppIdentity(
+                appName: "Monthly Video Generator",
+                appVersion: "0.5.0",
+                buildNumber: "20260307200552"
+            )
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.sourceMode = .photos
+        viewModel.selectedPhotosFilterMode = .album
+        viewModel.outputDirectoryURL = directory
+
+        viewModel.startRender()
+        await waitUntil(
+            message: "Timed out waiting for album render to finish."
+        ) {
+            coordinator.renderRequests.count == 1 && !viewModel.isRendering
+        }
+
+        let resolvedMonthYear = MonthYear(month: 6, year: 2025)
+        let expectedName = expectedOutputName(
+            monthYear: resolvedMonthYear,
+            episodeTitleOverride: "Summer Trip"
+        )
+        let request = try XCTUnwrap(coordinator.renderRequests.first)
+        XCTAssertFalse(viewModel.showsManualMonthYearOverride)
+        XCTAssertEqual(viewModel.outputFilename, expectedName)
+        XCTAssertEqual(request.output.baseFilename, expectedName)
+        XCTAssertEqual(request.style.openingTitle, "Summer Trip")
+        XCTAssertEqual(request.plexTVMetadata?.identity.filenameBase, expectedName)
+        XCTAssertEqual(request.plexTVMetadata?.identity.episodeID, "S2025E0699")
+        XCTAssertEqual(request.plexTVMetadata?.embedded.title, "Summer Trip")
+        XCTAssertEqual(request.plexTVMetadata?.embedded.creationTime, juneCaptureDate)
+        XCTAssertEqual(request.plexTVMetadata?.embedded.description, expectedDescription(monthYear: resolvedMonthYear))
+    }
+
     func testSingleRenderCompletionSummaryListsRequestedAndActualExportOptions() async throws {
         let preparation = makePreparation(
             items: [
@@ -1739,16 +1795,22 @@ private final class PhotoLibraryDiscoveringSpy: PhotoLibraryDiscovering, @unchec
     var authorizationStatusValue: PHAuthorizationStatus = .authorized
     var requestedAuthorizationStatus: PHAuthorizationStatus?
     var monthItems: [MonthYear: [MediaItem]] = [:]
+    var albumItems: [String: [MediaItem]] = [:]
+    var albums: [PhotoAlbumSummary] = []
     private(set) var discoveredMonthYears: [MonthYear] = []
 
     init(
         authorizationStatusValue: PHAuthorizationStatus = .authorized,
         requestedAuthorizationStatus: PHAuthorizationStatus? = nil,
-        monthItems: [MonthYear: [MediaItem]] = [:]
+        monthItems: [MonthYear: [MediaItem]] = [:],
+        albumItems: [String: [MediaItem]] = [:],
+        albums: [PhotoAlbumSummary] = []
     ) {
         self.authorizationStatusValue = authorizationStatusValue
         self.requestedAuthorizationStatus = requestedAuthorizationStatus
         self.monthItems = monthItems
+        self.albumItems = albumItems
+        self.albums = albums
     }
 
     func authorizationStatus() -> PHAuthorizationStatus {
@@ -1765,11 +1827,11 @@ private final class PhotoLibraryDiscoveringSpy: PhotoLibraryDiscovering, @unchec
     }
 
     func discover(albumLocalIdentifier: String) async throws -> [MediaItem] {
-        []
+        albumItems[albumLocalIdentifier] ?? []
     }
 
     func discoverAlbums() async throws -> [PhotoAlbumSummary] {
-        []
+        albums
     }
 }
 
