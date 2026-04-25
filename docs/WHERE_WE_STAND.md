@@ -1,19 +1,19 @@
 # Monthly Video Generator
 
 Current version/build:
-- `2.1.4`
-- Latest checked-in build identity: `215`
+- `2.1.5`
+- Latest checked-in build identity: `216`
 
 Current overall status:
-- The app is usable now for local folder-based and Apple Photos-based monthly video exports, and this `2.1.4` release keeps the protected HDR/export path intact while moving the bundled FFmpeg/ffprobe toolchain forward to pinned FFmpeg 8.x builds.
+- The app is usable now for local folder-based and Apple Photos-based monthly video exports, and this `2.1.5` release fixes SDR-source highlight blowout in HDR exports by correcting the SDR-to-HLG uplift nominal peak from 1000 to 400 nits, so all SDR sources (old JPEGs, modern JPEGs, Display P3 HEICs, SDR MOVs) land at ~360 nit white in HLG playback without clipping.
 - The bundled FFmpeg/ffprobe toolchain is now committed as validated macOS architecture slices using pinned FFmpeg 8.x static builds, and packaging fails before producing an app if either tool is missing, not launchable, or missing a requested architecture.
-- The `2.1.0` GitHub DMG was published without bundled FFmpeg because the local `third_party/ffmpeg/bin` inputs were ignored; use `2.1.1` or later for packaged HDR exports, and prefer `2.1.4` or later for FFmpeg 8.x packaged HDR exports with native Apple Silicon launch metadata and restored SDR-source brightness in HDR output.
+- The `2.1.0` GitHub DMG was published without bundled FFmpeg because the local `third_party/ffmpeg/bin` inputs were ignored; use `2.1.1` or later for packaged HDR exports, and prefer `2.1.5` or later for correct SDR brightness in HDR exports.
 - Opening title cards now randomize per export job across the corrected `21`-variant collage-family set, including queued exports and full-year runs.
 - Fresh/reset defaults now use a `10.0s` opening title card, and release identity now comes from the checked-in `VERSION` plus `BUILD_NUMBER` files.
 - The default Plex/Infuse HDR export now uses the bakeoff-approved `crf21-fast` final `libx265` tuning.
 - Progressive HDR final batches now make one recovery retry with conservative x265 thread settings when FFmpeg/libx265 exits before producing any output.
 - The universal app bundle now requires native execution and prioritizes `arm64`, so Apple Silicon Macs should launch the native slice instead of Rosetta.
-- HDR exports now restore the brighter luma-lift SDR-to-HLG uplift path for SDR videos and stills, while preserving Display P3 sources' transfer-aware input handling.
+- HDR exports use the luma-lift LUT + HLG uplift path for all SDR sources, with `hdrSDRNominalPeak=400` so highlights are correctly preserved rather than blown out (old scanned JPEGs, modern JPEGs, Display P3 HEICs, and SDR MOVs all land at ~360 nit white without clipping).
 
 What is working now:
 - Local-only macOS app workflow with no telemetry or cloud requirement.

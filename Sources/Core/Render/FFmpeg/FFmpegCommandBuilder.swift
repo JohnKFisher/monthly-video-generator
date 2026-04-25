@@ -19,7 +19,7 @@ struct FFmpegCommand {
 
 struct FFmpegCommandBuilder {
     static let hlgSDRNominalPeak = 1400
-    static let hdrSDRNominalPeak = 1000
+    static let hdrSDRNominalPeak = 400
     static let hdrSDRContrastCompensation = 1.08
     private let supportFileLocator = FFmpegSupportFileLocator()
 
