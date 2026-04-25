@@ -590,7 +590,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("gbrpf32le"))
         XCTAssertTrue(joined.contains("lut3d=file="))
         XCTAssertTrue(joined.contains("sdr_luma_lift_33.cube:interp=tetrahedral"))
-        XCTAssertTrue(joined.contains("zscale=transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc:range=tv:npl=1000"))
+        XCTAssertTrue(joined.contains("zscale=transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc:range=tv:npl=\(FFmpegCommandBuilder.hdrSDRNominalPeak)"))
         XCTAssertTrue(joined.contains("eq=contrast=1.08"))
         XCTAssertFalse(joined.contains("pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black"))
         XCTAssertTrue(joined.contains("-progress pipe:2"))
@@ -1855,7 +1855,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("format=gbrpf32le"))
         XCTAssertTrue(joined.contains("lut3d=file="))
         XCTAssertTrue(joined.contains("sdr_luma_lift_33.cube:interp=tetrahedral"))
-        XCTAssertTrue(joined.contains("zscale=transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc:range=tv:npl=1000"))
+        XCTAssertTrue(joined.contains("zscale=transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc:range=tv:npl=\(FFmpegCommandBuilder.hdrSDRNominalPeak)"))
         XCTAssertTrue(joined.contains("eq=contrast=1.08"))
         XCTAssertFalse(joined.contains("vibrance=intensity="))
     }
@@ -1896,7 +1896,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("transferin=iec61966-2-1:primariesin=smpte432:matrixin=bt709:transfer=linear"))
         XCTAssertTrue(joined.contains("lut3d=file="))
         XCTAssertTrue(joined.contains("sdr_luma_lift_33.cube:interp=tetrahedral"))
-        XCTAssertTrue(joined.contains("zscale=transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc:range=tv:npl=1000"))
+        XCTAssertTrue(joined.contains("zscale=transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc:range=tv:npl=\(FFmpegCommandBuilder.hdrSDRNominalPeak)"))
         XCTAssertTrue(joined.contains("eq=contrast=1.08"))
         XCTAssertFalse(joined.contains("vibrance=intensity="))
     }
@@ -1931,7 +1931,7 @@ final class HDRFFmpegPipelineTests: XCTestCase {
 
         XCTAssertTrue(joined.contains("colorspace=iall=bt709:all=bt709:fast=1,zscale=transferin=bt709:primariesin=bt709:matrixin=bt709:transfer=linear"))
         XCTAssertTrue(joined.contains("lut3d=file="))
-        XCTAssertTrue(joined.contains("zscale=transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc:range=tv:npl=1000"))
+        XCTAssertTrue(joined.contains("zscale=transfer=arib-std-b67:primaries=bt2020:matrix=bt2020nc:range=tv:npl=\(FFmpegCommandBuilder.hdrSDRNominalPeak)"))
         XCTAssertTrue(joined.contains("eq=contrast=1.08"))
     }
 
