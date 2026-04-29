@@ -144,6 +144,12 @@ clear_code_signing_detritus() {
 
   xattr -cr "$target" 2>/dev/null || true
   dot_clean -m "$target" 2>/dev/null || true
+  clear_disallowed_code_signing_xattrs "$target"
+}
+
+clear_disallowed_code_signing_xattrs() {
+  local target="$1"
+
   while IFS= read -r path; do
     xattr -d com.apple.FinderInfo "$path" 2>/dev/null || true
     xattr -d com.apple.ResourceFork "$path" 2>/dev/null || true
@@ -155,6 +161,9 @@ clear_code_signing_detritus() {
 verify_codesign_strict() {
   local target="$1"
 
+  clear_code_signing_detritus "$target"
+  sleep 0.2
+  clear_disallowed_code_signing_xattrs "$target"
   if codesign --verify --deep --strict --verbose=2 "$target"; then
     return 0
   fi
@@ -162,6 +171,7 @@ verify_codesign_strict() {
   for _ in 1 2 3; do
     clear_code_signing_detritus "$target"
     sleep 0.2
+    clear_disallowed_code_signing_xattrs "$target"
     if codesign --verify --deep --strict --verbose=2 "$target"; then
       return 0
     fi

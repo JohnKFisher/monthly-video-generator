@@ -23,7 +23,14 @@ struct MainWindowLightTablePane: View {
                 }
             }
         } label: {
-            MainWindowSectionLabel(title: "Current Render", accent: MainWindowTheme.accentTeal)
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                MainWindowSectionLabel(title: "Current Render", accent: MainWindowTheme.accentTeal)
+                Spacer(minLength: 8)
+                Text(AppMetadata.versionBuildLabel)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
         }
     }
 

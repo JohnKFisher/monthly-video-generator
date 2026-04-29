@@ -1,11 +1,11 @@
 # Monthly Video Generator
 
 Current version/build:
-- `2.1.5`
-- Latest checked-in build identity: `216`
+- `0.3.5`
+- Latest checked-in build identity: `217`
 
 Current overall status:
-- The app is usable now for local folder-based and Apple Photos-based monthly video exports, and this `2.1.5` release fixes SDR-source highlight blowout in HDR exports by correcting the SDR-to-HLG uplift nominal peak from 1000 to 400 nits, so all SDR sources (old JPEGs, modern JPEGs, Display P3 HEICs, SDR MOVs) land at ~360 nit white in HLG playback without clipping.
+- The app is usable now for local folder-based and Apple Photos-based monthly video exports, and the current release keeps the SDR-source highlight blowout fix for HDR exports by correcting the SDR-to-HLG uplift nominal peak from 1000 to 400 nits, so all SDR sources (old JPEGs, modern JPEGs, Display P3 HEICs, SDR MOVs) land at ~360 nit white in HLG playback without clipping.
 - The main workflow is now organized around a Light Table + Job Drawer surface: a large current-render theater with live snapshot/progress at the top and compact current/queued job cards below. Active runs now focus on Current Render + Job Drawer and hide config until the run is idle or the queue is cleared.
 - The Settings and main windows have been tightened vertically, Notes & Warnings now stay minimized by default, and the About window now includes the public GitHub repository link.
 - Queue progress is split into current-item progress and completed-count queue progress, and queue runs can now pause after the current item instead of using the old HDR checkpoint pause control.
@@ -35,6 +35,7 @@ What is working now:
 - Safe output naming and optional diagnostics logs. JSON sidecar run reports are written only when diagnostics logging is enabled.
 - Audit-only progressive HDR presentation timing rollups now record `title` / `still` / `video` clip counts plus capture-date-overlay state in diagnostics and diagnostics-gated structured run reports.
 - The Light Table now shows richer render liveness details with one clear status block and an always-visible Live Snapshot area that can capture occasional still snapshots from completed/readable render artifacts without attempting live playback.
+- The main window shows the app version/build in the Current Render header for runtime traceability.
 - Live Snapshot checks for a fresh readable artifact every 3 minutes during renders and preserves the last displayed snapshot when no newer image is available or after successful completion.
 - FFmpeg-based final exports with required bundled FFmpeg 8.x support in packaged builds.
 - Universal packaged app builds with native Apple Silicon launch metadata.
