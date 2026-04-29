@@ -1623,6 +1623,77 @@ final class MainWindowViewModelTests: XCTestCase {
         }
     }
 
+    func testQueueTileLabelsUseMonthAbbreviationsAndFallbackInitials() {
+        let viewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            preferencesStore: makePreferencesStore()
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.sourceMode = .photos
+        viewModel.selectedPhotosFilterMode = .monthYear
+        viewModel.selectedMonth = 9
+        viewModel.selectedYear = 2018
+        viewModel.outputDirectoryURL = directory
+        viewModel.outputFilename = "Family Videos - S2018E099 - September 2018"
+        viewModel.addCurrentSettingsToQueue()
+
+        viewModel.sourceMode = .folder
+        viewModel.selectedFolderURL = directory
+        viewModel.outputFilename = "Custom Folder Export"
+        viewModel.addCurrentSettingsToQueue()
+
+        XCTAssertEqual(viewModel.queueTileLabel(for: viewModel.queuedRenderJobs[0]), "Sep")
+        XCTAssertEqual(viewModel.queueTileLabel(for: viewModel.queuedRenderJobs[1]), "CFE")
+    }
+
+    func testPreferredQueueDetailJobDefaultsToQueuedThenRunningThenLastCompleted() async throws {
+        let coordinator = RenderCoordinatorSpy(
+            preparation: makePreparation(),
+            suspendRenderUntilResumed: true
+        )
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            preferencesStore: makePreferencesStore()
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.sourceMode = .folder
+        viewModel.selectedFolderURL = directory
+        viewModel.outputDirectoryURL = directory
+        viewModel.outputFilename = "First Queue Job"
+        viewModel.addCurrentSettingsToQueue()
+        viewModel.outputFilename = "Second Queue Job"
+        viewModel.addCurrentSettingsToQueue()
+
+        let firstJobID = viewModel.queuedRenderJobs[0].id
+        let secondJobID = viewModel.queuedRenderJobs[1].id
+        XCTAssertEqual(viewModel.preferredQueueDetailJobID, firstJobID)
+
+        viewModel.startQueue()
+        await waitUntil(message: "Timed out waiting for preferred running job.") {
+            coordinator.renderRequests.count == 1 && viewModel.isRendering
+        }
+
+        XCTAssertEqual(viewModel.preferredQueueDetailJobID, firstJobID)
+
+        coordinator.resumeRender()
+        await waitUntil(message: "Timed out waiting for second preferred running job.") {
+            coordinator.renderRequests.count == 2 && viewModel.isRendering
+        }
+
+        XCTAssertEqual(viewModel.preferredQueueDetailJobID, secondJobID)
+
+        coordinator.resumeRender()
+        await waitUntil(message: "Timed out waiting for preferred completed job.") {
+            !viewModel.isRendering
+        }
+
+        XCTAssertEqual(viewModel.preferredQueueDetailJobID, secondJobID)
+    }
+
     func testStatusFieldsDescribeActiveRender() async throws {
         let coordinator = RenderCoordinatorSpy(
             preparation: makePreparation(),
@@ -1774,6 +1845,7 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.queuedRenderJobs.map(\.state), [.failed, .queued])
         XCTAssertTrue(viewModel.usesFocusedRunLayout)
         XCTAssertEqual(viewModel.currentRenderOutputNamePreview, "Retry Me")
+        XCTAssertEqual(viewModel.preferredQueueDetailJobID, viewModel.queuedRenderJobs[0].id)
 
         coordinator.failedRenderIndices = []
         viewModel.startQueue()

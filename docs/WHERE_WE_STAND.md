@@ -6,7 +6,7 @@ Current version/build:
 
 Current overall status:
 - The app is usable now for local folder-based and Apple Photos-based monthly video exports, and the current release keeps the SDR-source highlight blowout fix for HDR exports by correcting the SDR-to-HLG uplift nominal peak from 1000 to 400 nits, so all SDR sources (old JPEGs, modern JPEGs, Display P3 HEICs, SDR MOVs) land at ~360 nit white in HLG playback without clipping.
-- The main workflow is now organized around a Light Table + Job Drawer surface: a large current-render theater with live snapshot/progress at the top and compact current/queued job cards below. Active runs now focus on Current Render + Job Drawer and hide config until the run is idle or the queue is cleared.
+- The main workflow is now organized around a Light Table + Job Drawer surface: a large current-render theater with live snapshot/progress at the top and a compact queue drawer with left-to-right job tiles below. Active runs now focus on Current Render + Job Drawer and hide config until the run is idle or the queue is cleared.
 - The Settings and main windows have been tightened vertically, Notes & Warnings now stay minimized by default, and the About window now includes the public GitHub repository link.
 - Queue progress is split into current-item progress and completed-count queue progress, and queue runs can now pause after the current item instead of using the old HDR checkpoint pause control.
 - The bundled FFmpeg/ffprobe toolchain is now committed as validated macOS architecture slices using pinned FFmpeg 8.x static builds, and packaging fails before producing an app if either tool is missing, not launchable, or missing a requested architecture.
@@ -26,7 +26,7 @@ What is working now:
 - Mac-native shell surfaces for the main workflow, including command menus, keyboard shortcuts, toolbar-owned primary actions, a dedicated Settings window, and a dedicated About window.
 - Settings now has Style, Export, and App tabs. Style/export defaults update the next render live, and default export picker options are labeled with `(Default)`.
 - The main window shows when style/export settings differ from Plex defaults and can reset only those moved settings without changing source, folder, output name, title text, or caption.
-- Render queues show separate current-item and completed-queue progress, can pause cleanly after the current queued item, and completed queue cards show elapsed time, input count, output size, and output filename when available.
+- Render queues show separate current-item and completed-queue progress, can pause cleanly after the current queued item, and the Job Drawer now uses a horizontal job strip plus a selected-job detail card with elapsed time, input count, output size, and output filename when available.
 - Persisted default output-folder selection with bookmark-based restoration and fallback to the app's Movies folder default when a saved folder disappears.
 - Hidden serial render queue, including year-scan queue creation for non-empty Photos months.
 - Opening title cards, capture-date overlays, and crossfades.

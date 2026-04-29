@@ -858,6 +858,21 @@ final class MainWindowViewModel: ObservableObject {
         return "Queued \(queuedCount) job(s). Completed \(completedCount) job(s)."
     }
 
+    func queueTileLabel(for job: QueuedRenderJob) -> String {
+        if job.snapshot.sourceMode == .photos, job.snapshot.selectedPhotosFilterMode == .monthYear {
+            return Self.shortMonthLabels[min(max(job.snapshot.selectedMonth, 1), 12) - 1]
+        }
+
+        return compactQueueTileLabel(
+            from: job.outputNamePreview,
+            fallback: job.sourceSummary
+        )
+    }
+
+    var preferredQueueDetailJobID: QueuedRenderJob.ID? {
+        preferredQueueDetailJob()?.id
+    }
+
     var currentRenderSourceSummary: String {
         if let activeRenderIdentityForDisplay {
             return activeRenderIdentityForDisplay.sourceSummary
@@ -911,6 +926,43 @@ final class MainWindowViewModel: ObservableObject {
         formatter.locale = Locale.current
         let monthName = formatter.monthSymbols[clampedMonth - 1]
         return "\(clampedMonth) - \(monthName)"
+    }
+
+    private static let shortMonthLabels = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+    ]
+
+    private func preferredQueueDetailJob() -> QueuedRenderJob? {
+        queuedRenderJobs.first { $0.state == .running } ??
+            queuedRenderJobs.first { $0.state == .failed } ??
+            queuedRenderJobs.first { $0.state == .paused } ??
+            queuedRenderJobs.first { $0.state == .queued } ??
+            queuedRenderJobs.last { $0.state == .completed }
+    }
+
+    private func compactQueueTileLabel(from value: String, fallback: String) -> String {
+        let primaryWords = compactQueueTileWords(from: value)
+        let words = primaryWords.isEmpty ? compactQueueTileWords(from: fallback) : primaryWords
+        let initials = words
+            .prefix(3)
+            .compactMap(\.first)
+            .map { String($0).uppercased() }
+            .joined()
+        if !initials.isEmpty {
+            return initials
+        }
+
+        let compactCharacters = (value.isEmpty ? fallback : value)
+            .filter { $0.isLetter || $0.isNumber }
+        return String(compactCharacters.prefix(3)).uppercased()
+    }
+
+    private func compactQueueTileWords(from value: String) -> [String] {
+        value
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
     }
 
     func containerOptionLabel(for container: ContainerFormat) -> String {
@@ -1549,13 +1601,7 @@ final class MainWindowViewModel: ObservableObject {
     }
 
     private func preferredQueueReviewIdentity() -> ActiveRenderIdentity? {
-        let preferredJob = queuedRenderJobs.first { $0.state == .running } ??
-            queuedRenderJobs.first { $0.state == .failed } ??
-            queuedRenderJobs.first { $0.state == .paused } ??
-            queuedRenderJobs.first { $0.state == .queued } ??
-            queuedRenderJobs.last { $0.state == .completed }
-
-        guard let preferredJob else {
+        guard let preferredJob = preferredQueueDetailJob() else {
             return nil
         }
 

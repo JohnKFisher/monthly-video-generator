@@ -115,25 +115,94 @@ struct MainWindowCurrentJobCard: View {
     }
 }
 
-struct MainWindowQueueJobRow: View {
+struct MainWindowQueueJobTile: View {
+    let label: String
+    let state: MainWindowViewModel.QueuedRenderJobState
+    let isSelected: Bool
+
+    var body: some View {
+        VStack(spacing: 5) {
+            Text(label)
+                .font(.headline.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+
+            Text(state.displayLabel.lowercased())
+                .font(.caption2.weight(.medium))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .foregroundStyle(.secondary)
+        }
+        .frame(width: 76, height: 64)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(queueStateFill(state))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(
+                    isSelected ? queueStateColor(state) : queueStateColor(state).opacity(0.18),
+                    lineWidth: isSelected ? 2 : 1
+                )
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private func queueStateFill(_ state: MainWindowViewModel.QueuedRenderJobState) -> Color {
+        switch state {
+        case .queued:
+            return queueCardBackground
+        case .running:
+            return MainWindowTheme.accentAmber.opacity(0.18)
+        case .paused:
+            return MainWindowTheme.accentAmber.opacity(0.12)
+        case .completed:
+            return MainWindowTheme.accentGreen.opacity(0.14)
+        case .failed:
+            return MainWindowTheme.accentRed.opacity(0.14)
+        }
+    }
+
+    private var queueCardBackground: Color {
+        #if canImport(AppKit)
+        Color(nsColor: .controlBackgroundColor).opacity(0.72)
+        #else
+        Color.secondary.opacity(0.08)
+        #endif
+    }
+
+    private func queueStateColor(_ state: MainWindowViewModel.QueuedRenderJobState) -> Color {
+        switch state {
+        case .queued:
+            return MainWindowTheme.accentNavy
+        case .running:
+            return MainWindowTheme.accentAmber
+        case .paused:
+            return MainWindowTheme.accentAmber
+        case .completed:
+            return MainWindowTheme.accentGreen
+        case .failed:
+            return MainWindowTheme.accentRed
+        }
+    }
+}
+
+struct MainWindowQueueJobDetailCard: View {
     let job: MainWindowViewModel.QueuedRenderJob
     let removeAction: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(job.state == .running ? "Current Job" : "Selected Job")
+                    .font(.subheadline.weight(.semibold))
+
                 Text(job.state.displayLabel)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
+                    .padding(.vertical, 3)
                     .background(queueStateColor(job.state), in: Capsule())
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(job.sourceSummary)
-                        .font(.subheadline)
-                    MainWindowCaption(text: "Output: \(job.outputNamePreview)")
-                }
 
                 Spacer(minLength: 8)
 
@@ -143,15 +212,29 @@ struct MainWindowQueueJobRow: View {
                 }
             }
 
+            Text(job.sourceSummary)
+                .font(.callout.weight(.semibold))
+
+            MainWindowCaption(text: "Output: \(job.outputNamePreview)")
+
             if !job.lastResultMessage.isEmpty {
                 MainWindowCaption(text: job.lastResultMessage)
             }
 
             if let resultSummary = job.resultSummary {
-                VStack(alignment: .leading, spacing: 2) {
-                    MainWindowCaption(text: resultSummary.elapsedLabel)
-                    MainWindowCaption(text: resultSummary.metricsLine)
-                    MainWindowCaption(text: "File: \(resultSummary.outputFilename)")
+                Divider()
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 14) {
+                        MainWindowCaption(text: resultSummary.elapsedLabel)
+                        MainWindowCaption(text: resultSummary.metricsLine)
+                        MainWindowCaption(text: "File: \(resultSummary.outputFilename)")
+                    }
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        MainWindowCaption(text: resultSummary.elapsedLabel)
+                        MainWindowCaption(text: resultSummary.metricsLine)
+                        MainWindowCaption(text: "File: \(resultSummary.outputFilename)")
+                    }
                 }
             }
         }
