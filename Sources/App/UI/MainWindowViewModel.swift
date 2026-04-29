@@ -774,6 +774,24 @@ final class MainWindowViewModel: ObservableObject {
         isQueueRunning || queuedRenderJobs.count > 1
     }
 
+    var hasQueuedJobs: Bool {
+        !queuedRenderJobs.isEmpty
+    }
+
+    var usesFocusedRunLayout: Bool {
+        isRendering ||
+            isQueueRunning ||
+            isQueuePauseRequested ||
+            queuedRenderJobs.contains { job in
+                switch job.state {
+                case .running, .paused, .completed, .failed:
+                    return true
+                case .queued:
+                    return false
+                }
+            }
+    }
+
     var hasCustomStyleOrExportSettings: Bool {
         includeOpeningTitle != true ||
             !approximatelyEqual(titleDurationSeconds, Self.defaultTitleDurationSeconds) ||

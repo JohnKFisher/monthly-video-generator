@@ -60,7 +60,6 @@ struct MainWindowLightTablePane: View {
                 alignment: .leading,
                 spacing: 8
             ) {
-                MainWindowStatusMetric(title: "Phase", value: viewModel.statusPhaseLabel)
                 MainWindowStatusMetric(title: "Elapsed", value: viewModel.statusElapsedLabel)
                 MainWindowStatusMetric(title: "Mode", value: viewModel.statusQueueLabel)
                 if !viewModel.currentArtifactSizeLabel.isEmpty {
@@ -68,11 +67,7 @@ struct MainWindowLightTablePane: View {
                 }
             }
 
-            Text(viewModel.statusMessage)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(4)
-                .textSelection(.enabled)
+            lightTableStatusBlock
 
             if !viewModel.lastOutputPath.isEmpty {
                 MainWindowStatusLine(title: "Output", value: viewModel.lastOutputPath)
@@ -135,6 +130,34 @@ struct MainWindowLightTablePane: View {
                 .font(.caption.weight(.semibold))
                 .lineLimit(2)
                 .truncationMode(.middle)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(lightTableBadgeBackground)
+        )
+    }
+
+    private var lightTableStatusBlock: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Status")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Text(viewModel.statusMessage)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+
+            if !viewModel.liveSnapshotStatusMessage.isEmpty {
+                Text(viewModel.liveSnapshotStatusMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
@@ -271,6 +294,7 @@ struct MainWindowStatusPane: View {
             MainWindowSectionLabel(title: "Status", accent: MainWindowTheme.accentTeal)
         }
     }
+
 }
 
 private struct MainWindowStatusMetric: View {

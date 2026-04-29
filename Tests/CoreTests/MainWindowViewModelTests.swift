@@ -127,6 +127,77 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertTrue(restoredViewModel.writeDiagnosticsLog)
     }
 
+    func testFocusedRunLayoutIsFalseAtFreshIdleState() {
+        let viewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            preferencesStore: makePreferencesStore()
+        )
+
+        XCTAssertFalse(viewModel.hasQueuedJobs)
+        XCTAssertFalse(viewModel.usesFocusedRunLayout)
+    }
+
+    func testFocusedRunLayoutIsTrueWhileSingleRenderRuns() async throws {
+        let coordinator = RenderCoordinatorSpy(
+            preparation: makePreparation(),
+            suspendRenderUntilResumed: true
+        )
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            preferencesStore: makePreferencesStore()
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.sourceMode = .folder
+        viewModel.selectedFolderURL = directory
+        viewModel.outputDirectoryURL = directory
+
+        viewModel.startRender()
+        await waitUntil(message: "Timed out waiting for focused single render.") {
+            coordinator.renderRequests.count == 1 && viewModel.isRendering
+        }
+
+        XCTAssertTrue(viewModel.usesFocusedRunLayout)
+
+        coordinator.resumeRender()
+        await waitUntil(message: "Timed out waiting for single render completion.") {
+            !viewModel.isRendering
+        }
+    }
+
+    func testFocusedRunLayoutIsTrueWhileQueueRuns() async throws {
+        let coordinator = RenderCoordinatorSpy(
+            preparation: makePreparation(),
+            suspendRenderUntilResumed: true
+        )
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            preferencesStore: makePreferencesStore()
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.sourceMode = .folder
+        viewModel.selectedFolderURL = directory
+        viewModel.outputDirectoryURL = directory
+        viewModel.outputFilename = "Focused Queue"
+        viewModel.addCurrentSettingsToQueue()
+
+        viewModel.startQueue()
+        await waitUntil(message: "Timed out waiting for focused queue render.") {
+            coordinator.renderRequests.count == 1 && viewModel.isRendering
+        }
+
+        XCTAssertTrue(viewModel.hasQueuedJobs)
+        XCTAssertTrue(viewModel.usesFocusedRunLayout)
+
+        coordinator.resumeRender()
+        await waitUntil(message: "Timed out waiting for focused queue completion.") {
+            !viewModel.isRendering
+        }
+    }
+
     func testSingleRenderWithDiagnosticsOffDoesNotWriteSidecarJSON() async throws {
         let coordinator = RenderCoordinatorSpy(preparation: makePreparation())
         let viewModel = makeViewModel(
@@ -1617,6 +1688,7 @@ final class MainWindowViewModelTests: XCTestCase {
         }
 
         XCTAssertEqual(viewModel.queuedRenderJobs.map(\.state), [.failed, .queued])
+        XCTAssertTrue(viewModel.usesFocusedRunLayout)
 
         coordinator.failedRenderIndices = []
         viewModel.startQueue()
@@ -1628,6 +1700,7 @@ final class MainWindowViewModelTests: XCTestCase {
 
         XCTAssertEqual(coordinator.renderRequests.count, 3)
         XCTAssertEqual(viewModel.queuedRenderJobs.map(\.state), [.completed, .completed])
+        XCTAssertTrue(viewModel.usesFocusedRunLayout)
     }
 
     func testRemovingFailedQueuedJobAllowsRemainingJobsToContinue() async throws {
@@ -1759,6 +1832,7 @@ final class MainWindowViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.queuedRenderJobs.map(\.state), [.completed, .queued])
         XCTAssertNotNil(viewModel.queuedRenderJobs[0].resultSummary)
+        XCTAssertTrue(viewModel.usesFocusedRunLayout)
         XCTAssertTrue(viewModel.statusMessage.contains("Queue paused after current item."))
         XCTAssertFalse(viewModel.showRenderCompleteAlert)
         XCTAssertFalse(viewModel.isQueuePauseRequested)
@@ -1777,6 +1851,35 @@ final class MainWindowViewModelTests: XCTestCase {
         }
 
         XCTAssertEqual(viewModel.queuedRenderJobs.map(\.state), [.completed, .completed])
+        XCTAssertTrue(viewModel.usesFocusedRunLayout)
+    }
+
+    func testFocusedRunLayoutReturnsFalseAfterQueueIsCleared() async throws {
+        let coordinator = RenderCoordinatorSpy(preparation: makePreparation())
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            preferencesStore: makePreferencesStore()
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.sourceMode = .folder
+        viewModel.selectedFolderURL = directory
+        viewModel.outputDirectoryURL = directory
+        viewModel.outputFilename = "Clear Focus"
+        viewModel.addCurrentSettingsToQueue()
+
+        viewModel.startQueue()
+        await waitUntil(message: "Timed out waiting for clear-focus queue.") {
+            !viewModel.isRendering && viewModel.queuedRenderJobs.first?.state == .completed
+        }
+
+        XCTAssertTrue(viewModel.usesFocusedRunLayout)
+
+        viewModel.clearQueuedRenderJobs()
+
+        XCTAssertFalse(viewModel.hasQueuedJobs)
+        XCTAssertFalse(viewModel.usesFocusedRunLayout)
     }
 
     func testCompletedQueuedJobStoresPracticalResultSummary() async throws {

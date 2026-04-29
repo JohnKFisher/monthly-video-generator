@@ -16,19 +16,29 @@ struct MainWindowView: View {
             VStack(alignment: .leading, spacing: sectionSpacing) {
                 MainWindowLightTablePane(viewModel: viewModel)
 
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .top, spacing: sectionSpacing) {
-                        workflowPane
-                        exportPane
+                if viewModel.usesFocusedRunLayout {
+                    MainWindowQueuePane(viewModel: viewModel)
+                } else {
+                    if viewModel.hasQueuedJobs {
+                        MainWindowQueuePane(viewModel: viewModel)
                     }
 
-                    VStack(alignment: .leading, spacing: sectionSpacing) {
-                        workflowPane
-                        exportPane
+                    ViewThatFits(in: .horizontal) {
+                        HStack(alignment: .top, spacing: sectionSpacing) {
+                            workflowPane
+                            exportPane
+                        }
+
+                        VStack(alignment: .leading, spacing: sectionSpacing) {
+                            workflowPane
+                            exportPane
+                        }
+                    }
+
+                    if !viewModel.hasQueuedJobs {
+                        MainWindowQueuePane(viewModel: viewModel)
                     }
                 }
-
-                MainWindowQueuePane(viewModel: viewModel)
 
                 MainWindowWarningsPane(
                     viewModel: viewModel,
