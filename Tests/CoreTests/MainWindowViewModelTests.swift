@@ -1541,6 +1541,88 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.queueProgressLabel, "2 of 2")
     }
 
+    func testQueuedActiveRenderIdentityUsesRunningJobSnapshotInsteadOfLiveForm() async throws {
+        let coordinator = RenderCoordinatorSpy(
+            preparation: makePreparation(),
+            suspendRenderUntilResumed: true
+        )
+        let photoDiscovery = PhotoLibraryDiscoveringSpy(
+            monthItems: [
+                MonthYear(month: 9, year: 2018): [makeImageItem(id: "sep-item", captureDate: makeDate(year: 2018, month: 9, day: 5))],
+                MonthYear(month: 10, year: 2018): [makeImageItem(id: "oct-item", captureDate: makeDate(year: 2018, month: 10, day: 5))],
+                MonthYear(month: 11, year: 2018): [makeImageItem(id: "nov-item", captureDate: makeDate(year: 2018, month: 11, day: 5))]
+            ]
+        )
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            photoDiscovery: photoDiscovery,
+            preferencesStore: makePreferencesStore(),
+            calendar: makeUTCGregorianCalendar()
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.sourceMode = .photos
+        viewModel.selectedPhotosFilterMode = .monthYear
+        viewModel.outputDirectoryURL = directory
+
+        viewModel.selectedMonth = 9
+        viewModel.selectedYear = 2018
+        viewModel.outputFilename = "Family Videos - S2018E099 - September 2018"
+        viewModel.addCurrentSettingsToQueue()
+
+        viewModel.selectedMonth = 10
+        viewModel.selectedYear = 2018
+        viewModel.outputFilename = "Family Videos - S2018E109 - October 2018"
+        viewModel.addCurrentSettingsToQueue()
+
+        viewModel.selectedMonth = 11
+        viewModel.selectedYear = 2018
+        viewModel.outputFilename = "Family Videos - S2018E119 - November 2018"
+        viewModel.addCurrentSettingsToQueue()
+
+        XCTAssertEqual(viewModel.currentRenderSourceSummary, "Photos: November 2018")
+        XCTAssertEqual(viewModel.currentRenderOutputNamePreview, "Family Videos - S2018E119 - November 2018")
+
+        viewModel.startQueue()
+        await waitUntil(message: "Timed out waiting for September queue job to start.") {
+            coordinator.renderRequests.count == 1 && viewModel.isRendering
+        }
+
+        XCTAssertEqual(viewModel.queuedRenderJobs.map(\.state), [.running, .queued, .queued])
+        XCTAssertEqual(viewModel.currentRenderSourceSummary, "Photos: September 2018")
+        XCTAssertEqual(viewModel.currentRenderOutputNamePreview, "Family Videos - S2018E099 - September 2018")
+        XCTAssertEqual(viewModel.currentRenderDrawerDescription, "Queue job 1 of 3")
+        XCTAssertEqual(coordinator.renderRequests[0].output.baseFilename, "Family Videos - S2018E099 - September 2018")
+
+        coordinator.resumeRender()
+        await waitUntil(message: "Timed out waiting for October queue job to start.") {
+            coordinator.renderRequests.count == 2 && viewModel.isRendering
+        }
+
+        XCTAssertEqual(viewModel.queuedRenderJobs.map(\.state), [.completed, .running, .queued])
+        XCTAssertEqual(viewModel.currentRenderSourceSummary, "Photos: October 2018")
+        XCTAssertEqual(viewModel.currentRenderOutputNamePreview, "Family Videos - S2018E109 - October 2018")
+        XCTAssertEqual(viewModel.currentRenderDrawerDescription, "Queue job 2 of 3")
+        XCTAssertEqual(coordinator.renderRequests[1].output.baseFilename, "Family Videos - S2018E109 - October 2018")
+
+        coordinator.resumeRender()
+        await waitUntil(message: "Timed out waiting for November queue job to start.") {
+            coordinator.renderRequests.count == 3 && viewModel.isRendering
+        }
+
+        XCTAssertEqual(viewModel.queuedRenderJobs.map(\.state), [.completed, .completed, .running])
+        XCTAssertEqual(viewModel.currentRenderSourceSummary, "Photos: November 2018")
+        XCTAssertEqual(viewModel.currentRenderOutputNamePreview, "Family Videos - S2018E119 - November 2018")
+        XCTAssertEqual(viewModel.currentRenderDrawerDescription, "Queue job 3 of 3")
+        XCTAssertEqual(coordinator.renderRequests[2].output.baseFilename, "Family Videos - S2018E119 - November 2018")
+
+        coordinator.resumeRender()
+        await waitUntil(message: "Timed out waiting for queued identity test to finish.") {
+            !viewModel.isRendering
+        }
+    }
+
     func testStatusFieldsDescribeActiveRender() async throws {
         let coordinator = RenderCoordinatorSpy(
             preparation: makePreparation(),
@@ -1567,6 +1649,8 @@ final class MainWindowViewModelTests: XCTestCase {
             coordinator.renderRequests.count == 1 && viewModel.statusPhaseLabel == "Encoding"
         }
 
+        XCTAssertEqual(viewModel.currentRenderSourceSummary, "Folder: \(directory.lastPathComponent) (recursive)")
+        XCTAssertEqual(viewModel.currentRenderOutputNamePreview, "Status Test")
         XCTAssertEqual(viewModel.statusProgressLabel, "100%")
         XCTAssertEqual(viewModel.statusQueueLabel, "Single render")
         XCTAssertTrue(viewModel.statusOutputLabel.hasSuffix("Status Test.mp4"))
@@ -1689,6 +1773,7 @@ final class MainWindowViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.queuedRenderJobs.map(\.state), [.failed, .queued])
         XCTAssertTrue(viewModel.usesFocusedRunLayout)
+        XCTAssertEqual(viewModel.currentRenderOutputNamePreview, "Retry Me")
 
         coordinator.failedRenderIndices = []
         viewModel.startQueue()
@@ -1880,6 +1965,9 @@ final class MainWindowViewModelTests: XCTestCase {
 
         XCTAssertFalse(viewModel.hasQueuedJobs)
         XCTAssertFalse(viewModel.usesFocusedRunLayout)
+
+        viewModel.outputFilename = "Live Form After Clear"
+        XCTAssertEqual(viewModel.currentRenderOutputNamePreview, "Live Form After Clear")
     }
 
     func testCompletedQueuedJobStoresPracticalResultSummary() async throws {

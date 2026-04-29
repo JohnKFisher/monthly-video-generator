@@ -163,6 +163,13 @@ final class MainWindowViewModel: ObservableObject {
         let totalJobCount: Int
     }
 
+    private struct ActiveRenderIdentity: Equatable {
+        let sourceSummary: String
+        let outputNamePreview: String
+        let drawerDescription: String
+        let queuedJobID: UUID?
+    }
+
     private struct QueueCompletionSummary: Equatable {
         let completedJobCount: Int
         let totalJobCount: Int
@@ -461,6 +468,7 @@ final class MainWindowViewModel: ObservableObject {
     private var renderTask: Task<Void, Never>?
     private var renderStatusDetail: String?
     private var queueRunContext: QueueRunContext?
+    @Published private var activeRenderIdentity: ActiveRenderIdentity?
     private var systemFFmpegFallbackContinuation: CheckedContinuation<Bool, Never>?
     private var hasApprovedSystemFFmpegFallbackForCurrentRun = false
     private var isApplyingExportConstraints = false
@@ -851,14 +859,23 @@ final class MainWindowViewModel: ObservableObject {
     }
 
     var currentRenderSourceSummary: String {
-        queueSourceSummary(for: makeCurrentRenderSnapshot())
+        if let activeRenderIdentityForDisplay {
+            return activeRenderIdentityForDisplay.sourceSummary
+        }
+        return queueSourceSummary(for: makeCurrentRenderSnapshot())
     }
 
     var currentRenderOutputNamePreview: String {
-        queueOutputNamePreview(for: makeCurrentRenderSnapshot())
+        if let activeRenderIdentityForDisplay {
+            return activeRenderIdentityForDisplay.outputNamePreview
+        }
+        return queueOutputNamePreview(for: makeCurrentRenderSnapshot())
     }
 
     var currentRenderDrawerDescription: String {
+        if let activeRenderIdentityForDisplay {
+            return activeRenderIdentityForDisplay.drawerDescription
+        }
         if let queueRunContext {
             return "Queue job \(queueRunContext.currentJobNumber) of \(queueRunContext.totalJobCount)"
         }
@@ -866,6 +883,13 @@ final class MainWindowViewModel: ObservableObject {
             return "Single render in progress"
         }
         return "Ready for a single render or queue snapshot."
+    }
+
+    private var activeRenderIdentityForDisplay: ActiveRenderIdentity? {
+        guard isRendering || usesFocusedRunLayout else {
+            return nil
+        }
+        return activeRenderIdentity
     }
 
     var renderCompleteAlertMessage: String {
@@ -1150,6 +1174,9 @@ final class MainWindowViewModel: ObservableObject {
             return
         }
         queuedRenderJobs.remove(at: index)
+        if activeRenderIdentity?.queuedJobID == id {
+            activeRenderIdentity = preferredQueueReviewIdentity()
+        }
     }
 
     func clearQueuedRenderJobs() {
@@ -1157,6 +1184,7 @@ final class MainWindowViewModel: ObservableObject {
             return
         }
         queuedRenderJobs.removeAll()
+        activeRenderIdentity = nil
     }
 
     func cancelRender() {
@@ -1216,6 +1244,11 @@ final class MainWindowViewModel: ObservableObject {
         completionSummarySnapshot: SingleRenderSummarySnapshot
     ) async {
         beginRenderRun(status: "Preparing media...", initialProgress: 0.01)
+        activeRenderIdentity = makeActiveRenderIdentity(
+            snapshot: snapshot,
+            drawerDescription: "Single render in progress",
+            queuedJobID: nil
+        )
 
         do {
             try await executeRenderSnapshot(
@@ -1261,10 +1294,15 @@ final class MainWindowViewModel: ObservableObject {
             let job = queuedRenderJobs[index]
             let completedBeforeJob = queuedRenderJobs.filter { $0.state == .completed }.count
             let totalCount = max(queuedRenderJobs.count, 1)
+            let drawerDescription = "Queue job \(completedBeforeJob + 1) of \(totalCount)"
 
             queueRunContext = QueueRunContext(
                 currentJobNumber: completedBeforeJob + 1,
                 totalJobCount: totalCount
+            )
+            activeRenderIdentity = makeActiveRenderIdentity(
+                job: job,
+                drawerDescription: drawerDescription
             )
             queuedRenderJobs[index].state = .running
             queuedRenderJobs[index].lastResultMessage = ""
@@ -1482,6 +1520,55 @@ final class MainWindowViewModel: ObservableObject {
                 lastResultMessage: "",
                 resultSummary: nil
             )
+        )
+    }
+
+    private func makeActiveRenderIdentity(
+        job: QueuedRenderJob,
+        drawerDescription: String
+    ) -> ActiveRenderIdentity {
+        ActiveRenderIdentity(
+            sourceSummary: job.sourceSummary,
+            outputNamePreview: job.outputNamePreview,
+            drawerDescription: drawerDescription,
+            queuedJobID: job.id
+        )
+    }
+
+    private func makeActiveRenderIdentity(
+        snapshot: QueuedRenderSnapshot,
+        drawerDescription: String,
+        queuedJobID: UUID?
+    ) -> ActiveRenderIdentity {
+        ActiveRenderIdentity(
+            sourceSummary: queueSourceSummary(for: snapshot),
+            outputNamePreview: queueOutputNamePreview(for: snapshot),
+            drawerDescription: drawerDescription,
+            queuedJobID: queuedJobID
+        )
+    }
+
+    private func preferredQueueReviewIdentity() -> ActiveRenderIdentity? {
+        let preferredJob = queuedRenderJobs.first { $0.state == .running } ??
+            queuedRenderJobs.first { $0.state == .failed } ??
+            queuedRenderJobs.first { $0.state == .paused } ??
+            queuedRenderJobs.first { $0.state == .queued } ??
+            queuedRenderJobs.last { $0.state == .completed }
+
+        guard let preferredJob else {
+            return nil
+        }
+
+        if let index = queuedRenderJobs.firstIndex(where: { $0.id == preferredJob.id }) {
+            return makeActiveRenderIdentity(
+                job: preferredJob,
+                drawerDescription: "Queue job \(index + 1) of \(max(queuedRenderJobs.count, 1))"
+            )
+        }
+
+        return makeActiveRenderIdentity(
+            job: preferredJob,
+            drawerDescription: "Queue job"
         )
     }
 
@@ -1942,6 +2029,7 @@ final class MainWindowViewModel: ObservableObject {
         isQueueRunning = false
         isQueuePauseRequested = false
         queueRunContext = nil
+        activeRenderIdentity = nil
         currentItemProgress = min(max(initialProgress, 0), 1)
         progress = currentItemProgress
         queueProgress = 0
