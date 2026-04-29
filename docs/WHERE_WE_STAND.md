@@ -1,8 +1,8 @@
 # Monthly Video Generator
 
 Current version/build:
-- `0.3.5`
-- Latest checked-in build identity: `217`
+- `0.3.6`
+- Latest checked-in build identity: `218`
 
 Current overall status:
 - The app is usable now for local folder-based and Apple Photos-based monthly video exports, and the current release keeps the SDR-source highlight blowout fix for HDR exports by correcting the SDR-to-HLG uplift nominal peak from 1000 to 400 nits, so all SDR sources (old JPEGs, modern JPEGs, Display P3 HEICs, SDR MOVs) land at ~360 nit white in HLG playback without clipping.
