@@ -389,6 +389,10 @@ final class MainWindowViewModel: ObservableObject {
 
     @Published var isRendering: Bool = false
     @Published var progress: Double = 0
+    @Published private(set) var currentItemProgress: Double = 0
+    @Published private(set) var queueProgress: Double = 0
+    @Published private(set) var currentItemProgressLabel: String = "0%"
+    @Published private(set) var queueProgressLabel: String = "0 of 0"
     @Published var statusMessage: String = "Idle"
     @Published private(set) var statusPhaseLabel: String = "Idle"
     @Published private(set) var statusProgressLabel: String = "0%"
@@ -409,6 +413,7 @@ final class MainWindowViewModel: ObservableObject {
     @Published private(set) var lastSingleRenderCompletionSummary: RenderCompletionSummary?
     @Published private(set) var queuedRenderJobs: [QueuedRenderJob] = []
     @Published private(set) var isQueueRunning: Bool = false
+    @Published private(set) var isQueuePauseRequested: Bool = false
     @Published private(set) var isPreparingYearQueue: Bool = false
     @Published private(set) var preparingYearQueueTargetYear: Int?
     @Published private(set) var renderCompleteAlertTitle: String = "Render Complete"
@@ -461,7 +466,7 @@ final class MainWindowViewModel: ObservableObject {
     private static let minimumSelectableYear = 2000
     private static let maximumSelectableYear = 2030
     private static let renderSettingsDefaultsKey = "MainWindowViewModel.renderSettings.v1"
-    private static let liveSnapshotIntervalSeconds: TimeInterval = 5 * 60
+    private static let liveSnapshotIntervalSeconds: TimeInterval = 3 * 60
 
     init(
         coordinator: RenderCoordinating = RenderCoordinator(),
@@ -715,8 +720,8 @@ final class MainWindowViewModel: ObservableObject {
         !isRendering && !isPreparingYearQueue && !queuedRenderJobs.isEmpty
     }
 
-    var canPauseRender: Bool {
-        isRendering && !isPauseRequested && selectedDynamicRange == .hdr && selectedVideoCodec == .hevc
+    var canPauseQueueAfterCurrentItem: Bool {
+        isQueueRunning && isRendering && !isQueuePauseRequested
     }
 
     var canAddCurrentSettingsToQueue: Bool {
@@ -746,6 +751,43 @@ final class MainWindowViewModel: ObservableObject {
         preparingYearQueueTargetYear ?? selectedYear
     }
 
+    var showsQueueProgress: Bool {
+        isQueueRunning || queuedRenderJobs.count > 1
+    }
+
+    var hasCustomStyleOrExportSettings: Bool {
+        includeOpeningTitle != true ||
+            !approximatelyEqual(titleDurationSeconds, Self.defaultTitleDurationSeconds) ||
+            !approximatelyEqual(crossfadeDurationSeconds, Self.defaultCrossfadeDurationSeconds) ||
+            !approximatelyEqual(stillImageDurationSeconds, Self.defaultStillImageDurationSeconds) ||
+            showCaptureDateOverlay != true ||
+            selectedContainer != Self.defaultExportProfile.container ||
+            selectedVideoCodec != Self.defaultExportProfile.videoCodec ||
+            selectedFrameRatePolicy != Self.defaultExportProfile.frameRate ||
+            selectedResolutionPolicy.normalized != Self.defaultExportProfile.resolution.normalized ||
+            selectedDynamicRange != Self.defaultExportProfile.dynamicRange ||
+            selectedHDRBinaryMode != Self.defaultExportProfile.hdrFFmpegBinaryMode ||
+            selectedHDRHEVCEncoderMode != Self.defaultExportProfile.hdrHEVCEncoderMode ||
+            selectedHDRX265Speed != Self.defaultExportProfile.hdrX265Speed ||
+            selectedAudioLayout != Self.defaultExportProfile.audioLayout ||
+            selectedBitrateMode != Self.defaultExportProfile.bitrateMode ||
+            writeDiagnosticsLog
+    }
+
+    var settingsSummaryDescription: String {
+        let baseline = hasCustomStyleOrExportSettings ? "Custom settings" : "Plex defaults"
+        let titleLabel = includeOpeningTitle ? "\(String(format: "%.2fs", titleDurationSeconds)) title" : "no title card"
+        let exportLabel = [
+            containerLabel(for: selectedContainer),
+            videoCodecLabel(for: selectedVideoCodec),
+            dynamicRangeLabel(for: selectedDynamicRange),
+            resolutionPolicyLabel(for: selectedResolutionPolicy),
+            frameRatePolicyLabel(for: selectedFrameRatePolicy),
+            selectedAudioLayout.displayLabel
+        ].joined(separator: " · ")
+        return "\(baseline) · \(titleLabel) · \(exportLabel)"
+    }
+
     var queueStatusDescription: String {
         if queuedRenderJobs.isEmpty {
             return "Snapshot the current form into queued jobs, then start the queue when you're ready."
@@ -757,6 +799,9 @@ final class MainWindowViewModel: ObservableObject {
         let queuedCount = queuedRenderJobs.filter { $0.state == .queued }.count
 
         if isQueueRunning {
+            if isQueuePauseRequested {
+                return "Pausing after this item. Completed \(completedCount) of \(queuedRenderJobs.count) job(s)."
+            }
             return "Queue running. Completed \(completedCount) of \(queuedRenderJobs.count) job(s)."
         }
         if pausedCount > 0 {
@@ -787,6 +832,77 @@ final class MainWindowViewModel: ObservableObject {
         formatter.locale = Locale.current
         let monthName = formatter.monthSymbols[clampedMonth - 1]
         return "\(clampedMonth) - \(monthName)"
+    }
+
+    func containerOptionLabel(for container: ContainerFormat) -> String {
+        defaultTaggedLabel(
+            containerLabel(for: container),
+            isDefault: container == Self.defaultExportProfile.container
+        )
+    }
+
+    func videoCodecOptionLabel(for codec: VideoCodec) -> String {
+        defaultTaggedLabel(
+            videoCodecLabel(for: codec),
+            isDefault: codec == Self.defaultExportProfile.videoCodec
+        )
+    }
+
+    func audioLayoutOptionLabel(for audioLayout: AudioLayout) -> String {
+        defaultTaggedLabel(
+            audioLayout.displayLabel,
+            isDefault: audioLayout == Self.defaultExportProfile.audioLayout
+        )
+    }
+
+    func bitrateModeOptionLabel(for bitrateMode: BitrateMode) -> String {
+        defaultTaggedLabel(
+            bitrateModeLabel(for: bitrateMode),
+            isDefault: bitrateMode == Self.defaultExportProfile.bitrateMode
+        )
+    }
+
+    func resolutionPolicyOptionLabel(for resolutionPolicy: ResolutionPolicy) -> String {
+        defaultTaggedLabel(
+            resolutionPolicyLabel(for: resolutionPolicy),
+            isDefault: resolutionPolicy.normalized == Self.defaultExportProfile.resolution.normalized
+        )
+    }
+
+    func frameRatePolicyOptionLabel(for frameRatePolicy: FrameRatePolicy) -> String {
+        defaultTaggedLabel(
+            frameRatePolicyLabel(for: frameRatePolicy),
+            isDefault: frameRatePolicy == Self.defaultExportProfile.frameRate
+        )
+    }
+
+    func dynamicRangeOptionLabel(for dynamicRange: DynamicRange) -> String {
+        defaultTaggedLabel(
+            dynamicRangeLabel(for: dynamicRange),
+            isDefault: dynamicRange == Self.defaultExportProfile.dynamicRange
+        )
+    }
+
+    func hdrHEVCEncoderOptionLabel(for hdrHEVCEncoderMode: HDRHEVCEncoderMode) -> String {
+        defaultTaggedLabel(
+            hdrHEVCEncoderModeLabel(for: hdrHEVCEncoderMode),
+            isDefault: hdrHEVCEncoderMode == Self.defaultExportProfile.hdrHEVCEncoderMode
+        )
+    }
+
+    func hdrX265SpeedOptionLabel(for hdrX265Speed: HDRX265Speed) -> String {
+        defaultTaggedLabel(
+            hdrX265Speed.displayLabel,
+            isDefault: hdrX265Speed == Self.defaultExportProfile.hdrX265Speed
+        )
+    }
+
+    private func defaultTaggedLabel(_ label: String, isDefault: Bool) -> String {
+        isDefault ? "\(label) (Default)" : label
+    }
+
+    private func approximatelyEqual(_ lhs: Double, _ rhs: Double) -> Bool {
+        abs(lhs - rhs) < 0.0001
     }
 
     private static func mostRecentlyCompletedMonthYear(calendar: Calendar, now: Date) -> MonthYear {
@@ -892,6 +1008,32 @@ final class MainWindowViewModel: ObservableObject {
         warnings = exportProfileManager.compatibilityWarnings(for: profile).map(\.message)
     }
 
+    func resetStyleAndExportSettingsToPlexDefaults() {
+        let profile = exportProfileManager.defaultProfile()
+        isRestoringPersistedSettings = true
+        includeOpeningTitle = true
+        titleDurationSeconds = Self.defaultTitleDurationSeconds
+        crossfadeDurationSeconds = Self.defaultCrossfadeDurationSeconds
+        stillImageDurationSeconds = Self.defaultStillImageDurationSeconds
+        showCaptureDateOverlay = true
+        selectedContainer = profile.container
+        selectedVideoCodec = profile.videoCodec
+        selectedFrameRatePolicy = profile.frameRate
+        selectedResolutionPolicy = profile.resolution.normalized
+        selectedDynamicRange = profile.dynamicRange
+        selectedHDRBinaryMode = profile.hdrFFmpegBinaryMode
+        selectedHDRHEVCEncoderMode = profile.hdrHEVCEncoderMode
+        selectedHDRX265Speed = profile.hdrX265Speed
+        selectedAudioLayout = profile.audioLayout
+        selectedBitrateMode = profile.bitrateMode
+        writeDiagnosticsLog = false
+        isRestoringPersistedSettings = false
+        enforceHDRSelectionConstraints()
+        synchronizeAutoGeneratedOutputFilenameIfNeeded()
+        persistRenderSettings()
+        warnings = exportProfileManager.compatibilityWarnings(for: profile).map(\.message)
+    }
+
     func startRender() {
         guard canStartRender else { return }
 
@@ -972,13 +1114,12 @@ final class MainWindowViewModel: ObservableObject {
         statusMessage = "Cancelling render..."
     }
 
-    func pauseRender() {
-        guard isRendering, !isPauseRequested else {
+    func pauseQueueAfterCurrentItem() {
+        guard canPauseQueueAfterCurrentItem else {
             return
         }
-        isPauseRequested = true
-        coordinator.requestPauseAfterCheckpoint()
-        renderStatusDetail = "Pausing after current safe HDR checkpoint..."
+        isQueuePauseRequested = true
+        renderStatusDetail = "Pausing after this item..."
         updateRenderingStatusMessage()
     }
 
@@ -1055,10 +1196,11 @@ final class MainWindowViewModel: ObservableObject {
     private func performQueuedRenders() async {
         let totalJobCount = queuedRenderJobs.count
         let completedCount = queuedRenderJobs.filter { $0.state == .completed }.count
-        let initialProgress = totalJobCount == 0 ? 0.01 : max(0.01, Double(completedCount) / Double(totalJobCount))
 
-        beginRenderRun(status: "Preparing queued render...", initialProgress: initialProgress)
+        beginRenderRun(status: "Preparing queued render...", initialProgress: 0.01)
         isQueueRunning = true
+        isQueuePauseRequested = false
+        updateQueueProgress(completedCount: completedCount, totalCount: totalJobCount)
 
         while let index = nextQueuedRenderStartIndex() {
             let job = queuedRenderJobs[index]
@@ -1072,19 +1214,24 @@ final class MainWindowViewModel: ObservableObject {
             queuedRenderJobs[index].state = .running
             queuedRenderJobs[index].lastResultMessage = ""
             renderStatusDetail = "Preparing media..."
+            setCurrentItemProgress(0.01)
+            updateQueueProgress(completedCount: completedBeforeJob, totalCount: totalCount)
             updateRenderingStatusMessage()
 
             do {
                 let renderResult = try await executeRenderSnapshot(
                     job.snapshot,
                     completionSummarySnapshot: nil,
-                    progressMapper: { reportedProgress in
-                        (Double(completedBeforeJob) + min(max(reportedProgress, 0), 1)) / Double(totalCount)
-                    },
+                    progressMapper: { $0 },
                     syncLiveState: false
                 )
                 queuedRenderJobs[index].state = .completed
                 queuedRenderJobs[index].lastResultMessage = renderResult.outputURL.lastPathComponent
+                updateQueueProgress(completedCount: completedBeforeJob + 1, totalCount: totalCount)
+                if isQueuePauseRequested {
+                    finishQueuePausedAfterCurrentItem()
+                    return
+                }
             } catch {
                 if isCancellingRender || Task.isCancelled || error is CancellationError {
                     queuedRenderJobs[index].state = .queued
@@ -1725,14 +1872,19 @@ final class MainWindowViewModel: ObservableObject {
         isCancellingRender = false
         isPauseRequested = false
         isQueueRunning = false
+        isQueuePauseRequested = false
         queueRunContext = nil
-        progress = initialProgress
+        currentItemProgress = min(max(initialProgress, 0), 1)
+        progress = currentItemProgress
+        queueProgress = 0
+        queueProgressLabel = "0 of 0"
         warnings = []
         renderStatusDetail = status
         renderStartedAt = nowProvider()
         statusOutputLabel = ""
         statusQueueLabel = "Single render"
-        statusProgressLabel = formattedPercent(initialProgress)
+        currentItemProgressLabel = formattedDetailedPercent(initialProgress)
+        statusProgressLabel = currentItemProgressLabel
         statusElapsedLabel = "00:00"
         resetLiveSnapshotForNewRender()
         updateRenderingStatusMessage()
@@ -1752,8 +1904,7 @@ final class MainWindowViewModel: ObservableObject {
         renderStatusDetail = nil
         queueRunContext = nil
         renderStartedAt = nil
-        progress = 1.0
-        statusProgressLabel = "100%"
+        setCurrentItemProgress(1.0)
         statusPhaseLabel = "Complete"
         statusMessage = status
         if !lastDiagnosticsPath.isEmpty {
@@ -1769,6 +1920,7 @@ final class MainWindowViewModel: ObservableObject {
         hasApprovedSystemFFmpegFallbackForCurrentRun = false
         isPauseRequested = false
         isQueueRunning = false
+        isQueuePauseRequested = false
         isCancellingRender = false
         isRendering = false
     }
@@ -1777,8 +1929,7 @@ final class MainWindowViewModel: ObservableObject {
         renderStatusDetail = nil
         queueRunContext = nil
         renderStartedAt = nil
-        progress = 0
-        statusProgressLabel = "0%"
+        setCurrentItemProgress(0)
         statusPhaseLabel = isCancellingRender || error is CancellationError ? "Cancelled" : "Failed"
         statusMessage = formatErrorForDisplay(error)
         cancelLiveSnapshot(
@@ -1794,6 +1945,7 @@ final class MainWindowViewModel: ObservableObject {
         hasApprovedSystemFFmpegFallbackForCurrentRun = false
         isPauseRequested = false
         isQueueRunning = false
+        isQueuePauseRequested = false
         isCancellingRender = false
         isRendering = false
     }
@@ -1802,8 +1954,7 @@ final class MainWindowViewModel: ObservableObject {
         renderStatusDetail = nil
         queueRunContext = nil
         renderStartedAt = nil
-        progress = 0
-        statusProgressLabel = "0%"
+        setCurrentItemProgress(0)
         statusPhaseLabel = "Paused"
         statusMessage = message
         cancelLiveSnapshot(removeImage: true, status: "Snapshot stopped after render pause.")
@@ -1816,6 +1967,7 @@ final class MainWindowViewModel: ObservableObject {
         hasApprovedSystemFFmpegFallbackForCurrentRun = false
         isPauseRequested = false
         isQueueRunning = false
+        isQueuePauseRequested = false
         isCancellingRender = false
         isRendering = false
     }
@@ -1824,8 +1976,7 @@ final class MainWindowViewModel: ObservableObject {
         renderStatusDetail = nil
         queueRunContext = nil
         renderStartedAt = nil
-        progress = 1.0
-        statusProgressLabel = "100%"
+        setCurrentItemProgress(1.0)
         statusPhaseLabel = "Queue complete"
         let completedCount = queuedRenderJobs.filter { $0.state == .completed }.count
         let totalCount = queuedRenderJobs.count
@@ -1850,6 +2001,7 @@ final class MainWindowViewModel: ObservableObject {
         hasApprovedSystemFFmpegFallbackForCurrentRun = false
         isPauseRequested = false
         isQueueRunning = false
+        isQueuePauseRequested = false
         isCancellingRender = false
         isRendering = false
     }
@@ -1858,8 +2010,7 @@ final class MainWindowViewModel: ObservableObject {
         renderStatusDetail = nil
         queueRunContext = nil
         renderStartedAt = nil
-        progress = 0
-        statusProgressLabel = "0%"
+        setCurrentItemProgress(0)
         statusPhaseLabel = "Queue paused"
         statusMessage = "Queue paused after failure\n\(failedJob.sourceSummary)\n\(errorMessage)"
         cancelLiveSnapshot(removeImage: true, status: "Snapshot stopped after queue failure.")
@@ -1872,6 +2023,7 @@ final class MainWindowViewModel: ObservableObject {
         hasApprovedSystemFFmpegFallbackForCurrentRun = false
         isPauseRequested = false
         isQueueRunning = false
+        isQueuePauseRequested = false
         isCancellingRender = false
         isRendering = false
     }
@@ -1880,8 +2032,7 @@ final class MainWindowViewModel: ObservableObject {
         renderStatusDetail = nil
         queueRunContext = nil
         renderStartedAt = nil
-        progress = 0
-        statusProgressLabel = "0%"
+        setCurrentItemProgress(0)
         statusPhaseLabel = "Queue paused"
         statusMessage = "Queue paused by user\n\(pausedJob.sourceSummary)\n\(message)"
         cancelLiveSnapshot(removeImage: true, status: "Snapshot stopped after queue pause.")
@@ -1894,6 +2045,30 @@ final class MainWindowViewModel: ObservableObject {
         hasApprovedSystemFFmpegFallbackForCurrentRun = false
         isPauseRequested = false
         isQueueRunning = false
+        isQueuePauseRequested = false
+        isCancellingRender = false
+        isRendering = false
+    }
+
+    private func finishQueuePausedAfterCurrentItem() {
+        renderStatusDetail = nil
+        queueRunContext = nil
+        renderStartedAt = nil
+        statusPhaseLabel = "Queue paused"
+        let completedCount = queuedRenderJobs.filter { $0.state == .completed }.count
+        let queuedCount = queuedRenderJobs.filter { $0.state == .queued }.count
+        statusMessage = "Queue paused after current item. Completed \(completedCount) job(s), queued \(queuedCount) job(s)."
+        cancelLiveSnapshot(removeImage: false, status: "Snapshot preserved after queue pause.")
+        lastSingleRenderCompletionSummary = nil
+        lastQueueCompletionSummary = nil
+        renderCompleteAlertTitle = "Queue Complete"
+        showRenderCompleteAlert = false
+        pendingSystemFFmpegFallbackConfirmation = nil
+        systemFFmpegFallbackContinuation = nil
+        hasApprovedSystemFFmpegFallbackForCurrentRun = false
+        isPauseRequested = false
+        isQueueRunning = false
+        isQueuePauseRequested = false
         isCancellingRender = false
         isRendering = false
     }
@@ -1902,8 +2077,7 @@ final class MainWindowViewModel: ObservableObject {
         renderStatusDetail = nil
         queueRunContext = nil
         renderStartedAt = nil
-        progress = 0
-        statusProgressLabel = "0%"
+        setCurrentItemProgress(0)
         statusPhaseLabel = "Cancelled"
         statusMessage = "Render cancelled"
         cancelLiveSnapshot(removeImage: true, status: "Snapshot stopped after cancellation.")
@@ -1916,6 +2090,7 @@ final class MainWindowViewModel: ObservableObject {
         hasApprovedSystemFFmpegFallbackForCurrentRun = false
         isPauseRequested = false
         isQueueRunning = false
+        isQueuePauseRequested = false
         isCancellingRender = false
         isRendering = false
     }
@@ -2283,11 +2458,11 @@ final class MainWindowViewModel: ObservableObject {
         )
     }
 
-    private func containerLabel(for container: ContainerFormat) -> String {
+    func containerLabel(for container: ContainerFormat) -> String {
         container.rawValue.uppercased()
     }
 
-    private func videoCodecLabel(for codec: VideoCodec) -> String {
+    func videoCodecLabel(for codec: VideoCodec) -> String {
         switch codec {
         case .hevc:
             return "HEVC"
@@ -2296,7 +2471,7 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
 
-    private func bitrateModeLabel(for bitrateMode: BitrateMode) -> String {
+    func bitrateModeLabel(for bitrateMode: BitrateMode) -> String {
         switch bitrateMode {
         case .balanced:
             return "Balanced"
@@ -2307,7 +2482,7 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
 
-    private func resolutionPolicyLabel(for resolutionPolicy: ResolutionPolicy) -> String {
+    func resolutionPolicyLabel(for resolutionPolicy: ResolutionPolicy) -> String {
         switch resolutionPolicy.normalized {
         case .fixed720p:
             return "720p"
@@ -2320,7 +2495,7 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
 
-    private func frameRatePolicyLabel(for frameRatePolicy: FrameRatePolicy) -> String {
+    func frameRatePolicyLabel(for frameRatePolicy: FrameRatePolicy) -> String {
         switch frameRatePolicy {
         case .fps30:
             return "30 fps"
@@ -2331,11 +2506,11 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
 
-    private func dynamicRangeLabel(for dynamicRange: DynamicRange) -> String {
+    func dynamicRangeLabel(for dynamicRange: DynamicRange) -> String {
         dynamicRange.rawValue.uppercased()
     }
 
-    private func hdrBinaryModeLabel(for hdrBinaryMode: HDRFFmpegBinaryMode) -> String {
+    func hdrBinaryModeLabel(for hdrBinaryMode: HDRFFmpegBinaryMode) -> String {
         switch hdrBinaryMode {
         case .bundledPreferred:
             return "Bundled Preferred"
@@ -2348,7 +2523,7 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
 
-    private func hdrHEVCEncoderModeLabel(for hdrHEVCEncoderMode: HDRHEVCEncoderMode) -> String {
+    func hdrHEVCEncoderModeLabel(for hdrHEVCEncoderMode: HDRHEVCEncoderMode) -> String {
         hdrHEVCEncoderMode.displayLabel
     }
 
@@ -2608,8 +2783,28 @@ final class MainWindowViewModel: ObservableObject {
 
     private func applyReportedRenderProgress(_ reportedProgress: Double) {
         let clamped = min(max(reportedProgress, 0), 1)
-        progress = max(progress, clamped)
+        setCurrentItemProgress(max(currentItemProgress, clamped))
         updateRenderingStatusMessage()
+    }
+
+    private func setCurrentItemProgress(_ value: Double) {
+        let clamped = min(max(value, 0), 1)
+        currentItemProgress = clamped
+        progress = clamped
+        currentItemProgressLabel = formattedDetailedPercent(clamped)
+        statusProgressLabel = currentItemProgressLabel
+    }
+
+    private func updateQueueProgress(completedCount: Int, totalCount: Int) {
+        let clampedTotal = max(totalCount, 0)
+        let clampedCompleted = min(max(completedCount, 0), clampedTotal)
+        if clampedTotal == 0 {
+            queueProgress = 0
+            queueProgressLabel = "0 of 0"
+            return
+        }
+        queueProgress = Double(clampedCompleted) / Double(clampedTotal)
+        queueProgressLabel = "\(clampedCompleted) of \(clampedTotal)"
     }
 
     private func applyReportedRenderStatus(_ status: String) {
@@ -2622,8 +2817,7 @@ final class MainWindowViewModel: ObservableObject {
     }
 
     private func updateRenderingStatusMessage() {
-        let percent = Int((progress * 100).rounded())
-        statusProgressLabel = "\(percent)%"
+        let percentLabel = currentItemProgressLabel
         statusElapsedLabel = formattedElapsedSinceRenderStart()
         statusQueueLabel = queueRunContext.map {
             "Queue job \($0.currentJobNumber) of \($0.totalJobCount)"
@@ -2631,10 +2825,10 @@ final class MainWindowViewModel: ObservableObject {
         let renderMessage: String
         if let renderStatusDetail, !renderStatusDetail.isEmpty {
             statusPhaseLabel = compactStatusLine(from: renderStatusDetail)
-            renderMessage = "\(renderStatusDetail)\nOverall progress: \(percent)%"
+            renderMessage = "\(renderStatusDetail)\nCurrent item progress: \(percentLabel)"
         } else {
             statusPhaseLabel = isRendering ? "Rendering" : "Idle"
-            renderMessage = "Rendering... \(percent)%"
+            renderMessage = "Rendering... \(percentLabel)"
         }
 
         if let queueRunContext {
@@ -2685,7 +2879,7 @@ final class MainWindowViewModel: ObservableObject {
 
         let now = nowProvider()
         guard shouldAttemptLiveSnapshot(now: now) else {
-            liveSnapshotStatusMessage = "Watching \(candidate.label). Next snapshot after the 5-minute interval."
+            liveSnapshotStatusMessage = "Watching \(candidate.label). Next snapshot after the 3-minute interval."
             return
         }
 
@@ -2750,8 +2944,12 @@ final class MainWindowViewModel: ObservableObject {
         return Self.formatElapsed(nowProvider().timeIntervalSince(renderStartedAt))
     }
 
-    private func formattedPercent(_ value: Double) -> String {
-        "\(Int((min(max(value, 0), 1) * 100).rounded()))%"
+    private func formattedDetailedPercent(_ value: Double) -> String {
+        let percent = min(max(value, 0), 1) * 100
+        if percent == 0 || percent == 100 {
+            return "\(Int(percent.rounded()))%"
+        }
+        return String(format: "%.1f%%", percent)
     }
 
     private func fileSizeLabel(at url: URL) -> String? {
@@ -2900,7 +3098,7 @@ final class MainWindowViewModel: ObservableObject {
             calendar: calendar
         )
         applyOpeningTitleText(settings.openingTitleText, autoManaged: isOpeningTitleAutoManaged)
-        titleDurationSeconds = min(max(settings.titleDurationSeconds ?? Self.defaultTitleDurationSeconds, 1), 10)
+        titleDurationSeconds = min(max(settings.titleDurationSeconds ?? Self.defaultTitleDurationSeconds, 1), 20)
         openingTitleCaptionMode = .custom
         openingTitleCaptionText = Self.normalizedOpeningTitleCaptionText(
             mode: settings.openingTitleCaptionMode,

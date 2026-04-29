@@ -17,7 +17,7 @@ struct MonthlyVideoGeneratorApp: App {
         WindowGroup(AppMetadata.appName, id: AppSceneID.mainWindow) {
             MainWindowView(viewModel: mainWindowViewModel)
         }
-        .defaultSize(width: 1320, height: 860)
+        .defaultSize(width: 1240, height: 760)
         .windowResizability(.contentMinSize)
         .commands {
             MainWindowCommands(viewModel: mainWindowViewModel)
@@ -30,7 +30,10 @@ struct MonthlyVideoGeneratorApp: App {
         .restorationBehavior(.disabled)
 
         Settings {
-            AppSettingsView(shellPreferences: shellPreferences)
+            AppSettingsView(
+                shellPreferences: shellPreferences,
+                viewModel: mainWindowViewModel
+            )
         }
     }
 }

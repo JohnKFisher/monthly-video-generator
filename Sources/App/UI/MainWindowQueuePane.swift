@@ -61,6 +61,13 @@ struct MainWindowQueuePane: View {
 
                 Spacer(minLength: 0)
 
+                if viewModel.isQueueRunning {
+                    Button(viewModel.isQueuePauseRequested ? "Pausing after this item…" : "Pause After Current Item") {
+                        viewModel.pauseQueueAfterCurrentItem()
+                    }
+                    .disabled(!viewModel.canPauseQueueAfterCurrentItem)
+                }
+
                 Button("Start Queue") {
                     viewModel.startQueue()
                 }
@@ -86,6 +93,13 @@ struct MainWindowQueuePane: View {
                 }
 
                 HStack(spacing: 10) {
+                    if viewModel.isQueueRunning {
+                        Button(viewModel.isQueuePauseRequested ? "Pausing after this item…" : "Pause After Current Item") {
+                            viewModel.pauseQueueAfterCurrentItem()
+                        }
+                        .disabled(!viewModel.canPauseQueueAfterCurrentItem)
+                    }
+
                     Button("Start Queue") {
                         viewModel.startQueue()
                     }

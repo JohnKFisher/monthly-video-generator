@@ -23,7 +23,21 @@ struct MainWindowStatusPane: View {
                     }
                 }
 
-                ProgressView(value: viewModel.progress)
+                VStack(alignment: .leading, spacing: 6) {
+                    MainWindowProgressRow(
+                        title: "Current item",
+                        value: viewModel.currentItemProgress,
+                        label: viewModel.currentItemProgressLabel
+                    )
+
+                    if viewModel.showsQueueProgress {
+                        MainWindowProgressRow(
+                            title: "Queue",
+                            value: viewModel.queueProgress,
+                            label: viewModel.queueProgressLabel
+                        )
+                    }
+                }
 
                 LazyVGrid(
                     columns: [
@@ -79,12 +93,6 @@ struct MainWindowStatusPane: View {
                 HStack {
                     Spacer(minLength: 0)
 
-                    Button("Pause After Checkpoint") {
-                        viewModel.pauseRender()
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(!viewModel.canPauseRender)
-
                     Button("Cancel") {
                         viewModel.cancelRender()
                     }
@@ -121,6 +129,28 @@ private struct MainWindowStatusMetric: View {
                 .truncationMode(.middle)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct MainWindowProgressRow: View {
+    let title: String
+    let value: Double
+    let label: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text(title)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(label)
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            ProgressView(value: min(max(value, 0), 1))
+        }
     }
 }
 

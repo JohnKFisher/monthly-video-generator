@@ -52,14 +52,6 @@ struct MainWindowCommands: Commands {
             .keyboardShortcut(".", modifiers: [.command])
             .disabled(!viewModel.isRendering)
 
-            Button("Pause After Checkpoint") {
-                viewModel.pauseRender()
-            }
-            .keyboardShortcut("p", modifiers: [.command, .option])
-            .disabled(!viewModel.canPauseRender)
-
-            Divider()
-
             Button(viewModel.addCurrentSettingsToQueueLabel) {
                 viewModel.addCurrentSettingsToQueue()
             }
@@ -87,8 +79,8 @@ struct MainWindowCommands: Commands {
 
             Divider()
 
-            Button("Reset to Plex Defaults") {
-                viewModel.resetExportSettingsToPlexDefaults()
+            Button("Reset Style & Export to Plex Defaults") {
+                viewModel.resetStyleAndExportSettingsToPlexDefaults()
             }
             .disabled(!viewModel.canResetExportSettings)
         }

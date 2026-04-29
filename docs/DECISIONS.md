@@ -37,3 +37,8 @@
 ## 2026-04-25
 
 - Decision: Lower `hdrSDRNominalPeak` from 1000 to 400 in `FFmpegCommandBuilder`. Rationale: `npl=1000` encoded SDR white at ~940 nits in HLG output, blowing out highlights for all SDR sources — worst on old scanned JPEGs with high average scene luminance. `npl=400` maps SDR white to ~360 nits (good HDR uplift, no clipping at any brightness level), and `eq=contrast=1.08` remains harmless with this headroom. The prior `npl=1000` restoration was validated against a limited sample and did not catch the general highlight clipping. Status: approved.
+
+## 2026-04-29
+
+- Decision: Move stable style and advanced export controls into the Settings window while keeping per-render title/output fields on the main screen, with a main-window summary and non-default warning. Rationale: settings are now locked in enough that they should not clutter the primary workflow, but custom settings still need to be visible and easy to reset before rendering. Status: approved.
+- Decision: Replace the exposed HDR checkpoint pause with queue-boundary pause after the current item. Rationale: checkpoint pause was unreliable in practice and only applied to narrow renderer internals, while queue-boundary pause is predictable and preserves completed/queued job state without touching render output behavior. Status: approved.

@@ -3,17 +3,8 @@ import SwiftUI
 struct MainWindowView: View {
     @ObservedObject var viewModel: MainWindowViewModel
 
-    @AppStorage(AppShellPreferenceKeys.showAdvancedExportSettingsByDefault)
-    private var showAdvancedExportSettingsByDefault = false
-
     @AppStorage(AppShellPreferenceKeys.showRenderQueueByDefault)
     private var showRenderQueueByDefault = true
-
-    @AppStorage(AppShellPreferenceKeys.showWarningsExpandedByDefault)
-    private var showWarningsExpandedByDefault = true
-
-    @SceneStorage("MainWindowView.isAdvancedExportSettingsExpanded")
-    private var isAdvancedExportSettingsExpanded = false
 
     @SceneStorage("MainWindowView.isRenderQueueExpanded")
     private var isRenderQueueExpanded = false
@@ -24,7 +15,7 @@ struct MainWindowView: View {
     @SceneStorage("MainWindowView.hasAppliedSceneDefaults")
     private var hasAppliedSceneDefaults = false
 
-    private let sectionSpacing: CGFloat = 14
+    private let sectionSpacing: CGFloat = 10
 
     var body: some View {
         HSplitView {
@@ -32,15 +23,13 @@ struct MainWindowView: View {
                 VStack(alignment: .leading, spacing: sectionSpacing) {
                     MainWindowInputPane(viewModel: viewModel)
                     MainWindowStylePane(viewModel: viewModel)
-                    MainWindowExportPane(
-                        viewModel: viewModel,
-                        isAdvancedExportSettingsExpanded: $isAdvancedExportSettingsExpanded
-                    )
+                    MainWindowSettingsSummaryPane(viewModel: viewModel)
+                    MainWindowExportPane(viewModel: viewModel)
                 }
-                .padding(16)
+                .padding(12)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            .frame(minWidth: 660, idealWidth: 760, maxWidth: .infinity)
+            .frame(minWidth: 620, idealWidth: 720, maxWidth: .infinity)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: sectionSpacing) {
@@ -54,12 +43,12 @@ struct MainWindowView: View {
                         isExpanded: $isNotesExpanded
                     )
                 }
-                .padding(16)
+                .padding(12)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            .frame(minWidth: 360, idealWidth: 440, maxWidth: 520)
+            .frame(minWidth: 340, idealWidth: 420, maxWidth: 500)
         }
-        .frame(minWidth: 1080, minHeight: 760)
+        .frame(minWidth: 1020, minHeight: 660)
         .tint(MainWindowTheme.accentTeal)
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -97,13 +86,6 @@ struct MainWindowView: View {
             }
 
             ToolbarItemGroup(placement: .primaryAction) {
-                Button {
-                    viewModel.pauseRender()
-                } label: {
-                    Label("Pause After Checkpoint", systemImage: "pause.circle")
-                }
-                .disabled(!viewModel.canPauseRender)
-
                 Button {
                     viewModel.cancelRender()
                 } label: {
@@ -155,9 +137,8 @@ struct MainWindowView: View {
             return
         }
 
-        isAdvancedExportSettingsExpanded = showAdvancedExportSettingsByDefault
         isRenderQueueExpanded = showRenderQueueByDefault
-        isNotesExpanded = showWarningsExpandedByDefault
+        isNotesExpanded = false
         hasAppliedSceneDefaults = true
     }
 }

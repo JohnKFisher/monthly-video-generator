@@ -386,6 +386,46 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.writeDiagnosticsLog)
     }
 
+    func testStyleAndExportResetDoesNotChangePerRenderContent() {
+        let viewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            preferencesStore: makePreferencesStore()
+        )
+
+        viewModel.openingTitleText = "Summer Highlights"
+        viewModel.openingTitleCaptionText = "Cape Cod at dusk"
+        viewModel.outputFilename = "Manual Output"
+        viewModel.titleDurationSeconds = 20.0
+        viewModel.selectedContainer = .mov
+        viewModel.writeDiagnosticsLog = true
+
+        XCTAssertTrue(viewModel.hasCustomStyleOrExportSettings)
+
+        viewModel.resetStyleAndExportSettingsToPlexDefaults()
+
+        XCTAssertEqual(viewModel.openingTitleText, "Summer Highlights")
+        XCTAssertEqual(viewModel.openingTitleCaptionText, "Cape Cod at dusk")
+        XCTAssertEqual(viewModel.outputFilename, "Manual Output")
+        XCTAssertEqual(viewModel.titleDurationSeconds, 10.0, accuracy: 0.0001)
+        XCTAssertEqual(viewModel.selectedContainer, .mp4)
+        XCTAssertFalse(viewModel.writeDiagnosticsLog)
+        XCTAssertFalse(viewModel.hasCustomStyleOrExportSettings)
+    }
+
+    func testDefaultOptionLabelsMarkOnlyPlexDefaults() {
+        let viewModel = makeViewModel(
+            coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
+            preferencesStore: makePreferencesStore()
+        )
+
+        XCTAssertEqual(viewModel.containerOptionLabel(for: .mov), "MOV")
+        XCTAssertEqual(viewModel.containerOptionLabel(for: .mp4), "MP4 (Default)")
+        XCTAssertEqual(viewModel.videoCodecOptionLabel(for: .hevc), "HEVC (Default)")
+        XCTAssertEqual(viewModel.dynamicRangeOptionLabel(for: .hdr), "HDR (Default)")
+        XCTAssertEqual(viewModel.bitrateModeOptionLabel(for: .sizeFirst), "Size First (Default)")
+        XCTAssertEqual(viewModel.bitrateModeOptionLabel(for: .balanced), "Balanced")
+    }
+
     func testPlexDescriptionDefaultsToMonthYearAndCanBeRestored() {
         let viewModel = makeViewModel(
             coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
@@ -997,21 +1037,21 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.showCaptureDateOverlay)
     }
 
-    func testTitleDurationPersistsAcrossLaunches() {
+    func testTitleDurationPersistsAcrossLaunchesUpToTwentySeconds() {
         let preferencesStore = makePreferencesStore()
         let initialViewModel = makeViewModel(
             coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
             preferencesStore: preferencesStore
         )
 
-        initialViewModel.titleDurationSeconds = 6.25
+        initialViewModel.titleDurationSeconds = 20.0
 
         let restoredViewModel = makeViewModel(
             coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
             preferencesStore: preferencesStore
         )
 
-        XCTAssertEqual(restoredViewModel.titleDurationSeconds, 6.25, accuracy: 0.0001)
+        XCTAssertEqual(restoredViewModel.titleDurationSeconds, 20.0, accuracy: 0.0001)
     }
 
     func testCrossfadeAndStillDurationPersistAcrossLaunches() {
@@ -1306,10 +1346,12 @@ final class MainWindowViewModelTests: XCTestCase {
         await waitUntil(
             message: "Timed out waiting for first queued render progress."
         ) {
-            coordinator.renderRequests.count == 1 && viewModel.progress >= 0.5
+            coordinator.renderRequests.count == 1 && viewModel.currentItemProgress >= 1.0
         }
 
-        XCTAssertEqual(viewModel.progress, 0.5, accuracy: 0.001)
+        XCTAssertEqual(viewModel.currentItemProgress, 1.0, accuracy: 0.001)
+        XCTAssertEqual(viewModel.queueProgress, 0.0, accuracy: 0.001)
+        XCTAssertEqual(viewModel.queueProgressLabel, "0 of 2")
 
         coordinator.resumeRender()
         await waitUntil(
@@ -1317,12 +1359,17 @@ final class MainWindowViewModelTests: XCTestCase {
         ) {
             coordinator.renderRequests.count == 2
         }
+        XCTAssertEqual(viewModel.queueProgress, 0.5, accuracy: 0.001)
+        XCTAssertEqual(viewModel.queueProgressLabel, "1 of 2")
+
         coordinator.resumeRender()
         await waitUntil(
             message: "Timed out waiting for queued progress test to finish."
         ) {
             !viewModel.isRendering
         }
+        XCTAssertEqual(viewModel.queueProgress, 1.0, accuracy: 0.001)
+        XCTAssertEqual(viewModel.queueProgressLabel, "2 of 2")
     }
 
     func testStatusFieldsDescribeActiveRender() async throws {
@@ -1569,10 +1616,9 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.statusMessage, "Render cancelled")
     }
 
-    func testPauseRenderRequestsCheckpointPauseForHDRHEVCRender() async throws {
+    func testQueuePauseAfterCurrentItemStopsBeforeNextQueuedJob() async throws {
         let coordinator = RenderCoordinatorSpy(
             preparation: makePreparation(),
-            pausedRenderIndices: [0],
             suspendRenderUntilResumed: true
         )
         let viewModel = makeViewModel(
@@ -1585,38 +1631,53 @@ final class MainWindowViewModelTests: XCTestCase {
         viewModel.sourceMode = .folder
         viewModel.selectedFolderURL = directory
         viewModel.outputDirectoryURL = directory
-        viewModel.selectedDynamicRange = .hdr
-        viewModel.selectedVideoCodec = .hevc
+        viewModel.outputFilename = "Queue A"
+        viewModel.addCurrentSettingsToQueue()
+        viewModel.outputFilename = "Queue B"
+        viewModel.addCurrentSettingsToQueue()
 
-        viewModel.startRender()
+        viewModel.startQueue()
         await waitUntil(
-            message: "Timed out waiting for HDR render to start."
+            message: "Timed out waiting for queued render to start."
         ) {
             coordinator.renderRequests.count == 1 && viewModel.isRendering
         }
 
-        XCTAssertTrue(viewModel.canPauseRender)
+        XCTAssertTrue(viewModel.canPauseQueueAfterCurrentItem)
 
-        viewModel.pauseRender()
+        viewModel.pauseQueueAfterCurrentItem()
 
-        XCTAssertEqual(coordinator.pauseAfterCheckpointCallCount, 1)
-        XCTAssertTrue(viewModel.isPauseRequested)
-        XCTAssertFalse(viewModel.canPauseRender)
-        XCTAssertTrue(viewModel.statusMessage.contains("Pausing after current safe HDR checkpoint..."))
+        XCTAssertEqual(coordinator.pauseAfterCheckpointCallCount, 0)
+        XCTAssertTrue(viewModel.isQueuePauseRequested)
+        XCTAssertFalse(viewModel.canPauseQueueAfterCurrentItem)
+        XCTAssertTrue(viewModel.statusMessage.contains("Pausing after this item..."))
 
         coordinator.resumeRender()
         await waitUntil(
-            message: "Timed out waiting for paused single render to settle."
+            message: "Timed out waiting for queue pause to settle."
         ) {
             !viewModel.isRendering
         }
 
-        XCTAssertEqual(
-            viewModel.statusMessage,
-            "Render paused after a safe HDR checkpoint. Reopen the app and start the same render again to resume."
-        )
+        XCTAssertEqual(viewModel.queuedRenderJobs.map(\.state), [.completed, .queued])
+        XCTAssertTrue(viewModel.statusMessage.contains("Queue paused after current item."))
         XCTAssertFalse(viewModel.showRenderCompleteAlert)
-        XCTAssertFalse(viewModel.isPauseRequested)
+        XCTAssertFalse(viewModel.isQueuePauseRequested)
+
+        viewModel.startQueue()
+        await waitUntil(
+            message: "Timed out waiting for remaining queued job to start."
+        ) {
+            coordinator.renderRequests.count == 2
+        }
+        coordinator.resumeRender()
+        await waitUntil(
+            message: "Timed out waiting for remaining queued job to finish."
+        ) {
+            !viewModel.isRendering
+        }
+
+        XCTAssertEqual(viewModel.queuedRenderJobs.map(\.state), [.completed, .completed])
     }
 
     func testPausedQueuedJobRetriesBeforeLaterQueuedJobs() async throws {
