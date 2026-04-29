@@ -2,45 +2,42 @@ import SwiftUI
 
 struct MainWindowQueuePane: View {
     @ObservedObject var viewModel: MainWindowViewModel
-    @Binding var isRenderQueueExpanded: Bool
 
     private let rowSpacing: CGFloat = 8
 
     var body: some View {
         GroupBox {
-            DisclosureGroup("Render Queue", isExpanded: $isRenderQueueExpanded) {
-                VStack(alignment: .leading, spacing: rowSpacing) {
-                    queueActions
+            VStack(alignment: .leading, spacing: rowSpacing) {
+                queueActions
 
-                    MainWindowCaption(text: viewModel.queueStatusDescription)
+                MainWindowCurrentJobCard(viewModel: viewModel)
 
-                    if viewModel.showsSelectedYearQueueAction {
-                        MainWindowCaption(text: viewModel.selectedYearQueueDescription)
+                MainWindowCaption(text: viewModel.queueStatusDescription)
+
+                if viewModel.showsSelectedYearQueueAction {
+                    MainWindowCaption(text: viewModel.selectedYearQueueDescription)
+                }
+
+                if viewModel.isPreparingYearQueue {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        MainWindowCaption(text: "Scanning \(viewModel.yearQueueLabelYear) for non-empty months…")
                     }
+                }
 
-                    if viewModel.isPreparingYearQueue {
-                        HStack(spacing: 8) {
-                            ProgressView()
-                            MainWindowCaption(text: "Scanning \(viewModel.yearQueueLabelYear) for non-empty months…")
-                        }
-                    }
-
-                    if viewModel.queuedRenderJobs.isEmpty {
-                        MainWindowCaption(text: "No queued renders yet.")
-                    } else {
-                        VStack(alignment: .leading, spacing: rowSpacing) {
-                            ForEach(viewModel.queuedRenderJobs) { job in
-                                MainWindowQueueJobRow(job: job) {
-                                    viewModel.removeQueuedRenderJob(id: job.id)
-                                }
+                if !viewModel.queuedRenderJobs.isEmpty {
+                    VStack(alignment: .leading, spacing: rowSpacing) {
+                        ForEach(viewModel.queuedRenderJobs) { job in
+                            MainWindowQueueJobRow(job: job) {
+                                viewModel.removeQueuedRenderJob(id: job.id)
                             }
                         }
                     }
                 }
-                .padding(.top, 4)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         } label: {
-            MainWindowSectionLabel(title: "Queue", accent: MainWindowTheme.accentNavy)
+            MainWindowSectionLabel(title: "Job Drawer", accent: MainWindowTheme.accentNavy)
         }
     }
 

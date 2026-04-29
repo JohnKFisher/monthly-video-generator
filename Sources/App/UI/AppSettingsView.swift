@@ -5,9 +5,6 @@ struct AppSettingsView: View {
     @ObservedObject var viewModel: MainWindowViewModel
     private let folderSelector: FolderSelecting
 
-    @AppStorage(AppShellPreferenceKeys.showRenderQueueByDefault)
-    private var showRenderQueueByDefault = true
-
     init(
         shellPreferences: AppShellPreferencesStore,
         viewModel: MainWindowViewModel,
@@ -121,7 +118,9 @@ struct AppSettingsView: View {
             }
 
             settingsSection("Window Defaults") {
-                Toggle("Show Render Queue by default", isOn: $showRenderQueueByDefault)
+                Text("The job drawer is always visible on the main screen.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Text("Notes & Warnings stay minimized until opened.")
                     .font(.caption)
                     .foregroundStyle(.secondary)

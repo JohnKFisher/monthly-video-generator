@@ -179,6 +179,17 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
 
+    struct QueuedRenderJobResultSummary: Equatable, Sendable {
+        let elapsedSeconds: TimeInterval?
+        let mediaCount: Int
+        let outputFileSizeBytes: Int64?
+        let outputFilename: String
+        let elapsedLabel: String
+        let mediaCountLabel: String
+        let outputFileSizeLabel: String
+        let metricsLine: String
+    }
+
     struct QueuedRenderSnapshot: Equatable, Sendable {
         let sourceMode: SourceMode
         let selectedFolderURL: URL?
@@ -249,6 +260,14 @@ final class MainWindowViewModel: ObservableObject {
         let outputNamePreview: String
         var state: QueuedRenderJobState
         var lastResultMessage: String
+        var resultSummary: QueuedRenderJobResultSummary?
+    }
+
+    private struct RenderSnapshotExecutionResult {
+        let renderResult: RenderResult
+        let mediaCount: Int
+        let elapsedSeconds: TimeInterval?
+        let outputFileSizeBytes: Int64?
     }
 
     @Published var sourceMode: SourceMode = .photos {
@@ -813,6 +832,24 @@ final class MainWindowViewModel: ObservableObject {
         return "Queued \(queuedCount) job(s). Completed \(completedCount) job(s)."
     }
 
+    var currentRenderSourceSummary: String {
+        queueSourceSummary(for: makeCurrentRenderSnapshot())
+    }
+
+    var currentRenderOutputNamePreview: String {
+        queueOutputNamePreview(for: makeCurrentRenderSnapshot())
+    }
+
+    var currentRenderDrawerDescription: String {
+        if let queueRunContext {
+            return "Queue job \(queueRunContext.currentJobNumber) of \(queueRunContext.totalJobCount)"
+        }
+        if isRendering {
+            return "Single render in progress"
+        }
+        return "Ready for a single render or queue snapshot."
+    }
+
     var renderCompleteAlertMessage: String {
         if let lastQueueCompletionSummary {
             return lastQueueCompletionSummary.alertMessage
@@ -1213,6 +1250,7 @@ final class MainWindowViewModel: ObservableObject {
             )
             queuedRenderJobs[index].state = .running
             queuedRenderJobs[index].lastResultMessage = ""
+            queuedRenderJobs[index].resultSummary = nil
             renderStatusDetail = "Preparing media..."
             setCurrentItemProgress(0.01)
             updateQueueProgress(completedCount: completedBeforeJob, totalCount: totalCount)
@@ -1226,7 +1264,8 @@ final class MainWindowViewModel: ObservableObject {
                     syncLiveState: false
                 )
                 queuedRenderJobs[index].state = .completed
-                queuedRenderJobs[index].lastResultMessage = renderResult.outputURL.lastPathComponent
+                queuedRenderJobs[index].lastResultMessage = ""
+                queuedRenderJobs[index].resultSummary = makeQueueResultSummary(from: renderResult)
                 updateQueueProgress(completedCount: completedBeforeJob + 1, totalCount: totalCount)
                 if isQueuePauseRequested {
                     finishQueuePausedAfterCurrentItem()
@@ -1236,12 +1275,14 @@ final class MainWindowViewModel: ObservableObject {
                 if isCancellingRender || Task.isCancelled || error is CancellationError {
                     queuedRenderJobs[index].state = .queued
                     queuedRenderJobs[index].lastResultMessage = ""
+                    queuedRenderJobs[index].resultSummary = nil
                     finishCancelledQueueRun()
                     return
                 }
                 if case let RenderError.paused(message) = error {
                     queuedRenderJobs[index].state = .paused
                     queuedRenderJobs[index].lastResultMessage = compactQueueMessage(from: message)
+                    queuedRenderJobs[index].resultSummary = nil
                     finishUserPausedQueueRun(pausedJob: queuedRenderJobs[index], message: message)
                     return
                 }
@@ -1249,6 +1290,7 @@ final class MainWindowViewModel: ObservableObject {
                 let message = formatErrorForDisplay(error)
                 queuedRenderJobs[index].state = .failed
                 queuedRenderJobs[index].lastResultMessage = compactQueueMessage(from: message)
+                queuedRenderJobs[index].resultSummary = nil
                 finishPausedQueueRun(failedJob: queuedRenderJobs[index], errorMessage: message)
                 return
             }
@@ -1263,7 +1305,7 @@ final class MainWindowViewModel: ObservableObject {
         completionSummarySnapshot: SingleRenderSummarySnapshot?,
         progressMapper: @escaping @Sendable (Double) -> Double,
         syncLiveState: Bool
-    ) async throws -> RenderResult {
+    ) async throws -> RenderSnapshotExecutionResult {
         let monthYear = MonthYear(month: snapshot.selectedMonth, year: snapshot.selectedYear)
         let style = buildStyle(for: monthYear, snapshot: snapshot)
         let preparedSession = try await prepareRenderSession(
@@ -1307,6 +1349,7 @@ final class MainWindowViewModel: ObservableObject {
             outputDirectory: snapshot.outputDirectoryURL,
             plexTVMetadata: plexRenderDetails.metadata
         )
+        let renderStartedAt = nowProvider()
         let renderResult = try await renderSingleRequest(
             preparedSession: preparedSession,
             request: request,
@@ -1319,9 +1362,15 @@ final class MainWindowViewModel: ObservableObject {
             renderResult,
             request: request,
             preparation: preparedSession.preparation,
+            writeDiagnosticsLog: snapshot.writeDiagnosticsLog,
             completionSummarySnapshot: completionSummarySnapshot
         )
-        return renderResult
+        return RenderSnapshotExecutionResult(
+            renderResult: renderResult,
+            mediaCount: preparedSession.preparation.items.count,
+            elapsedSeconds: renderResult.executionDetails?.elapsedSeconds ?? nowProvider().timeIntervalSince(renderStartedAt),
+            outputFileSizeBytes: renderResult.executionDetails?.outputFileSizeBytes ?? outputFileSizeBytes(at: renderResult.outputURL)
+        )
     }
 
     private func makeCurrentRenderSnapshot() -> QueuedRenderSnapshot {
@@ -1412,7 +1461,8 @@ final class MainWindowViewModel: ObservableObject {
                 sourceSummary: queueSourceSummary(for: snapshot),
                 outputNamePreview: queueOutputNamePreview(for: snapshot),
                 state: .queued,
-                lastResultMessage: ""
+                lastResultMessage: "",
+                resultSummary: nil
             )
         )
     }
@@ -2346,19 +2396,26 @@ final class MainWindowViewModel: ObservableObject {
         _ renderResult: RenderResult,
         request: RenderRequest,
         preparation: RenderPreparation,
+        writeDiagnosticsLog: Bool,
         completionSummarySnapshot: SingleRenderSummarySnapshot? = nil
     ) {
         let outputURL = renderResult.outputURL
-        let report = runReportService.makeReport(
-            request: request,
-            preparation: preparation,
-            outputURL: outputURL,
-            diagnosticsLogURL: renderResult.diagnosticsLogURL,
-            renderBackendSummary: renderResult.backendSummary,
-            presentationTimingAudits: renderResult.executionDetails?.presentationTimingAudits ?? []
-        )
-        let reportURL = outputURL.deletingPathExtension().appendingPathExtension("json")
-        try? runReportService.write(report, to: reportURL)
+        if writeDiagnosticsLog {
+            let report = runReportService.makeReport(
+                request: request,
+                preparation: preparation,
+                outputURL: outputURL,
+                diagnosticsLogURL: renderResult.diagnosticsLogURL,
+                renderBackendSummary: renderResult.backendSummary,
+                outputFileSizeBytes: renderResult.executionDetails?.outputFileSizeBytes,
+                renderElapsedSeconds: renderResult.executionDetails?.elapsedSeconds,
+                renderBackendInfo: renderResult.backendInfo,
+                resolvedVideoInfo: renderResult.resolvedVideoInfo,
+                presentationTimingAudits: renderResult.executionDetails?.presentationTimingAudits ?? []
+            )
+            let reportURL = outputURL.deletingPathExtension().appendingPathExtension("json")
+            try? runReportService.write(report, to: reportURL)
+        }
 
         lastOutputPath = outputURL.path
         lastDiagnosticsPath = renderResult.diagnosticsLogURL?.path ?? ""
@@ -2964,6 +3021,44 @@ final class MainWindowViewModel: ObservableObject {
             return Self.formatByteCount(UInt64(max(size, 0)))
         }
         return nil
+    }
+
+    private func outputFileSizeBytes(at url: URL) -> Int64? {
+        guard FileManager.default.fileExists(atPath: url.path),
+              let attributes = try? FileManager.default.attributesOfItem(atPath: url.path) else {
+            return nil
+        }
+        if let size = attributes[.size] as? NSNumber {
+            return size.int64Value
+        }
+        if let size = attributes[.size] as? Int {
+            return Int64(max(size, 0))
+        }
+        return nil
+    }
+
+    private func makeQueueResultSummary(
+        from result: RenderSnapshotExecutionResult
+    ) -> QueuedRenderJobResultSummary {
+        let mediaCountLabel = queueMediaCountLabel(result.mediaCount)
+        let outputFileSizeLabel = result.outputFileSizeBytes.map {
+            Self.formatByteCount(UInt64(max($0, 0)))
+        } ?? "Size unavailable"
+        return QueuedRenderJobResultSummary(
+            elapsedSeconds: result.elapsedSeconds,
+            mediaCount: result.mediaCount,
+            outputFileSizeBytes: result.outputFileSizeBytes,
+            outputFilename: result.renderResult.outputURL.lastPathComponent,
+            elapsedLabel: result.elapsedSeconds.map { "Completed in \(Self.formatElapsed($0))" } ?? "Time unavailable",
+            mediaCountLabel: mediaCountLabel,
+            outputFileSizeLabel: outputFileSizeLabel,
+            metricsLine: "\(mediaCountLabel) · \(outputFileSizeLabel)"
+        )
+    }
+
+    private func queueMediaCountLabel(_ mediaCount: Int) -> String {
+        let noun = mediaCount == 1 ? "file" : "files"
+        return "\(mediaCount) \(noun)"
     }
 
     private func formattedSnapshotTimestamp(_ date: Date) -> String {

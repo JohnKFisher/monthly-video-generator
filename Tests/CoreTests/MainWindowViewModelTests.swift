@@ -127,6 +127,104 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertTrue(restoredViewModel.writeDiagnosticsLog)
     }
 
+    func testSingleRenderWithDiagnosticsOffDoesNotWriteSidecarJSON() async throws {
+        let coordinator = RenderCoordinatorSpy(preparation: makePreparation())
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            preferencesStore: makePreferencesStore()
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.sourceMode = .folder
+        viewModel.selectedFolderURL = directory
+        viewModel.outputDirectoryURL = directory
+        viewModel.outputFilename = "No JSON"
+        viewModel.writeDiagnosticsLog = false
+
+        viewModel.startRender()
+        await waitUntil(message: "Timed out waiting for diagnostics-off render.") {
+            !viewModel.isRendering && !viewModel.lastOutputPath.isEmpty
+        }
+
+        let reportURL = directory.appendingPathComponent("No JSON.json")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: reportURL.path))
+    }
+
+    func testSingleRenderWithDiagnosticsOnWritesSidecarJSON() async throws {
+        let coordinator = RenderCoordinatorSpy(preparation: makePreparation())
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            preferencesStore: makePreferencesStore()
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.sourceMode = .folder
+        viewModel.selectedFolderURL = directory
+        viewModel.outputDirectoryURL = directory
+        viewModel.outputFilename = "With JSON"
+        viewModel.writeDiagnosticsLog = true
+
+        viewModel.startRender()
+        await waitUntil(message: "Timed out waiting for diagnostics-on render.") {
+            !viewModel.isRendering && !viewModel.lastOutputPath.isEmpty
+        }
+
+        let reportURL = directory.appendingPathComponent("With JSON.json")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: reportURL.path))
+    }
+
+    func testQueuedRenderWithDiagnosticsOffDoesNotWriteSidecarJSON() async throws {
+        let coordinator = RenderCoordinatorSpy(preparation: makePreparation())
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            preferencesStore: makePreferencesStore()
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.sourceMode = .folder
+        viewModel.selectedFolderURL = directory
+        viewModel.outputDirectoryURL = directory
+        viewModel.outputFilename = "Queued No JSON"
+        viewModel.writeDiagnosticsLog = false
+        viewModel.addCurrentSettingsToQueue()
+
+        viewModel.startQueue()
+        await waitUntil(message: "Timed out waiting for diagnostics-off queue.") {
+            !viewModel.isRendering && viewModel.queuedRenderJobs.first?.state == .completed
+        }
+
+        let reportURL = directory.appendingPathComponent("Queued No JSON.json")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: reportURL.path))
+    }
+
+    func testQueuedRenderWithDiagnosticsOnWritesSidecarJSON() async throws {
+        let coordinator = RenderCoordinatorSpy(preparation: makePreparation())
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            preferencesStore: makePreferencesStore()
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.sourceMode = .folder
+        viewModel.selectedFolderURL = directory
+        viewModel.outputDirectoryURL = directory
+        viewModel.outputFilename = "Queued With JSON"
+        viewModel.writeDiagnosticsLog = true
+        viewModel.addCurrentSettingsToQueue()
+
+        viewModel.startQueue()
+        await waitUntil(message: "Timed out waiting for diagnostics-on queue.") {
+            !viewModel.isRendering && viewModel.queuedRenderJobs.first?.state == .completed
+        }
+
+        let reportURL = directory.appendingPathComponent("Queued With JSON.json")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: reportURL.path))
+    }
+
     func testFormatErrorForDisplayAvoidsDuplicatingLocalizedDescription() {
         let viewModel = makeViewModel(
             coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
@@ -702,7 +800,7 @@ final class MainWindowViewModelTests: XCTestCase {
         )
         let coordinator = RenderCoordinatorSpy(
             preparation: preparation,
-            renderResultBuilder: { _, request, _ in
+            renderResultBuilder: { _, request, _, _ in
                 let outputURL = request.output.directory
                     .appendingPathComponent(request.output.baseFilename)
                     .appendingPathExtension(request.export.container.fileExtension)
@@ -777,7 +875,7 @@ final class MainWindowViewModelTests: XCTestCase {
         let coordinator = RenderCoordinatorSpy(
             preparation: preparation,
             suspendRenderUntilResumed: true,
-            renderResultBuilder: { _, request, _ in
+            renderResultBuilder: { _, request, _, _ in
                 let outputURL = request.output.directory
                     .appendingPathComponent(request.output.baseFilename)
                     .appendingPathExtension(request.export.container.fileExtension)
@@ -898,7 +996,7 @@ final class MainWindowViewModelTests: XCTestCase {
                 items: [makeImageItem(id: "image-1", captureDate: makeDate(year: 2025, month: 6, day: 15))]
             ),
             systemFallbackReason: "Bundled FFmpeg not found.",
-            renderResultBuilder: { _, request, _ in
+            renderResultBuilder: { _, request, _, _ in
                 let outputURL = request.output.directory
                     .appendingPathComponent(request.output.baseFilename)
                     .appendingPathExtension(request.export.container.fileExtension)
@@ -1660,6 +1758,7 @@ final class MainWindowViewModelTests: XCTestCase {
         }
 
         XCTAssertEqual(viewModel.queuedRenderJobs.map(\.state), [.completed, .queued])
+        XCTAssertNotNil(viewModel.queuedRenderJobs[0].resultSummary)
         XCTAssertTrue(viewModel.statusMessage.contains("Queue paused after current item."))
         XCTAssertFalse(viewModel.showRenderCompleteAlert)
         XCTAssertFalse(viewModel.isQueuePauseRequested)
@@ -1678,6 +1777,99 @@ final class MainWindowViewModelTests: XCTestCase {
         }
 
         XCTAssertEqual(viewModel.queuedRenderJobs.map(\.state), [.completed, .completed])
+    }
+
+    func testCompletedQueuedJobStoresPracticalResultSummary() async throws {
+        let preparation = makePreparation(
+            items: [
+                makeImageItem(id: "image-1", captureDate: makeDate(year: 2025, month: 6, day: 1)),
+                makeImageItem(id: "image-2", captureDate: makeDate(year: 2025, month: 6, day: 2)),
+                makeImageItem(id: "image-3", captureDate: makeDate(year: 2025, month: 6, day: 3))
+            ]
+        )
+        let coordinator = RenderCoordinatorSpy(
+            preparation: preparation,
+            renderResultBuilder: { _, request, _, _ in
+                let outputURL = request.output.directory
+                    .appendingPathComponent(request.output.baseFilename)
+                    .appendingPathExtension(request.export.container.fileExtension)
+                try? Data(repeating: 7, count: 4096).write(to: outputURL)
+                return RenderResult(
+                    outputURL: outputURL,
+                    diagnosticsLogURL: nil,
+                    backendSummary: nil
+                )
+            }
+        )
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            preferencesStore: makePreferencesStore()
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.sourceMode = .folder
+        viewModel.selectedFolderURL = directory
+        viewModel.outputDirectoryURL = directory
+        viewModel.outputFilename = "Queue Summary"
+        viewModel.addCurrentSettingsToQueue()
+
+        viewModel.startQueue()
+        await waitUntil(
+            message: "Timed out waiting for queued summary render."
+        ) {
+            !viewModel.isRendering && viewModel.queuedRenderJobs.first?.state == .completed
+        }
+
+        let summary = try XCTUnwrap(viewModel.queuedRenderJobs.first?.resultSummary)
+        XCTAssertNotNil(summary.elapsedSeconds)
+        XCTAssertEqual(summary.mediaCount, 3)
+        XCTAssertEqual(summary.mediaCountLabel, "3 files")
+        XCTAssertEqual(summary.outputFileSizeBytes, 4096)
+        XCTAssertEqual(summary.outputFileSizeLabel, "4 KB")
+        XCTAssertEqual(summary.outputFilename, "Queue Summary.mp4")
+        XCTAssertTrue(summary.elapsedLabel.hasPrefix("Completed in "))
+        XCTAssertEqual(summary.metricsLine, "3 files · 4 KB")
+    }
+
+    func testCompletedQueuedJobSummaryHandlesMissingFileSize() async throws {
+        let coordinator = RenderCoordinatorSpy(
+            preparation: makePreparation(),
+            renderResultBuilder: { _, request, _, _ in
+                let outputURL = request.output.directory
+                    .appendingPathComponent(request.output.baseFilename)
+                    .appendingPathExtension(request.export.container.fileExtension)
+                return RenderResult(
+                    outputURL: outputURL,
+                    diagnosticsLogURL: nil,
+                    backendSummary: nil
+                )
+            }
+        )
+        let viewModel = makeViewModel(
+            coordinator: coordinator,
+            preferencesStore: makePreferencesStore()
+        )
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        viewModel.sourceMode = .folder
+        viewModel.selectedFolderURL = directory
+        viewModel.outputDirectoryURL = directory
+        viewModel.outputFilename = "Missing Size"
+        viewModel.addCurrentSettingsToQueue()
+
+        viewModel.startQueue()
+        await waitUntil(
+            message: "Timed out waiting for missing-size queued summary."
+        ) {
+            !viewModel.isRendering && viewModel.queuedRenderJobs.first?.state == .completed
+        }
+
+        let summary = try XCTUnwrap(viewModel.queuedRenderJobs.first?.resultSummary)
+        XCTAssertNil(summary.outputFileSizeBytes)
+        XCTAssertEqual(summary.outputFileSizeLabel, "Size unavailable")
+        XCTAssertEqual(summary.metricsLine, "1 file · Size unavailable")
     }
 
     func testPausedQueuedJobRetriesBeforeLaterQueuedJobs() async throws {
@@ -1975,7 +2167,7 @@ private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendabl
     var pausedRenderIndices: Set<Int>
     let suspendRenderUntilResumed: Bool
     let renderDelay: Duration?
-    let renderResultBuilder: ((RenderPreparation, RenderRequest, Int) -> RenderResult)?
+    let renderResultBuilder: ((RenderPreparation, RenderRequest, Int, Bool) -> RenderResult)?
     let systemFallbackReason: String?
     let artifactLabel: String?
     private(set) var prepareFolderRequests: [RenderRequest] = []
@@ -1992,7 +2184,7 @@ private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendabl
         renderDelay: Duration? = nil,
         systemFallbackReason: String? = nil,
         artifactLabel: String? = nil,
-        renderResultBuilder: ((RenderPreparation, RenderRequest, Int) -> RenderResult)? = nil
+        renderResultBuilder: ((RenderPreparation, RenderRequest, Int, Bool) -> RenderResult)? = nil
     ) {
         self.preparation = preparation
         self.failedRenderIndices = failedRenderIndices
@@ -2077,7 +2269,7 @@ private final class RenderCoordinatorSpy: RenderCoordinating, @unchecked Sendabl
         }
 
         if let renderResultBuilder {
-            return renderResultBuilder(preparation, request, index)
+            return renderResultBuilder(preparation, request, index, writeDiagnosticsLog)
         }
         return RenderResult(
             outputURL: outputURL,

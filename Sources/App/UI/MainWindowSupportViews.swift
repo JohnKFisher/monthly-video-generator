@@ -75,6 +75,46 @@ struct MainWindowStatusLine: View {
     }
 }
 
+struct MainWindowCurrentJobCard: View {
+    @ObservedObject var viewModel: MainWindowViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text("Current Job")
+                    .font(.subheadline.weight(.semibold))
+                Spacer(minLength: 8)
+                Text(viewModel.currentRenderDrawerDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Text(viewModel.currentRenderSourceSummary)
+                .font(.callout)
+
+            MainWindowCaption(text: "Output: \(viewModel.currentRenderOutputNamePreview)")
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(queueCardBackground)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(MainWindowTheme.accentTeal.opacity(0.18), lineWidth: 1)
+        )
+    }
+
+    private var queueCardBackground: Color {
+        #if canImport(AppKit)
+        Color(nsColor: .controlBackgroundColor).opacity(0.72)
+        #else
+        Color.secondary.opacity(0.08)
+        #endif
+    }
+}
+
 struct MainWindowQueueJobRow: View {
     let job: MainWindowViewModel.QueuedRenderJob
     let removeAction: () -> Void
@@ -106,15 +146,23 @@ struct MainWindowQueueJobRow: View {
             if !job.lastResultMessage.isEmpty {
                 MainWindowCaption(text: job.lastResultMessage)
             }
+
+            if let resultSummary = job.resultSummary {
+                VStack(alignment: .leading, spacing: 2) {
+                    MainWindowCaption(text: resultSummary.elapsedLabel)
+                    MainWindowCaption(text: resultSummary.metricsLine)
+                    MainWindowCaption(text: "File: \(resultSummary.outputFilename)")
+                }
+            }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(queueCardBackground)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .strokeBorder(queueStateColor(job.state).opacity(0.18), lineWidth: 1)
         )
     }

@@ -3,6 +3,165 @@ import SwiftUI
 import AppKit
 #endif
 
+struct MainWindowLightTablePane: View {
+    @ObservedObject var viewModel: MainWindowViewModel
+
+    var body: some View {
+        GroupBox {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 14) {
+                    MainWindowLiveSnapshotView(viewModel: viewModel)
+                        .frame(minWidth: 520)
+
+                    lightTableSidePanel
+                        .frame(width: 280)
+                }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    MainWindowLiveSnapshotView(viewModel: viewModel)
+                    lightTableSidePanel
+                }
+            }
+        } label: {
+            MainWindowSectionLabel(title: "Current Render", accent: MainWindowTheme.accentTeal)
+        }
+    }
+
+    private var lightTableSidePanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            lightTableBadge(title: "Source", value: viewModel.currentRenderSourceSummary)
+            lightTableBadge(title: "Output", value: viewModel.currentRenderOutputNamePreview)
+            lightTableBadge(
+                title: "Settings",
+                value: viewModel.hasCustomStyleOrExportSettings ? "Custom settings" : "Plex defaults"
+            )
+
+            VStack(alignment: .leading, spacing: 8) {
+                MainWindowProgressRow(
+                    title: "Current item",
+                    value: viewModel.currentItemProgress,
+                    label: viewModel.currentItemProgressLabel
+                )
+
+                if viewModel.showsQueueProgress {
+                    MainWindowProgressRow(
+                        title: "Queue",
+                        value: viewModel.queueProgress,
+                        label: viewModel.queueProgressLabel
+                    )
+                }
+            }
+
+            LazyVGrid(
+                columns: [
+                    GridItem(.flexible(minimum: 96), alignment: .leading),
+                    GridItem(.flexible(minimum: 96), alignment: .leading)
+                ],
+                alignment: .leading,
+                spacing: 8
+            ) {
+                MainWindowStatusMetric(title: "Phase", value: viewModel.statusPhaseLabel)
+                MainWindowStatusMetric(title: "Elapsed", value: viewModel.statusElapsedLabel)
+                MainWindowStatusMetric(title: "Mode", value: viewModel.statusQueueLabel)
+                if !viewModel.currentArtifactSizeLabel.isEmpty {
+                    MainWindowStatusMetric(title: "Artifact", value: viewModel.currentArtifactSizeLabel)
+                }
+            }
+
+            Text(viewModel.statusMessage)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(4)
+                .textSelection(.enabled)
+
+            if !viewModel.lastOutputPath.isEmpty {
+                MainWindowStatusLine(title: "Output", value: viewModel.lastOutputPath)
+            }
+
+            if !viewModel.lastDiagnosticsPath.isEmpty {
+                MainWindowStatusLine(title: "Diagnostics", value: viewModel.lastDiagnosticsPath)
+            }
+
+            Spacer(minLength: 0)
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    lightTableButtons
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    lightTableButtons
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(lightTablePanelBackground)
+        )
+    }
+
+    @ViewBuilder
+    private var lightTableButtons: some View {
+        Button("Cancel") {
+            viewModel.cancelRender()
+        }
+        .buttonStyle(.bordered)
+        .disabled(!viewModel.isRendering)
+
+        if viewModel.isQueueRunning {
+            Button(viewModel.isQueuePauseRequested ? "Pausing…" : "Pause After Current") {
+                viewModel.pauseQueueAfterCurrentItem()
+            }
+            .buttonStyle(.bordered)
+            .disabled(!viewModel.canPauseQueueAfterCurrentItem)
+        }
+
+        Button("Generate Video") {
+            viewModel.startRender()
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(MainWindowTheme.accentPeach)
+        .disabled(!viewModel.canStartRender)
+    }
+
+    private func lightTableBadge(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title.uppercased())
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(value.isEmpty ? "-" : value)
+                .font(.caption.weight(.semibold))
+                .lineLimit(2)
+                .truncationMode(.middle)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(lightTableBadgeBackground)
+        )
+    }
+
+    private var lightTablePanelBackground: Color {
+        #if canImport(AppKit)
+        Color(nsColor: .controlBackgroundColor).opacity(0.72)
+        #else
+        Color.secondary.opacity(0.08)
+        #endif
+    }
+
+    private var lightTableBadgeBackground: Color {
+        #if canImport(AppKit)
+        Color(nsColor: .textBackgroundColor).opacity(0.62)
+        #else
+        Color.white.opacity(0.7)
+        #endif
+    }
+}
+
 struct MainWindowStatusPane: View {
     @ObservedObject var viewModel: MainWindowViewModel
 

@@ -3,12 +3,6 @@ import SwiftUI
 struct MainWindowView: View {
     @ObservedObject var viewModel: MainWindowViewModel
 
-    @AppStorage(AppShellPreferenceKeys.showRenderQueueByDefault)
-    private var showRenderQueueByDefault = true
-
-    @SceneStorage("MainWindowView.isRenderQueueExpanded")
-    private var isRenderQueueExpanded = false
-
     @SceneStorage("MainWindowView.isNotesExpanded")
     private var isNotesExpanded = false
 
@@ -18,37 +12,33 @@ struct MainWindowView: View {
     private let sectionSpacing: CGFloat = 10
 
     var body: some View {
-        HSplitView {
-            ScrollView {
-                VStack(alignment: .leading, spacing: sectionSpacing) {
-                    MainWindowInputPane(viewModel: viewModel)
-                    MainWindowStylePane(viewModel: viewModel)
-                    MainWindowSettingsSummaryPane(viewModel: viewModel)
-                    MainWindowExportPane(viewModel: viewModel)
-                }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-            }
-            .frame(minWidth: 620, idealWidth: 720, maxWidth: .infinity)
+        ScrollView {
+            VStack(alignment: .leading, spacing: sectionSpacing) {
+                MainWindowLightTablePane(viewModel: viewModel)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: sectionSpacing) {
-                    MainWindowStatusPane(viewModel: viewModel)
-                    MainWindowQueuePane(
-                        viewModel: viewModel,
-                        isRenderQueueExpanded: $isRenderQueueExpanded
-                    )
-                    MainWindowWarningsPane(
-                        viewModel: viewModel,
-                        isExpanded: $isNotesExpanded
-                    )
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: sectionSpacing) {
+                        workflowPane
+                        exportPane
+                    }
+
+                    VStack(alignment: .leading, spacing: sectionSpacing) {
+                        workflowPane
+                        exportPane
+                    }
                 }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                MainWindowQueuePane(viewModel: viewModel)
+
+                MainWindowWarningsPane(
+                    viewModel: viewModel,
+                    isExpanded: $isNotesExpanded
+                )
             }
-            .frame(minWidth: 340, idealWidth: 420, maxWidth: 500)
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .frame(minWidth: 1020, minHeight: 660)
+        .frame(minWidth: 1060, minHeight: 700)
         .tint(MainWindowTheme.accentTeal)
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -137,8 +127,21 @@ struct MainWindowView: View {
             return
         }
 
-        isRenderQueueExpanded = showRenderQueueByDefault
         isNotesExpanded = false
         hasAppliedSceneDefaults = true
+    }
+
+    private var workflowPane: some View {
+        VStack(alignment: .leading, spacing: sectionSpacing) {
+            MainWindowInputPane(viewModel: viewModel)
+            MainWindowStylePane(viewModel: viewModel)
+            MainWindowSettingsSummaryPane(viewModel: viewModel)
+        }
+        .frame(minWidth: 380, maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private var exportPane: some View {
+        MainWindowExportPane(viewModel: viewModel)
+            .frame(minWidth: 520, maxWidth: .infinity, alignment: .topLeading)
     }
 }
