@@ -3340,17 +3340,11 @@ final class MainWindowViewModel: ObservableObject {
         isRestoringPersistedSettings = true
         plexShowTitle = settings.plexShowTitle ?? Self.defaultPlexShowTitle
         includeOpeningTitle = settings.includeOpeningTitle
-        isOpeningTitleAutoManaged = settings.isOpeningTitleAutoManaged ?? Self.inferredOpeningTitleAutoManaged(
-            savedText: settings.openingTitleText,
-            calendar: calendar
-        )
-        applyOpeningTitleText(settings.openingTitleText, autoManaged: isOpeningTitleAutoManaged)
+        isOpeningTitleAutoManaged = true
+        applyOpeningTitleText(defaultOpeningTitleText(), autoManaged: true)
         titleDurationSeconds = min(max(settings.titleDurationSeconds ?? Self.defaultTitleDurationSeconds, 1), 20)
         openingTitleCaptionMode = .custom
-        openingTitleCaptionText = Self.normalizedOpeningTitleCaptionText(
-            mode: settings.openingTitleCaptionMode,
-            text: settings.openingTitleCaptionText
-        )
+        openingTitleCaptionText = Self.defaultOpeningTitleCaptionText
         crossfadeDurationSeconds = min(max(settings.crossfadeDurationSeconds, 0), 2)
         stillImageDurationSeconds = min(max(settings.stillImageDurationSeconds, 1), 10)
         showCaptureDateOverlay = settings.showCaptureDateOverlay ?? true
@@ -3388,11 +3382,11 @@ final class MainWindowViewModel: ObservableObject {
         let settings = PersistedRenderSettings(
             plexShowTitle: plexShowTitle,
             includeOpeningTitle: includeOpeningTitle,
-            openingTitleText: openingTitleText,
-            isOpeningTitleAutoManaged: isOpeningTitleAutoManaged,
+            openingTitleText: defaultOpeningTitleText(),
+            isOpeningTitleAutoManaged: true,
             titleDurationSeconds: titleDurationSeconds,
             openingTitleCaptionMode: openingTitleCaptionMode,
-            openingTitleCaptionText: openingTitleCaptionText,
+            openingTitleCaptionText: Self.defaultOpeningTitleCaptionText,
             crossfadeDurationSeconds: crossfadeDurationSeconds,
             stillImageDurationSeconds: stillImageDurationSeconds,
             showCaptureDateOverlay: showCaptureDateOverlay,

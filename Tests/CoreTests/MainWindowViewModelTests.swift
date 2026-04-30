@@ -1242,23 +1242,28 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertEqual(restoredViewModel.stillImageDurationSeconds, 4.5, accuracy: 0.0001)
     }
 
-    func testOpeningTitleCaptionSettingsPersistAcrossLaunches() {
+    func testOpeningTitleCaptionTextReturnsToDefaultAcrossLaunches() {
         let preferencesStore = makePreferencesStore()
         let initialViewModel = makeViewModel(
             coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
-            preferencesStore: preferencesStore
+            preferencesStore: preferencesStore,
+            calendar: makeUTCGregorianCalendar(),
+            nowProvider: { self.makeDate(year: 2019, month: 1, day: 9) }
         )
 
-        initialViewModel.openingTitleCaptionMode = .custom
+        initialViewModel.openingTitleText = "Christmas Highlights"
         initialViewModel.openingTitleCaptionText = "Cape Cod at dusk"
 
         let restoredViewModel = makeViewModel(
             coordinator: RenderCoordinatorSpy(preparation: makePreparation()),
-            preferencesStore: preferencesStore
+            preferencesStore: preferencesStore,
+            calendar: makeUTCGregorianCalendar(),
+            nowProvider: { self.makeDate(year: 2019, month: 1, day: 9) }
         )
 
         XCTAssertEqual(restoredViewModel.openingTitleCaptionMode, .custom)
-        XCTAssertEqual(restoredViewModel.openingTitleCaptionText, "Cape Cod at dusk")
+        XCTAssertEqual(restoredViewModel.openingTitleText, "December 2018")
+        XCTAssertEqual(restoredViewModel.openingTitleCaptionText, "Fisher Family Videos")
     }
 
     func testLegacyAutomaticOpeningTitleCaptionNormalizesToCustomDefaultText() throws {
@@ -1295,7 +1300,7 @@ final class MainWindowViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.openingTitleCaptionText, "Fisher Family Videos")
     }
 
-    func testLegacyAutomaticOpeningTitleCaptionKeepsSavedTextWhenPresent() throws {
+    func testLegacyAutomaticOpeningTitleCaptionIgnoresSavedTextWhenPresent() throws {
         let preferencesStore = makePreferencesStore()
         let legacyPayload: [String: Any] = [
             "includeOpeningTitle": true,
@@ -1326,7 +1331,7 @@ final class MainWindowViewModelTests: XCTestCase {
         )
 
         XCTAssertEqual(viewModel.openingTitleCaptionMode, .custom)
-        XCTAssertEqual(viewModel.openingTitleCaptionText, "Cape Cod at dusk")
+        XCTAssertEqual(viewModel.openingTitleCaptionText, "Fisher Family Videos")
     }
 
     func testQueuedRenderUsesSnapshottedSettingsAfterLiveEdits() async throws {

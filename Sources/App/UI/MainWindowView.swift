@@ -15,14 +15,9 @@ struct MainWindowView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: sectionSpacing) {
                 MainWindowLightTablePane(viewModel: viewModel)
+                MainWindowQueuePane(viewModel: viewModel)
 
-                if viewModel.usesFocusedRunLayout {
-                    MainWindowQueuePane(viewModel: viewModel)
-                } else {
-                    if viewModel.hasQueuedJobs {
-                        MainWindowQueuePane(viewModel: viewModel)
-                    }
-
+                if !viewModel.usesFocusedRunLayout {
                     ViewThatFits(in: .horizontal) {
                         HStack(alignment: .top, spacing: sectionSpacing) {
                             workflowPane
@@ -33,10 +28,6 @@ struct MainWindowView: View {
                             workflowPane
                             exportPane
                         }
-                    }
-
-                    if !viewModel.hasQueuedJobs {
-                        MainWindowQueuePane(viewModel: viewModel)
                     }
                 }
 
