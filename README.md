@@ -4,6 +4,14 @@ Monthly Video Generator is a local-only macOS app for turning family photos and 
 
 It works with either regular folders or Apple Photos, and it is built around an Apple-centric workflow: macOS, Apple Photos, Plex/Infuse metadata, and HDR-capable playback.
 
+![Main window overview](docs/readme-assets/main-window.png)
+
+Idle overview of the current `1.0.0` app layout, with the Light Table, Job Drawer, and export controls in view.
+
+![Render in progress](docs/readme-assets/render-in-progress.png)
+
+Live export state showing the same workflow during a real render.
+
 ## Project Status
 
 Feature complete personal project.
