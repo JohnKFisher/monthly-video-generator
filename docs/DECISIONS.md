@@ -44,3 +44,7 @@
 - Decision: Replace the exposed HDR checkpoint pause with queue-boundary pause after the current item. Rationale: checkpoint pause was unreliable in practice and only applied to narrow renderer internals, while queue-boundary pause is predictable and preserves completed/queued job state without touching render output behavior. Status: approved.
 - Decision: Redesign the main window around a Light Table + Job Drawer surface and gate JSON sidecar run reports behind the diagnostics toggle. Rationale: the app needs a more visually informative render cockpit for single and queued runs, while routine exports should not produce structured sidecar files unless diagnostics are explicitly enabled. Status: approved.
 - Decision: Treat opening title and caption text as per-render content rather than durable saved style defaults, and keep the Job Drawer fixed directly below the Light Table even when empty. Rationale: one-off title/caption edits should not surprise future launches, and the queue surface should not jump when the first job is added. Status: approved.
+
+## 2026-05-08
+
+- Decision: Promote the checked-in release identity to `1.0.0 (220)` without pushing yet. Rationale: the app is in a state the user considers stable and complete enough to mark as `1.0`, and the repo's source-controlled `VERSION`/`BUILD_NUMBER` pair should reflect that milestone before any later publication step. Status: approved.
